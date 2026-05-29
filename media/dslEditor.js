@@ -852,6 +852,12 @@
       return;
     }
 
+    if ((event.ctrlKey || event.metaKey) && (event.key === ' ' || event.code === 'Space')) {
+      event.preventDefault();
+      requestSuggestion();
+      return;
+    }
+
     if (event.key === 'ArrowDown' && !completionList.hidden) {
       event.preventDefault();
       selectCompletionItem(completionIndex + 1);
