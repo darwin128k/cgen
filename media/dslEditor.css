@@ -314,6 +314,8 @@ button:hover {
 .completion-list {
   position: absolute;
   z-index: 20;
+  --completion-icon-color: color-mix(in srgb, var(--vscode-editor-foreground, #cccccc) 92%, var(--vscode-editorSuggestWidget-background, #252526) 8%);
+  --completion-icon-active-color: var(--vscode-editorSuggestWidget-selectedForeground, #ffffff);
   min-width: 160px;
   max-width: 400px;
   padding: 4px 0;
@@ -343,6 +345,8 @@ button:hover {
   display: flex;
   align-items: center;
   justify-content: center;
+  color: var(--completion-icon-color);
+  background: color-mix(in srgb, var(--completion-icon-color) 10%, transparent);
   font-size: 13px;
   flex-shrink: 0;
   border-radius: 3px 0 0 3px;
@@ -357,14 +361,17 @@ button:hover {
   text-overflow: ellipsis;
 }
 
-.ci-function    { color: #DCDCAA; background: rgba(220, 220, 170, 0.18); }
-.ci-interface   { color: #7EB0D5; background: rgba(126, 176, 213, 0.18); }
-.ci-enum        { color: #4EC9B0; background: rgba(78, 201, 176, 0.18); }
-.ci-variable    { color: #9CDCFE; background: rgba(156, 220, 254, 0.18); }
-.ci-module      { color: #E8A87C; background: rgba(232, 168, 124, 0.18); }
-.ci-keyword     { color: #C586C0; background: rgba(197, 134, 192, 0.18); }
-.ci-struct      { color: #56B6C2; background: rgba(86, 182, 194, 0.18); }
-.ci-method      { color: #E5C07B; background: rgba(229, 192, 123, 0.18); }
+.ci-function,
+.ci-interface,
+.ci-enum,
+.ci-variable,
+.ci-module,
+.ci-keyword,
+.ci-struct,
+.ci-method {
+  color: var(--completion-icon-color);
+  background: color-mix(in srgb, var(--completion-icon-color) 10%, transparent);
+}
 
 .completion-item.active {
   background: var(--vscode-editorSuggestWidget-selectedBackground, var(--vscode-list-activeSelectionBackground));
@@ -372,7 +379,25 @@ button:hover {
 }
 
 .completion-item.active .completion-icon-col {
+  color: var(--completion-icon-active-color);
   background: transparent;
+}
+
+body.vscode-high-contrast-light .completion-list {
+  --completion-icon-color: #000000;
+  --completion-icon-active-color: #000000;
+}
+
+body.vscode-high-contrast-light .completion-icon-col,
+body.vscode-high-contrast-light .ci-function,
+body.vscode-high-contrast-light .ci-interface,
+body.vscode-high-contrast-light .ci-enum,
+body.vscode-high-contrast-light .ci-variable,
+body.vscode-high-contrast-light .ci-module,
+body.vscode-high-contrast-light .ci-keyword,
+body.vscode-high-contrast-light .ci-struct,
+body.vscode-high-contrast-light .ci-method {
+  background: color-mix(in srgb, var(--completion-icon-color) 16%, transparent);
 }
 
 #source {
