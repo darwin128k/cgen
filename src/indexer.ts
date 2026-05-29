@@ -17,6 +17,7 @@ export interface IndexedSymbol {
   kind: SymbolKind;
   name: string;
   path: string[];
+  params: string[];
 }
 
 export interface IndexedDsl {
@@ -41,6 +42,7 @@ interface SymbolRecord {
   parentPath: string;
   sourcePath: string;
   line: number;
+  params: string;
 }
 
 const builtinTypes = [
@@ -118,12 +120,13 @@ export class CgenProjectIndex {
       findOrCreateChild(parent, row.kind as SectionKind, String(row.name), pathParts);
     }
 
-    for (const row of queryRows(db, 'SELECT kind, name, path, parent_path FROM symbols ORDER BY path')) {
+    for (const row of queryRows(db, 'SELECT kind, name, path, parent_path, params FROM symbols ORDER BY path')) {
       const parent = findOrCreatePath(root, splitPath(String(row.parent_path)));
       const symbol = {
         kind: row.kind as SymbolKind,
         name: String(row.name),
-        path: splitPath(String(row.path))
+        path: splitPath(String(row.path)),
+        params: String(row.params || '').split(',').filter(Boolean)
       };
       if (!parent.symbols.some((item) => item.kind === symbol.kind && item.path.join('.') === symbol.path.join('.'))) {
         parent.symbols.push(symbol);
@@ -220,8 +223,8 @@ export class CgenProjectIndex {
       }
       for (const symbol of records.symbols) {
         db.run(
-          'INSERT INTO symbols(kind, name, path, parent_path, source_path, line) VALUES (?, ?, ?, ?, ?, ?)',
-          [symbol.kind, symbol.name, symbol.path, symbol.parentPath, symbol.sourcePath, symbol.line]
+          'INSERT INTO symbols(kind, name, path, parent_path, source_path, line, params) VALUES (?, ?, ?, ?, ?, ?, ?)',
+          [symbol.kind, symbol.name, symbol.path, symbol.parentPath, symbol.sourcePath, symbol.line, symbol.params]
         );
       }
       db.run('COMMIT');
@@ -257,7 +260,8 @@ export class CgenProjectIndex {
         path TEXT NOT NULL,
         parent_path TEXT NOT NULL,
         source_path TEXT NOT NULL,
-        line INTEGER NOT NULL
+        line INTEGER NOT NULL,
+        params TEXT NOT NULL DEFAULT ''
       );
       CREATE TABLE IF NOT EXISTS history (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -314,7 +318,7 @@ function parseDslRecords(text: string, sourcePath: string): { sections: SectionR
   const sections: SectionRecord[] = [];
   const symbols: SymbolRecord[] = [];
   const stack: Array<{ indent: number; path: string[] }> = [{ indent: -1, path: [] }];
-  let currentTemplate: { indent: number; symbolIndex: number; hasParams: boolean } | undefined;
+  let currentTemplate: { indent: number; symbolIndex: number; hasParams: boolean; params: string[] } | undefined;
 
   for (const { line: rawLine, lineNumber } of expandInlineDsl(text)) {
     const withoutComment = rawLine.replace(/#.*$/, '').trimEnd();
@@ -325,6 +329,7 @@ function parseDslRecords(text: string, sourcePath: string): { sections: SectionR
     const indent = withoutComment.match(/^\s*/)?.[0].length ?? 0;
     const line = withoutComment.trim();
     if (currentTemplate && indent <= currentTemplate.indent) {
+      symbols[currentTemplate.symbolIndex].params = currentTemplate.params.join(',');
       currentTemplate = undefined;
     }
 
@@ -350,6 +355,12 @@ function parseDslRecords(text: string, sourcePath: string): { sections: SectionR
 
     if (currentTemplate && /^param\s+/.test(line)) {
       currentTemplate.hasParams = true;
+      const variadicParam = line.match(/^param\s+\.\.\.\s+as\s+([A-Za-z_][A-Za-z0-9_]*)$/);
+      const normalParam = line.match(/^param\s+([A-Za-z_][A-Za-z0-9_]*)$/);
+      const paramName = variadicParam?.[1] ?? normalParam?.[1];
+      if (paramName) {
+        currentTemplate.params.push(paramName);
+      }
       continue;
     }
 
@@ -369,12 +380,17 @@ function parseDslRecords(text: string, sourcePath: string): { sections: SectionR
         path: makePublicPath(pathParts).join('.'),
         parentPath: parentPath.join('.'),
         sourcePath,
-        line: lineNumber
+        line: lineNumber,
+        params: ''
       });
       if (symbolMatch[1] === 'template') {
-        currentTemplate = { indent, symbolIndex: symbols.length - 1, hasParams: false };
+        currentTemplate = { indent, symbolIndex: symbols.length - 1, hasParams: false, params: [] };
       }
     }
+  }
+
+  if (currentTemplate) {
+    symbols[currentTemplate.symbolIndex].params = currentTemplate.params.join(',');
   }
 
   return { sections, symbols };

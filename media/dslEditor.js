@@ -16,6 +16,7 @@
   let suggestRequestId = 0;
   let suggestionInsertText = '';
   let snippetMode = false;
+  let snippetTabStopWords = [];
   let navHoverRange;
   let completionCandidates = [];
   let completionInsertTexts = [];
@@ -118,6 +119,13 @@
     return '<span class="scroll-tail" aria-hidden="true"></span>';
   }
 
+  function tabStopRegex(global) {
+    const words = snippetTabStopWords.length > 0
+      ? snippetTabStopWords.map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')
+      : 'NAME|name|type|value|values';
+    return new RegExp(`\\b(${words})\\b`, global ? 'g' : '');
+  }
+
   function highlightSnippetTabStops(lines) {
     const cursor = source.selectionEnd;
     const text = source.value;
@@ -125,7 +133,7 @@
     const searchEnd = lineEnd === -1 ? text.length : lineEnd;
     const searchRegion = text.slice(cursor, searchEnd);
     const tabStopPositions = [];
-    const placeholderRegex = /\b(NAME|name|type|value|values)\b/g;
+    const placeholderRegex = tabStopRegex(true);
     let match;
     while ((match = placeholderRegex.exec(searchRegion)) !== null) {
       tabStopPositions.push({ start: cursor + match.index, end: cursor + match.index + match[0].length });
@@ -471,15 +479,26 @@
     return candidate ? candidate.slice(typed.length) : '';
   }
 
+  function extractTabStopWords(text) {
+    const match = text.match(/\(([^()]*)\)/);
+    if (!match) { return []; }
+    return match[1].split(',').map((s) => s.trim()).filter((s) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(s));
+  }
+
   function acceptSuggestion() {
     if (!suggestionInsertText || source.selectionStart !== source.selectionEnd) {
       return false;
     }
 
+    const paramWords = extractTabStopWords(suggestionInsertText);
+    snippetTabStopWords = paramWords.length > 0 ? paramWords : [];
     const edit = getSuggestionEdit(suggestionInsertText);
     replaceSelection(edit.text, undefined, edit.selection);
     clearSuggestion();
     snippetMode = edit.tabStops !== undefined && edit.tabStops.length > 1;
+    if (!snippetMode) {
+      snippetTabStopWords = [];
+    }
     if (snippetMode) {
       paint();
     }
@@ -495,18 +514,19 @@
     const text = source.value;
     const lineEnd = text.indexOf('\n', cursor);
     const searchEnd = lineEnd === -1 ? text.length : lineEnd;
-    const match = text.slice(cursor, searchEnd).match(/\b(NAME|name|type|value|values)\b/);
+    const match = tabStopRegex().exec(text.slice(cursor, searchEnd));
     if (match && match.index !== undefined) {
       source.selectionStart = cursor + match.index;
       source.selectionEnd = cursor + match.index + match[0].length;
       return true;
     }
     snippetMode = false;
+    snippetTabStopWords = [];
     return false;
   }
 
   function getSuggestionEdit(text) {
-    const placeholderRegex = /\b(NAME|name|type|value|values)\b/g;
+    const placeholderRegex = tabStopRegex(true);
     const tabStops = [];
     let match;
     while ((match = placeholderRegex.exec(text)) !== null) {
@@ -876,7 +896,13 @@
 
     if (event.key === 'Tab') {
       event.preventDefault();
+      const wasSnippet = snippetMode;
       if (!event.shiftKey && (acceptSuggestion() || advanceToNextTabStop())) {
+        return;
+      }
+      if (wasSnippet) {
+        source.selectionStart = source.selectionEnd;
+        paint();
         return;
       }
 
@@ -899,6 +925,7 @@
       event.preventDefault();
       clearSuggestion();
       snippetMode = false;
+      snippetTabStopWords = [];
       paint();
       return;
     }

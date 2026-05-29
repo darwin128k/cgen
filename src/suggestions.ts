@@ -25,6 +25,7 @@ interface DslSymbol {
   kind: SymbolKind;
   name: string;
   path: string[];
+  params: string[];
 }
 
 interface DslIndex {
@@ -429,9 +430,13 @@ function getNodeTemplateUseMembers(node: DslNode, prefix: string, currentTemplat
     ...node.children.map((child) => `${prefix}${child.name}.`),
     ...node.symbols
       .filter((symbol) => symbol.kind === 'template')
-      .map((symbol) => `${prefix}${symbol.name}`)
-      .filter((name) => !currentTemplate.excludeNames.includes(name))
-      .map((name) => `${name}()`)
+      .map((symbol) => {
+        const name = `${prefix}${symbol.name}`;
+        if (currentTemplate.excludeNames.includes(name)) { return null; }
+        const args = symbol.params.length > 0 ? symbol.params.join(', ') : '';
+        return `${name}(${args})`;
+      })
+      .filter((name): name is string => name !== null)
   ]);
 }
 
@@ -464,7 +469,8 @@ function getAllUsePaths(index: DslIndex, currentTemplate: CurrentTemplate): stri
 
       const name = makePublicSymbolPath(symbol).join('.');
       if (!currentTemplate.excludeNames.includes(name)) {
-        result.push(`${name}()`);
+        const args = symbol.params.length > 0 ? symbol.params.join(', ') : '';
+        result.push(`${name}(${args})`);
       }
     }
   });
