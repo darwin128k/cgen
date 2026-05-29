@@ -377,7 +377,16 @@ function completeTail(typed: string, tails: string[]): string[] {
 }
 
 function getTypeCandidates(typed: string, contextPath: string[], index: DslIndex): string[] {
-  return getDottedCandidates(getTailToken(typed), contextPath, index, index.typeNames);
+  const currentPkg = contextPath[0];
+  const projectTypes = index.typeNames.filter((t) => !t.startsWith('c.'));
+  const builtins = index.typeNames.filter((t) => t.startsWith('c.'));
+  const currentPkgTypes = currentPkg ? projectTypes.filter((t) => t.startsWith(`${currentPkg}.`)) : [];
+  const otherPkgTypes = currentPkg ? projectTypes.filter((t) => !t.startsWith(`${currentPkg}.`)) : projectTypes;
+  return getDottedCandidates(getTailToken(typed), contextPath, index, [
+    ...currentPkgTypes,
+    ...otherPkgTypes,
+    ...builtins
+  ]);
 }
 
 function getTemplateUseCandidates(
@@ -449,8 +458,8 @@ function getRootUseNamespaces(contextPath: string[], index: DslIndex): string[] 
   const currentRoot = currentPackage && projectRoots.includes(`${currentPackage}.`) ? [`${currentPackage}.`] : [];
 
   return uniqueInOrder([
-    ...externalRoots,
     ...currentRoot,
+    ...externalRoots,
     'c.'
   ]);
 }
@@ -492,7 +501,7 @@ function getDottedCandidates(token: string, contextPath: string[], index: DslInd
   }
 
   const context = findNode(index.root, contextPath);
-  return sortUnique([
+  return uniqueInOrder([
     ...(context ? getNodeMemberNames(context) : []),
     ...fallback
   ]);
