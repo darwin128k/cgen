@@ -331,19 +331,14 @@ function parseDsl(source: string): ParsedDsl {
 
       const param = parseTemplateParam(line, lineNumber);
       if (param) {
-        if (currentTemplate.node.fields.length > 0) {
-          diagnostics.push(`Line ${lineNumber}: template "${currentTemplate.node.name}" with fields cannot have params`);
-          return;
-        }
-
         currentTemplate.node.params.push(param);
         return;
       }
 
       const field = parseTemplateField(line, lineNumber);
       if (field) {
-        if (currentTemplate.node.params.length > 0 || currentTemplate.node.body !== '') {
-          diagnostics.push(`Line ${lineNumber}: template "${currentTemplate.node.name}" with params or body cannot have fields`);
+        if (currentTemplate.node.body !== '') {
+          diagnostics.push(`Line ${lineNumber}: template "${currentTemplate.node.name}" with a body cannot have fields`);
           return;
         }
 
@@ -909,6 +904,19 @@ function resolveModuleDependencies(
     }
 
     for (const { template } of collectScopeTemplates(module.section, [])) {
+      if (template.fields.length > 0 && template.params.length > 0) {
+        const paramNames = new Set(template.params.map((p) => p.name));
+        for (const field of template.fields) {
+          if (paramNames.has(field.target)) { continue; }
+          for (const symbol of getTypeExpressionSymbols(field.target, field.line, symbols)) {
+            if (symbol.moduleId !== module.id) {
+              module.dependencies.add(symbol.moduleId);
+            }
+          }
+        }
+        continue;
+      }
+
       if (template.fields.length > 0) {
         for (const field of template.fields) {
           for (const symbol of getTypeExpressionSymbols(field.target, field.line, symbols)) {
@@ -1047,6 +1055,20 @@ function renderHeader(
 
   for (const { template, symbolParts } of collectScopeTemplates(module.section, [])) {
     const allSymbolParts = [...module.symbolParts, ...symbolParts];
+    if (template.fields.length > 0 && template.params.length > 0) {
+      const paramNames = new Set(template.params.map((p) => p.name));
+      const paramList = template.params.map((p) => p.name).join(', ');
+      const fieldDefs = template.fields.map((field, index) => {
+        const typeName = paramNames.has(field.target)
+          ? field.target
+          : resolveTypeExpression(field.target, field.line, symbols);
+        const semi = index < template.fields.length - 1 ? ';' : '';
+        return `${typeName} ${field.name}${semi}`;
+      }).join(' ');
+      lines.push(`#define ${makeMacroName(allSymbolParts, template.name)}(${paramList}) ${fieldDefs}`);
+      continue;
+    }
+
     if (template.fields.length > 0) {
       const cName = makeTypedefName(allSymbolParts, template.name);
       lines.push(`typedef struct ${cName} {`);
@@ -1284,7 +1306,9 @@ function collectScopeRecordTemplates(
   section: SectionNode,
   extraParts: string[]
 ): Array<{ template: TemplateNode; symbolParts: string[]; typeParts: string[] }> {
-  return collectScopeTemplates(section, extraParts).filter(({ template }) => template.fields.length > 0);
+  return collectScopeTemplates(section, extraParts).filter(
+    ({ template }) => template.fields.length > 0 && template.params.length === 0
+  );
 }
 
 function getTypeDeclarations(section: SectionNode): TypeDeclaration[] {

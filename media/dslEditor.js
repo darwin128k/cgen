@@ -80,10 +80,12 @@
 
   function highlightLine(line) {
     const commentIndex = line.indexOf('#');
-    const code = commentIndex === -1 ? line : line.slice(0, commentIndex);
+    const rawCode = commentIndex === -1 ? line : line.slice(0, commentIndex);
     const comment = commentIndex === -1 ? '' : line.slice(commentIndex);
-    const highlightedCode = code.replace(/(@[A-Za-z_][A-Za-z0-9_]*|\bc\.[A-Za-z_][A-Za-z0-9_.]*\b|\bpackage\b|\bmodule\b|\bscope\b|\balias\b|\benum\b|\bcase\b|\bas\b|\btemplate\b|\bparam\b|\bfield\b|\buse\b)/g, highlightToken);
-
+    const highlightedCode = escapeHtml(rawCode).replace(
+      /(@[A-Za-z_][A-Za-z0-9_]*|\bc\.[A-Za-z_][A-Za-z0-9_.]*\b|\bpackage\b|\bmodule\b|\bscope\b|\balias\b|\benum\b|\bcase\b|\bas\b|\btemplate\b|\bparam\b|\bfield\b|\buse\b)/g,
+      highlightToken
+    );
     return `${highlightedCode}${comment ? highlightToken(comment) : ''}`;
   }
 

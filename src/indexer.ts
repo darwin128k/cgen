@@ -314,7 +314,7 @@ function parseDslRecords(text: string, sourcePath: string): { sections: SectionR
   const sections: SectionRecord[] = [];
   const symbols: SymbolRecord[] = [];
   const stack: Array<{ indent: number; path: string[] }> = [{ indent: -1, path: [] }];
-  let currentTemplate: { indent: number; symbolIndex: number } | undefined;
+  let currentTemplate: { indent: number; symbolIndex: number; hasParams: boolean } | undefined;
 
   for (const { line: rawLine, lineNumber } of expandInlineDsl(text)) {
     const withoutComment = rawLine.replace(/#.*$/, '').trimEnd();
@@ -348,8 +348,15 @@ function parseDslRecords(text: string, sourcePath: string): { sections: SectionR
       continue;
     }
 
+    if (currentTemplate && /^param\s+/.test(line)) {
+      currentTemplate.hasParams = true;
+      continue;
+    }
+
     if (currentTemplate && /^field\s+[A-Za-z_][A-Za-z0-9_]*\s+as\s+/.test(line)) {
-      symbols[currentTemplate.symbolIndex].kind = 'record';
+      if (!currentTemplate.hasParams) {
+        symbols[currentTemplate.symbolIndex].kind = 'record';
+      }
       continue;
     }
 
@@ -365,7 +372,7 @@ function parseDslRecords(text: string, sourcePath: string): { sections: SectionR
         line: lineNumber
       });
       if (symbolMatch[1] === 'template') {
-        currentTemplate = { indent, symbolIndex: symbols.length - 1 };
+        currentTemplate = { indent, symbolIndex: symbols.length - 1, hasParams: false };
       }
     }
   }
