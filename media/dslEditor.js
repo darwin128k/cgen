@@ -46,6 +46,7 @@
     'template name:',
     'param name',
     'param ... as values',
+    'field name as type',
     'use c.ptr(value)'
   ];
   let stripeCount = 0;
@@ -66,7 +67,7 @@
       return `<span class="attr">${escapeHtml(token)}</span>`;
     }
 
-    if (/^(package|module|scope|alias|enum|case|as|template|param|use)$/.test(token)) {
+    if (/^(package|module|scope|alias|enum|case|as|template|param|field|use)$/.test(token)) {
       return `<span class="kw">${escapeHtml(token)}</span>`;
     }
 
@@ -81,7 +82,7 @@
     const commentIndex = line.indexOf('#');
     const code = commentIndex === -1 ? line : line.slice(0, commentIndex);
     const comment = commentIndex === -1 ? '' : line.slice(commentIndex);
-    const highlightedCode = code.replace(/(@[A-Za-z_][A-Za-z0-9_]*|\bc\.[A-Za-z_][A-Za-z0-9_.]*\b|\bpackage\b|\bmodule\b|\bscope\b|\balias\b|\benum\b|\bcase\b|\bas\b|\btemplate\b|\bparam\b|\buse\b)/g, highlightToken);
+    const highlightedCode = code.replace(/(@[A-Za-z_][A-Za-z0-9_]*|\bc\.[A-Za-z_][A-Za-z0-9_.]*\b|\bpackage\b|\bmodule\b|\bscope\b|\balias\b|\benum\b|\bcase\b|\bas\b|\btemplate\b|\bparam\b|\bfield\b|\buse\b)/g, highlightToken);
 
     return `${highlightedCode}${comment ? highlightToken(comment) : ''}`;
   }
@@ -358,6 +359,7 @@
     if (/^case\b/.test(label)) return ['symbol-enum-member', 'enum'];
     if (/^template\b/.test(label)) return ['symbol-function', 'function'];
     if (/^param\b/.test(label)) return ['symbol-variable', 'variable'];
+    if (/^field\b/.test(label)) return ['symbol-field', 'variable'];
     if (/\(\)/.test(label)) return ['symbol-method', 'method'];
     return ['symbol-struct', 'struct'];
   }

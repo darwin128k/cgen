@@ -19,6 +19,7 @@
 .codicon-symbol-interface::before { content: "\eb64"; }
 .codicon-symbol-enum::before { content: "\eb5e"; }
 .codicon-symbol-enum-member::before { content: "\eb5f"; }
+.codicon-symbol-field::before { content: "\eb5d"; }
 .codicon-symbol-variable::before { content: "\eb78"; }
 .codicon-symbol-module::before { content: "\eb67"; }
 .codicon-symbol-keyword::before { content: "\eb65"; }

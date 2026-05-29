@@ -39,10 +39,17 @@ interface TemplateParam {
   line: number;
 }
 
+interface TemplateField {
+  name: string;
+  target: string;
+  line: number;
+}
+
 interface TemplateNode {
   kind: 'template';
   name: string;
   params: TemplateParam[];
+  fields: TemplateField[];
   body: string;
   bodyLine: number;
   attributes: Attribute[];
@@ -118,8 +125,8 @@ interface TypeSymbol {
   cName: string;
   moduleId: string;
   includePath: string;
-  kind: 'alias' | 'enum';
-  target: string;
+  kind: 'alias' | 'enum' | 'template';
+  target?: string;
   line: number;
   defineOnly: boolean;
 }
@@ -324,11 +331,32 @@ function parseDsl(source: string): ParsedDsl {
 
       const param = parseTemplateParam(line, lineNumber);
       if (param) {
+        if (currentTemplate.node.fields.length > 0) {
+          diagnostics.push(`Line ${lineNumber}: template "${currentTemplate.node.name}" with fields cannot have params`);
+          return;
+        }
+
         currentTemplate.node.params.push(param);
         return;
       }
 
+      const field = parseTemplateField(line, lineNumber);
+      if (field) {
+        if (currentTemplate.node.params.length > 0 || currentTemplate.node.body !== '') {
+          diagnostics.push(`Line ${lineNumber}: template "${currentTemplate.node.name}" with params or body cannot have fields`);
+          return;
+        }
+
+        currentTemplate.node.fields.push(field);
+        return;
+      }
+
       if (currentTemplate.node.body === '') {
+        if (currentTemplate.node.fields.length > 0) {
+          diagnostics.push(`Line ${lineNumber}: template "${currentTemplate.node.name}" with fields cannot have a body`);
+          return;
+        }
+
         currentTemplate.node.body = line;
         currentTemplate.node.bodyLine = lineNumber;
         return;
@@ -455,7 +483,7 @@ function parseTemplate(line: string, lineNumber: number): TemplateNode | undefin
     return undefined;
   }
 
-  return { kind: 'template', name: match[1], params: [], body: '', bodyLine: lineNumber, attributes: [], line: lineNumber };
+  return { kind: 'template', name: match[1], params: [], fields: [], body: '', bodyLine: lineNumber, attributes: [], line: lineNumber };
 }
 
 function parseTemplateParam(line: string, lineNumber: number): TemplateParam | undefined {
@@ -470,6 +498,19 @@ function parseTemplateParam(line: string, lineNumber: number): TemplateParam | u
   }
 
   return undefined;
+}
+
+function parseTemplateField(line: string, lineNumber: number): TemplateField | undefined {
+  const match = line.match(/^field\s+([A-Za-z_][A-Za-z0-9_]*)\s+as\s+(.+)$/);
+  if (!match) {
+    return undefined;
+  }
+
+  return {
+    name: match[1],
+    target: match[2].trim(),
+    line: lineNumber
+  };
 }
 
 function expandTemplateBody(template: TemplateNode, templateSymbols: Map<string, TemplateSymbol>): string {
@@ -779,6 +820,26 @@ function buildTypeSymbols(modules: ModuleArtifact[]): Map<string, TypeSymbol> {
         defineOnly: false
       });
     }
+
+    for (const { template, symbolParts, typeParts } of collectScopeRecordTemplates(module.section, [])) {
+      const key = makeTypeKey([...module.typeParts, ...typeParts], template.name);
+      const cName = makeTypedefName([...module.symbolParts, ...symbolParts], template.name);
+      const existing = symbols.get(key);
+
+      if (existing) {
+        throw new Error(`Line ${template.line}: type "${key}" is already defined in ${existing.includePath}`);
+      }
+
+      symbols.set(key, {
+        key,
+        cName,
+        moduleId: module.id,
+        includePath: module.includePath,
+        kind: 'template',
+        line: template.line,
+        defineOnly: false
+      });
+    }
   }
 
   for (const symbol of symbols.values()) {
@@ -817,6 +878,10 @@ function buildTemplateSymbols(modules: ModuleArtifact[]): Map<string, TemplateSy
         throw new Error(`Line ${template.line}: template "${key}" is already defined in ${existing.includePath}`);
       }
 
+      if (template.fields.length > 0) {
+        continue;
+      }
+
       symbols.set(key, {
         key,
         macroName,
@@ -844,6 +909,17 @@ function resolveModuleDependencies(
     }
 
     for (const { template } of collectScopeTemplates(module.section, [])) {
+      if (template.fields.length > 0) {
+        for (const field of template.fields) {
+          for (const symbol of getTypeExpressionSymbols(field.target, field.line, symbols)) {
+            if (symbol.moduleId !== module.id) {
+              module.dependencies.add(symbol.moduleId);
+            }
+          }
+        }
+        continue;
+      }
+
       for (const usedTemplate of getUsedTemplateSymbols(template, templateSymbols)) {
         if (usedTemplate.moduleId !== module.id) {
           module.dependencies.add(usedTemplate.moduleId);
@@ -971,6 +1047,16 @@ function renderHeader(
 
   for (const { template, symbolParts } of collectScopeTemplates(module.section, [])) {
     const allSymbolParts = [...module.symbolParts, ...symbolParts];
+    if (template.fields.length > 0) {
+      const cName = makeTypedefName(allSymbolParts, template.name);
+      lines.push(`typedef struct ${cName} {`);
+      for (const field of template.fields) {
+        lines.push(`  ${resolveTypeExpression(field.target, field.line, symbols)} ${field.name};`);
+      }
+      lines.push(`} ${cName};`);
+      continue;
+    }
+
     const paramList = template.params.map((p) => (p.variadic ? '...' : p.name)).join(', ');
     const body = expandTemplateBody(template, templateSymbols);
     lines.push(`#define ${makeMacroName(allSymbolParts, template.name)}(${paramList}) ${body}`);
@@ -1098,7 +1184,7 @@ function resolveTypeSymbolDefineOnly(
   symbols: Map<string, TypeSymbol>,
   seen: Set<string>
 ): boolean {
-  if (symbol.kind === 'enum') {
+  if (symbol.kind === 'enum' || symbol.kind === 'template') {
     return false;
   }
 
@@ -1107,7 +1193,7 @@ function resolveTypeSymbolDefineOnly(
   }
 
   seen.add(symbol.key);
-  const result = isDefineOnlyTypeExpression(symbol.target, symbol.line, symbols, seen);
+  const result = isDefineOnlyTypeExpression(symbol.target!, symbol.line, symbols, seen);
   seen.delete(symbol.key);
   return result;
 }
@@ -1192,6 +1278,13 @@ function collectScopeTypeDeclarations(section: SectionNode, extraParts: string[]
   }
 
   return result.sort((left, right) => left.declaration.line - right.declaration.line);
+}
+
+function collectScopeRecordTemplates(
+  section: SectionNode,
+  extraParts: string[]
+): Array<{ template: TemplateNode; symbolParts: string[]; typeParts: string[] }> {
+  return collectScopeTemplates(section, extraParts).filter(({ template }) => template.fields.length > 0);
 }
 
 function getTypeDeclarations(section: SectionNode): TypeDeclaration[] {

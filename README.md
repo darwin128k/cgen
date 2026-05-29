@@ -211,12 +211,29 @@ template add_one:
 #define lh_math_add_one(a) lh_math_add(a, 1)
 ```
 
+Templates with fields generate `typedef struct` declarations:
+
+```cgen
+module version:
+    template version:
+        field major as c.uint
+        field minor as c.uint
+```
+
+```c
+typedef struct lh_version_t {
+  unsigned int major;
+  unsigned int minor;
+} lh_version_t;
+```
+
 ### Parameters
 
 | Syntax              | Meaning |
 |---------------------|---------|
 | `param name`        | Regular parameter |
 | `param ... as name` | Variadic parameter; `name` is the alias for `__VA_ARGS__`. The `...` form without an alias is a parse error. |
+| `field name as type` | Struct field; field templates cannot be mixed with `param` or `use` bodies. |
 
 ### Built-in template operations
 

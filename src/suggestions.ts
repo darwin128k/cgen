@@ -11,7 +11,7 @@ export interface SuggestionResult {
 }
 
 type SectionKind = 'root' | 'package' | 'module' | 'scope';
-type SymbolKind = 'alias' | 'enum' | 'template';
+type SymbolKind = 'alias' | 'enum' | 'template' | 'record';
 
 interface DslNode {
   kind: SectionKind;
@@ -70,6 +70,7 @@ const snippets = [
   'template name:',
   'param name',
   'param ... as values',
+  'field name as type',
   'use c.ptr(value)'
 ];
 
@@ -78,7 +79,8 @@ const declarationSnippets = [
   'enum name as type:',
   'template name:',
   'param name',
-  'param ... as values'
+  'param ... as values',
+  'field name as type'
 ];
 
 export async function createDslSuggestion(
@@ -288,6 +290,10 @@ function getCandidates(typed: string, contextPath: string[], currentTemplate: Cu
     return completeTail(typed, getTypeCandidates(typed, contextPath, index));
   }
 
+  if (/^field\s+\S+\s+as\s+/.test(typed)) {
+    return completeTail(typed, getTypeCandidates(typed, contextPath, index));
+  }
+
   if (/^use\s+/.test(typed)) {
     if (isCompleteUseExpression(typed)) {
       return [];
@@ -308,7 +314,7 @@ function getCandidates(typed: string, contextPath: string[], currentTemplate: Cu
     return snippets.filter((snippet) => snippet.startsWith('case '));
   }
 
-  if (/^(alias|enum|template|param)\b/.test(typed)) {
+  if (/^(alias|enum|template|param|field)\b/.test(typed)) {
     return declarationSnippets;
   }
 

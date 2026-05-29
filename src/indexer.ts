@@ -3,7 +3,7 @@ import * as vscode from 'vscode';
 import initSqlJs, { Database, SqlJsStatic } from 'sql.js';
 
 type SectionKind = 'root' | 'package' | 'module' | 'scope';
-type SymbolKind = 'alias' | 'enum' | 'template';
+type SymbolKind = 'alias' | 'enum' | 'template' | 'record';
 
 export interface IndexedNode {
   kind: SectionKind;
@@ -137,7 +137,7 @@ export class CgenProjectIndex {
       typeNames: sortUnique([
         ...builtinTypes,
         ...symbols
-          .filter((symbol) => symbol.kind === 'alias' || symbol.kind === 'enum')
+          .filter((symbol) => symbol.kind === 'alias' || symbol.kind === 'enum' || symbol.kind === 'record')
           .map((symbol) => symbol.path.join('.'))
       ])
     };
@@ -314,6 +314,7 @@ function parseDslRecords(text: string, sourcePath: string): { sections: SectionR
   const sections: SectionRecord[] = [];
   const symbols: SymbolRecord[] = [];
   const stack: Array<{ indent: number; path: string[] }> = [{ indent: -1, path: [] }];
+  let currentTemplate: { indent: number; symbolIndex: number } | undefined;
 
   for (const { line: rawLine, lineNumber } of expandInlineDsl(text)) {
     const withoutComment = rawLine.replace(/#.*$/, '').trimEnd();
@@ -323,6 +324,10 @@ function parseDslRecords(text: string, sourcePath: string): { sections: SectionR
 
     const indent = withoutComment.match(/^\s*/)?.[0].length ?? 0;
     const line = withoutComment.trim();
+    if (currentTemplate && indent <= currentTemplate.indent) {
+      currentTemplate = undefined;
+    }
+
     while (stack.length > 1 && indent <= stack[stack.length - 1].indent) {
       stack.pop();
     }
@@ -343,6 +348,11 @@ function parseDslRecords(text: string, sourcePath: string): { sections: SectionR
       continue;
     }
 
+    if (currentTemplate && /^field\s+[A-Za-z_][A-Za-z0-9_]*\s+as\s+/.test(line)) {
+      symbols[currentTemplate.symbolIndex].kind = 'record';
+      continue;
+    }
+
     const symbolMatch = line.match(/^(alias|enum|template)\s+([A-Za-z_][A-Za-z0-9_]*)\b/);
     if (symbolMatch) {
       const pathParts = [...parentPath, symbolMatch[2]];
@@ -354,6 +364,9 @@ function parseDslRecords(text: string, sourcePath: string): { sections: SectionR
         sourcePath,
         line: lineNumber
       });
+      if (symbolMatch[1] === 'template') {
+        currentTemplate = { indent, symbolIndex: symbols.length - 1 };
+      }
     }
   }
 
