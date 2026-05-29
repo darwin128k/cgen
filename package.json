@@ -2,7 +2,7 @@
   "name": "cgen-vscode",
   "displayName": "CGen DSL",
   "description": "Small DSL editor and C header/source generator for VS Code.",
-  "version": "0.0.61",
+  "version": "0.0.65",
   "publisher": "local",
   "engines": {
     "vscode": "^1.81.0"

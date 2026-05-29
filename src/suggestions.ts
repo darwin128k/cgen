@@ -287,6 +287,7 @@ function getCandidates(typed: string, contextPath: string[], currentTemplate: Cu
   }
 
   if (/^enum\s+\S+\s+as\s+/.test(typed)) {
+    if (typed.trimEnd().endsWith(':')) return [];
     return completeTail(typed, getTypeCandidates(typed, contextPath, index));
   }
 
