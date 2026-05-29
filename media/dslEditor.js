@@ -326,6 +326,7 @@
 
   function clearSuggestion() {
     const hadSuggestion = !!suggestionInsertText;
+    clearTimeout(suggestTimer);
     suggestRequestId += 1;
     suggestionInsertText = '';
     completionCandidates = [];
@@ -824,6 +825,9 @@
     updateSelectionMode();
     updateActiveLine();
     updateBreadcrumb();
+    if (event.key === 'Escape') {
+      return;
+    }
     if (!completionList.hidden && (event.key === 'ArrowDown' || event.key === 'ArrowUp')) {
       return;
     }
