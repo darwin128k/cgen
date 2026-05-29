@@ -40,13 +40,21 @@ async function openDslEditor(context: vscode.ExtensionContext) {
 
   const config = vscode.workspace.getConfiguration('cgen');
   const scratchUri = vscode.Uri.joinPath(workspaceFolder.uri, '.cgen', 'scratch.cgen');
+  const stateUri = vscode.Uri.joinPath(workspaceFolder.uri, '.cgen', 'session.json');
   let initialValue: string;
   try {
     initialValue = Buffer.from(await vscode.workspace.fs.readFile(scratchUri)).toString('utf8');
   } catch {
     initialValue = config.get<string>('defaultDsl', '');
   }
-  panel.webview.html = getWebviewHtml(panel.webview, context.extensionUri, initialValue);
+  let initialCursor = 0;
+  let initialScroll = 0;
+  try {
+    const state = JSON.parse(Buffer.from(await vscode.workspace.fs.readFile(stateUri)).toString('utf8'));
+    initialCursor = state.cursor ?? 0;
+    initialScroll = state.scrollTop ?? 0;
+  } catch { /* no saved state */ }
+  panel.webview.html = getWebviewHtml(panel.webview, context.extensionUri, initialValue, initialCursor, initialScroll);
 
   let currentFilePath: string | undefined;
   let currentContent = initialValue;
@@ -72,7 +80,7 @@ async function openDslEditor(context: vscode.ExtensionContext) {
   saveEditorFn = saveToFile;
   panel.onDidDispose(() => { saveEditorFn = undefined; });
 
-  panel.webview.onDidReceiveMessage(async (message: { type: string; text?: string; cursor?: number; id?: number }) => {
+  panel.webview.onDidReceiveMessage(async (message: { type: string; text?: string; cursor?: number; scrollTop?: number; id?: number }) => {
     if (message.type === 'expand') {
       await vscode.commands.executeCommand('workbench.action.toggleMaximizeEditorGroup');
       return;
@@ -82,6 +90,12 @@ async function openDslEditor(context: vscode.ExtensionContext) {
       currentContent = message.text;
       await vscode.workspace.fs.createDirectory(vscode.Uri.joinPath(workspaceFolder.uri, '.cgen'));
       await vscode.workspace.fs.writeFile(scratchUri, Buffer.from(message.text, 'utf8'));
+      if (typeof message.cursor === 'number') {
+        await vscode.workspace.fs.writeFile(stateUri, Buffer.from(JSON.stringify({
+          cursor: message.cursor,
+          scrollTop: message.scrollTop ?? 0
+        }), 'utf8'));
+      }
       return;
     }
 
@@ -232,7 +246,7 @@ async function getProjectIndex(
   return projectIndexPromise;
 }
 
-function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri, value: string): string {
+function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri, value: string, cursor = 0, scrollTop = 0): string {
   const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'media', 'dslEditor.js'));
   const styleUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'media', 'dslEditor.css'));
   const nonce = createNonce();
@@ -276,6 +290,7 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri, value
       </button>
     </div>
   </main>
+  <script nonce="${nonce}">window.__cgenCursor=${cursor};window.__cgenScroll=${scrollTop};</script>
   <script nonce="${nonce}" src="${scriptUri}"></script>
 </body>
 </html>`;

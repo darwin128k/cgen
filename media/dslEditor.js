@@ -275,7 +275,12 @@
 
   function queueChangeMessage() {
     clearTimeout(autoSaveTimer);
-    autoSaveTimer = setTimeout(() => vscode.postMessage({ type: 'change', text: source.value }), 500);
+    autoSaveTimer = setTimeout(() => vscode.postMessage({
+      type: 'change',
+      text: source.value,
+      cursor: source.selectionStart,
+      scrollTop: source.scrollTop
+    }), 500);
   }
 
   function syncScroll() {
@@ -901,7 +906,14 @@
         return;
       }
       if (wasSnippet) {
-        source.selectionStart = source.selectionEnd;
+        const afterSel = source.selectionEnd;
+        const lineEnd = source.value.indexOf('\n', afterSel);
+        const closeParen = source.value.indexOf(')', afterSel);
+        const target = closeParen !== -1 && (lineEnd === -1 || closeParen < lineEnd)
+          ? closeParen + 1
+          : afterSel;
+        source.selectionStart = target;
+        source.selectionEnd = target;
         paint();
         return;
       }
@@ -1028,7 +1040,14 @@
   });
   window.visualViewport?.addEventListener('resize', () => syncMetrics(true));
 
+  if (window.__cgenCursor > 0) {
+    const pos = Math.min(window.__cgenCursor, source.value.length);
+    source.selectionStart = pos;
+    source.selectionEnd = pos;
+    source.scrollTop = window.__cgenScroll || 0;
+  }
   paint();
+  syncScroll();
   requestSuggestion();
   source.focus();
 }());
