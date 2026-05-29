@@ -39,24 +39,46 @@ async function openDslEditor(context: vscode.ExtensionContext) {
   );
 
   const config = vscode.workspace.getConfiguration('cgen');
-  const scratchUri = vscode.Uri.joinPath(workspaceFolder.uri, '.cgen', 'scratch.cgen');
+  const scratchUri = vscode.Uri.joinPath(workspaceFolder.uri, '.cgen', 'session.cgen');
   const stateUri = vscode.Uri.joinPath(workspaceFolder.uri, '.cgen', 'session.json');
-  let initialValue: string;
-  try {
-    initialValue = Buffer.from(await vscode.workspace.fs.readFile(scratchUri)).toString('utf8');
-  } catch {
-    initialValue = config.get<string>('defaultDsl', '');
-  }
+
   let initialCursor = 0;
   let initialScroll = 0;
+  let initialFilePath: string | undefined;
   try {
     const state = JSON.parse(Buffer.from(await vscode.workspace.fs.readFile(stateUri)).toString('utf8'));
     initialCursor = state.cursor ?? 0;
     initialScroll = state.scrollTop ?? 0;
+    initialFilePath = state.filePath ?? undefined;
   } catch { /* no saved state */ }
-  panel.webview.html = getWebviewHtml(panel.webview, context.extensionUri, initialValue, initialCursor, initialScroll);
 
   let currentFilePath: string | undefined;
+  let initialValue: string;
+  if (initialFilePath) {
+    try {
+      initialValue = Buffer.from(await vscode.workspace.fs.readFile(vscode.Uri.file(initialFilePath))).toString('utf8');
+      currentFilePath = initialFilePath;
+    } catch {
+      initialFilePath = undefined;
+      try {
+        initialValue = Buffer.from(await vscode.workspace.fs.readFile(scratchUri)).toString('utf8');
+      } catch {
+        initialValue = config.get<string>('defaultDsl', '');
+      }
+    }
+  } else {
+    try {
+      initialValue = Buffer.from(await vscode.workspace.fs.readFile(scratchUri)).toString('utf8');
+    } catch {
+      initialValue = config.get<string>('defaultDsl', '');
+    }
+  }
+
+  panel.webview.html = getWebviewHtml(panel.webview, context.extensionUri, initialValue, initialCursor, initialScroll);
+  if (currentFilePath) {
+    panel.title = `CGen — ${path.basename(currentFilePath)}`;
+  }
+
   let currentContent = initialValue;
 
   async function saveToFile() {
@@ -73,8 +95,17 @@ async function openDslEditor(context: vscode.ExtensionContext) {
         const name = path.basename(uri.fsPath);
         panel.title = `CGen — ${name}`;
         await panel.webview.postMessage({ type: 'title', text: name });
+        await saveSession(0, 0);
       }
     }
+  }
+
+  async function saveSession(cursor: number, scrollTop: number) {
+    await vscode.workspace.fs.writeFile(stateUri, Buffer.from(JSON.stringify({
+      cursor,
+      scrollTop,
+      filePath: currentFilePath ?? null
+    }), 'utf8'));
   }
 
   saveEditorFn = saveToFile;
@@ -91,10 +122,7 @@ async function openDslEditor(context: vscode.ExtensionContext) {
       await vscode.workspace.fs.createDirectory(vscode.Uri.joinPath(workspaceFolder.uri, '.cgen'));
       await vscode.workspace.fs.writeFile(scratchUri, Buffer.from(message.text, 'utf8'));
       if (typeof message.cursor === 'number') {
-        await vscode.workspace.fs.writeFile(stateUri, Buffer.from(JSON.stringify({
-          cursor: message.cursor,
-          scrollTop: message.scrollTop ?? 0
-        }), 'utf8'));
+        await saveSession(message.cursor, message.scrollTop ?? 0);
       }
       return;
     }
@@ -135,6 +163,7 @@ async function openDslEditor(context: vscode.ExtensionContext) {
         panel.title = `CGen — ${name}`;
         await panel.webview.postMessage({ type: 'load', text: currentContent });
         await panel.webview.postMessage({ type: 'title', text: name });
+        await saveSession(0, 0);
       }
       return;
     }
