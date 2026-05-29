@@ -500,7 +500,7 @@
     const edit = getSuggestionEdit(suggestionInsertText);
     replaceSelection(edit.text, undefined, edit.selection);
     clearSuggestion();
-    snippetMode = edit.tabStops !== undefined && edit.tabStops.length > 1;
+    snippetMode = edit.tabStops !== undefined && edit.tabStops.length >= 1;
     if (!snippetMode) {
       snippetTabStopWords = [];
     }
@@ -908,10 +908,9 @@
       if (wasSnippet) {
         const afterSel = source.selectionEnd;
         const lineEnd = source.value.indexOf('\n', afterSel);
-        const closeParen = source.value.indexOf(')', afterSel);
-        const target = closeParen !== -1 && (lineEnd === -1 || closeParen < lineEnd)
-          ? closeParen + 1
-          : afterSel;
+        const slice = source.value.slice(afterSel, lineEnd === -1 ? source.value.length : lineEnd);
+        const termMatch = slice.match(/[):]/);
+        const target = termMatch ? afterSel + termMatch.index + 1 : afterSel;
         source.selectionStart = target;
         source.selectionEnd = target;
         paint();
@@ -930,6 +929,15 @@
     if (event.key === 'Enter' && !completionList.hidden) {
       event.preventDefault();
       acceptSuggestion();
+      return;
+    }
+
+    if (event.key === 'Enter' && snippetMode) {
+      event.preventDefault();
+      source.selectionStart = source.selectionEnd;
+      snippetMode = false;
+      snippetTabStopWords = [];
+      paint();
       return;
     }
 
