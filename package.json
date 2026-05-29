@@ -1,0 +1,135 @@
+{
+  "name": "cgen-vscode",
+  "displayName": "CGen DSL",
+  "description": "Small DSL editor and C header/source generator for VS Code.",
+  "version": "0.0.60",
+  "publisher": "local",
+  "engines": {
+    "vscode": "^1.81.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Other"
+  ],
+  "activationEvents": [
+    "*",
+    "onCommand:cgen.openDslEditor",
+    "onCommand:cgen.openScratchFile",
+    "onCommand:cgen.generateFromFile",
+    "onLanguage:cgen",
+    "workspaceContains:cgen.json"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "cgen.openDslEditor",
+        "title": "Open Editor",
+        "category": "CGen"
+      },
+      {
+        "command": "cgen.saveEditor",
+        "title": "Save",
+        "category": "CGen"
+      },
+      {
+        "command": "cgen.openScratchFile",
+        "title": "Open DSL File",
+        "category": "CGen"
+      },
+      {
+        "command": "cgen.generateFromFile",
+        "title": "Generate From Current DSL File",
+        "category": "CGen",
+        "enablement": "editorLangId == cgen"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "cgen.openDslEditor",
+        "key": "ctrl+alt+g",
+        "mac": "cmd+alt+g",
+        "when": "editorTextFocus"
+      },
+      {
+        "command": "cgen.saveEditor",
+        "key": "ctrl+s",
+        "mac": "cmd+s",
+        "when": "activeWebviewPanelId == 'cgen.dslEditor'"
+      },
+      {
+        "command": "cgen.generateFromFile",
+        "key": "ctrl+enter",
+        "mac": "cmd+enter",
+        "when": "editorTextFocus && editorLangId == cgen"
+      }
+    ],
+    "menus": {
+      "commandPalette": [
+        {
+          "command": "cgen.openDslEditor"
+        },
+        {
+          "command": "cgen.saveEditor",
+          "when": "false"
+        },
+        {
+          "command": "cgen.openScratchFile"
+        },
+        {
+          "command": "cgen.generateFromFile",
+          "when": "editorLangId == cgen"
+        }
+      ]
+    },
+    "languages": [
+      {
+        "id": "cgen",
+        "aliases": [
+          "CGen DSL",
+          "cgen"
+        ],
+        "extensions": [
+          ".cgen"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "cgen",
+        "scopeName": "source.cgen",
+        "path": "./syntaxes/cgen.tmLanguage.json"
+      }
+    ],
+    "configuration": {
+      "title": "CGen",
+      "properties": {
+        "cgen.defaultDsl": {
+          "type": "string",
+          "default": "",
+          "description": "Default text shown in the CGen DSL popup."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "package": "vsce package --allow-missing-repository --out releases/cgen-vscode-${npm_package_version}.vsix",
+    "watch": "tsc -watch -p ./",
+    "vscode:prepublish": "npm run compile"
+  },
+  "devDependencies": {
+    "@types/node": "18.x",
+    "@types/vscode": "1.81.0",
+    "@vscode/vsce": "2.15.0",
+    "typescript": "^5.1.6"
+  },
+  "overrides": {
+    "cheerio": "1.0.0-rc.12",
+    "undici": "5.28.5"
+  },
+  "dependencies": {
+    "sql.js": "^1.14.1"
+  }
+}

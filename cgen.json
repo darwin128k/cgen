@@ -1,0 +1,6 @@
+{
+  "build": {
+    "include": "./include",
+    "source": "./src"
+  }
+}

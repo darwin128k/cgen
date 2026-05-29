@@ -1,0 +1,6 @@
+package lh:
+    @scope(guard)
+    package numeric:
+        @scope(guard)
+        module types:
+            alias uchar as c.uchar

@@ -1,0 +1,15 @@
+.git/**
+.vscode/**
+.vscode-test/**
+node_modules/**
+!node_modules/sql.js/**
+releases/**
+src/**
+
+*.vsix
+*.tsbuildinfo
+
+.gitignore
+cgen.json
+example.cgen
+tsconfig.json
