@@ -2,7 +2,7 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import initSqlJs, { Database, SqlJsStatic } from 'sql.js';
 
-type SectionKind = 'root' | 'package' | 'module' | 'scope';
+type SectionKind = 'root' | 'package' | 'module' | 'scope' | 'extern';
 type SymbolKind = 'alias' | 'enum' | 'template' | 'record';
 
 export interface IndexedNode {
@@ -167,9 +167,29 @@ export class CgenProjectIndex {
     this.db = new this.sql.Database();
     this.createSchema();
     this.addHistory('startup_reindex', 'clean');
+    await this.indexBuiltinPackages();
     await this.indexWorkspaceFiles();
     await this.save();
     this.startWatcher();
+  }
+
+  private async indexBuiltinPackages(): Promise<void> {
+    const packagesUri = vscode.Uri.joinPath(this.context.extensionUri, 'packages');
+    let entries: [string, vscode.FileType][];
+    try {
+      entries = await vscode.workspace.fs.readDirectory(packagesUri);
+    } catch {
+      return;
+    }
+
+    for (const [name, type] of entries) {
+      if (type !== vscode.FileType.File || !name.endsWith('.cgen')) {
+        continue;
+      }
+      const fileUri = vscode.Uri.joinPath(packagesUri, name);
+      const bytes = await vscode.workspace.fs.readFile(fileUri);
+      this.replaceSource(`__builtin__/${name}`, Buffer.from(bytes).toString('utf8'));
+    }
   }
 
   private async indexWorkspaceFiles(): Promise<void> {
@@ -338,7 +358,7 @@ function parseDslRecords(text: string, sourcePath: string): { sections: SectionR
     }
 
     const parentPath = stack[stack.length - 1].path;
-    const sectionMatch = line.match(/^(package|module|scope)\s+([A-Za-z_][A-Za-z0-9_]*)\s*:/);
+    const sectionMatch = line.match(/^(package|module|scope|extern)\s+([A-Za-z_][A-Za-z0-9_]*)\s*:/);
     if (sectionMatch) {
       const pathParts = [...parentPath, sectionMatch[2]];
       sections.push({
@@ -356,7 +376,7 @@ function parseDslRecords(text: string, sourcePath: string): { sections: SectionR
     if (currentTemplate && /^param\s+/.test(line)) {
       currentTemplate.hasParams = true;
       const variadicParam = line.match(/^param\s+\.\.\.\s+as\s+([A-Za-z_][A-Za-z0-9_]*)$/);
-      const normalParam = line.match(/^param\s+([A-Za-z_][A-Za-z0-9_]*)$/);
+      const normalParam = line.match(/^param\s+([A-Za-z_][A-Za-z0-9_]*)(?:\s+as\s+\S+)?$/);
       const paramName = variadicParam?.[1] ?? normalParam?.[1];
       if (paramName) {
         currentTemplate.params.push(paramName);
@@ -402,7 +422,7 @@ function expandInlineDsl(source: string): Array<{ line: string; lineNumber: numb
     const lineNumber = rawIndex + 1;
     const baseIndent = rawLine.match(/^\s*/)?.[0] ?? '';
     const trimmed = rawLine.trim();
-    if (!trimmed || !/^(package|module|scope)\b/.test(trimmed)) {
+    if (!trimmed || !/^(package|module|scope|extern)\b/.test(trimmed)) {
       lines.push({ line: rawLine, lineNumber });
       return;
     }

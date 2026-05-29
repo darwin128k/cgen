@@ -1,0 +1,99 @@
+extern c:
+    alias char as "char"
+    alias schar as "signed char"
+    alias uchar as "unsigned char"
+
+    alias short as "short"
+    alias sshort as "signed short"
+    alias ushort as "unsigned short"
+
+    alias int as "int"
+    alias sint as "signed int"
+    alias uint as "unsigned int"
+
+    alias long as "long"
+    alias slong as "signed long"
+    alias ulong as "unsigned long"
+
+    alias llong as "long long"
+    alias sllong as "signed long long"
+    alias ullong as "unsigned long long"
+
+    alias float as "float"
+    alias double as "double"
+
+    alias bool as "_Bool"
+    alias void as "void"
+
+    @header(<stddef.h>)
+    alias size as "size_t"
+
+    @header(<stddef.h>)
+    alias nullptr as "NULL"
+
+    @header(<stddef.h>)
+    alias ptrdiff as "ptrdiff_t"
+
+    @header(<stddef.h>)
+    alias wchar as "wchar_t"
+
+    @header(<stdint.h>)
+    alias i8 as "int8_t"
+
+    @header(<stdint.h>)
+    alias i16 as "int16_t"
+
+    @header(<stdint.h>)
+    alias i32 as "int32_t"
+
+    @header(<stdint.h>)
+    alias i64 as "int64_t"
+
+    @header(<stdint.h>)
+    alias u8 as "uint8_t"
+
+    @header(<stdint.h>)
+    alias u16 as "uint16_t"
+
+    @header(<stdint.h>)
+    alias u32 as "uint32_t"
+
+    @header(<stdint.h>)
+    alias u64 as "uint64_t"
+
+    @header(<stdint.h>)
+    alias imax as "intmax_t"
+
+    @header(<stdint.h>)
+    alias umax as "uintmax_t"
+
+    @header(<stdint.h>)
+    alias iptr as "intptr_t"
+
+    @header(<stdint.h>)
+    alias uptr as "uintptr_t"
+
+    @header(<stdlib.h>)
+    template malloc:
+        param size as c.size
+
+    @header(<stdlib.h>)
+    template calloc:
+        param count as c.size
+        param size as c.size
+
+    @header(<stdlib.h>)
+    template free:
+        param ptr as c.void
+
+    @header(<string.h>)
+    template memcpy:
+        param dest as c.void
+        param src as c.void
+        param size as c.size
+
+    @header(<string.h>)
+    template memset:
+        param dest as c.void
+        param value as c.int
+        param size as c.size

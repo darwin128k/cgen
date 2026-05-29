@@ -1,4 +1,5 @@
 import { CgenProjectIndex } from './indexer';
+import { knownTemplateBuiltins } from './clib';
 
 export interface SuggestionRequest {
   text: string;
@@ -10,7 +11,7 @@ export interface SuggestionResult {
   candidates: string[];
 }
 
-type SectionKind = 'root' | 'package' | 'module' | 'scope';
+type SectionKind = 'root' | 'package' | 'module' | 'scope' | 'extern';
 type SymbolKind = 'alias' | 'enum' | 'template' | 'record';
 
 interface DslNode {
@@ -48,7 +49,7 @@ interface CurrentTemplate {
 const builtinTemplates = [
   'c.array',
   'c.const',
-  'c.func',
+  'c.fn',
   'c.ptr',
   'c.struct',
   'c.union',
@@ -308,7 +309,7 @@ function getCandidates(typed: string, contextPath: string[], currentTemplate: Cu
     return completeTail(typed, getTemplateUseCandidates(typed, contextPath, currentTemplate, index));
   }
 
-  if (/^(package|module|scope)\s+/.test(typed)) {
+  if (/^(package|module|scope|extern)\s+/.test(typed)) {
     return completeSectionName(typed, contextPath, index);
   }
 
@@ -427,11 +428,16 @@ function getTailToken(typed: string): string {
 function getDottedTemplateUseCandidates(token: string, index: DslIndex, currentTemplate: CurrentTemplate): string[] {
   const parentPath = token.split('.').slice(0, -1).filter(Boolean);
   const node = findNode(index.root, parentPath);
+  const builtinMatches = getAllUsePaths(index, currentTemplate).filter((name) => name.startsWith(token));
+
   if (!node) {
-    return getAllUsePaths(index, currentTemplate).filter((name) => name.startsWith(token));
+    return builtinMatches;
   }
 
-  return getNodeTemplateUseMembers(node, `${parentPath.join('.')}.`, currentTemplate);
+  return uniqueInOrder([
+    ...getNodeTemplateUseMembers(node, `${parentPath.join('.')}.`, currentTemplate),
+    ...builtinMatches
+  ]);
 }
 
 function getNodeTemplateUseMembers(node: DslNode, prefix: string, currentTemplate: CurrentTemplate): string[] {
@@ -486,7 +492,8 @@ function getAllUsePaths(index: DslIndex, currentTemplate: CurrentTemplate): stri
 
   return uniqueInOrder([
     ...result,
-    ...builtinTemplates.map((name) => `${name}()`)
+    ...builtinTemplates.map((name) => `${name}()`),
+    ...[...knownTemplateBuiltins].map((name) => `${name}()`)
   ]);
 }
 
@@ -496,7 +503,12 @@ function getDottedCandidates(token: string, contextPath: string[], index: DslInd
     const node = findNode(index.root, parentPath);
     if (node) {
       const parentPrefix = parentPath.join('.');
-      return getNodeMemberNames(node).map((name) => `${parentPrefix}.${name}`);
+      const typeNames = sortUnique([
+        ...node.children.map((child) => child.name),
+        ...node.symbols.filter((s) => s.kind !== 'template').map((s) => s.name)
+      ]).map((name) => `${parentPrefix}.${name}`);
+      const fallbackMatches = fallback.filter((f) => f.startsWith(token));
+      return uniqueInOrder([...typeNames, ...fallbackMatches]);
     }
   }
 

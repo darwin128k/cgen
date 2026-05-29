@@ -13,7 +13,7 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('cgen.openDslEditor', () => openDslEditor(context)),
     vscode.commands.registerCommand('cgen.saveEditor', () => saveEditorFn?.()),
     vscode.commands.registerCommand('cgen.openScratchFile', openScratchFile),
-    vscode.commands.registerCommand('cgen.generateFromFile', generateFromCurrentFile)
+    vscode.commands.registerCommand('cgen.generateFromFile', () => generateFromCurrentFile(context))
   );
 }
 
@@ -173,7 +173,7 @@ async function openDslEditor(context: vscode.ExtensionContext) {
     }
 
     try {
-      const files = await generateDsl(workspaceFolder, message.text);
+      const files = await generateDsl(workspaceFolder, context.extensionUri, message.text);
       await panel.webview.postMessage({ type: 'error', lines: [] });
       vscode.window.showInformationMessage(`CGen generated ${files.length} file(s).`);
     } catch (error) {
@@ -184,7 +184,7 @@ async function openDslEditor(context: vscode.ExtensionContext) {
   });
 }
 
-async function generateFromCurrentFile() {
+async function generateFromCurrentFile(context: vscode.ExtensionContext) {
   const editor = vscode.window.activeTextEditor;
   if (!editor) {
     vscode.window.showErrorMessage('Open a .cgen file first.');
@@ -203,7 +203,7 @@ async function generateFromCurrentFile() {
   }
 
   try {
-    const files = await generateDsl(workspaceFolder, editor.document.getText());
+    const files = await generateDsl(workspaceFolder, context.extensionUri, editor.document.getText());
     vscode.window.showInformationMessage(`CGen generated ${files.length} file(s).`);
   } catch (error) {
     vscode.window.showErrorMessage(error instanceof Error ? error.message : String(error));

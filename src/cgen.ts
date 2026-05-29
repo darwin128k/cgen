@@ -2,6 +2,7 @@ import * as cp from 'child_process';
 import * as path from 'path';
 import * as util from 'util';
 import * as vscode from 'vscode';
+import { applyTemplateBuiltin, builtinCTypes, defineAliasBuiltins, knownTemplateBuiltins } from './clib';
 
 const execFile = util.promisify(cp.execFile);
 
@@ -12,7 +13,7 @@ export interface CgenConfig {
   };
 }
 
-type SectionKind = 'root' | 'package' | 'module' | 'scope';
+type SectionKind = 'root' | 'package' | 'module' | 'scope' | 'extern';
 type EnumConstMode = 'static' | 'define' | 'extern';
 type EmitTarget = 'header' | 'source' | 'both';
 
@@ -118,6 +119,7 @@ interface ModuleArtifact {
   symbolParts: string[];
   typeParts: string[];
   dependencies: Set<string>;
+  externHeaders: Set<string>;
 }
 
 interface TypeSymbol {
@@ -129,6 +131,7 @@ interface TypeSymbol {
   target?: string;
   line: number;
   defineOnly: boolean;
+  externHeader?: string;
 }
 
 interface TemplateSymbol {
@@ -136,6 +139,7 @@ interface TemplateSymbol {
   macroName: string;
   moduleId: string;
   includePath: string;
+  externHeader?: string;
 }
 
 interface UseExpression {
@@ -151,30 +155,6 @@ interface ScopedTypeDeclaration {
   typeParts: string[];
 }
 
-const builtinCTypes: Record<string, string> = {
-  'c.char': 'char',
-  'c.schar': 'signed char',
-  'c.uchar': 'unsigned char',
-  'c.sshort': 'signed short',
-  'c.short': 'short',
-  'c.ushort': 'unsigned short',
-  'c.sint': 'signed int',
-  'c.int': 'int',
-  'c.uint': 'unsigned int',
-  'c.slong': 'signed long',
-  'c.long': 'long',
-  'c.ulong': 'unsigned long',
-  'c.sllong': 'signed long long',
-  'c.llong': 'long long',
-  'c.ullong': 'unsigned long long',
-  'c.float': 'float',
-  'c.double': 'double',
-  'c.bool': '_Bool',
-  'c.size': 'size_t',
-  'c.void': 'void'
-};
-
-const defineAliasBuiltins = new Set(['c.void', 'c.ptr.of']);
 
 export async function loadConfig(workspaceFolder: vscode.WorkspaceFolder): Promise<CgenConfig> {
   const configUri = vscode.Uri.joinPath(workspaceFolder.uri, 'cgen.json');
@@ -206,20 +186,25 @@ export async function loadConfig(workspaceFolder: vscode.WorkspaceFolder): Promi
   };
 }
 
-export async function generateDsl(workspaceFolder: vscode.WorkspaceFolder, source: string): Promise<string[]> {
+export async function generateDsl(workspaceFolder: vscode.WorkspaceFolder, extensionUri: vscode.Uri, source: string): Promise<string[]> {
   const config = await loadConfig(workspaceFolder);
-  const parsed = parseDsl(source);
 
-  if (parsed.diagnostics.length > 0) {
-    throw new Error(parsed.diagnostics.join('\n'));
+  const allSources = await collectAllDslSources(workspaceFolder, extensionUri, source);
+  const parsedList = allSources.map(parseDsl);
+  const merged = mergeDsls(parsedList);
+
+  if (merged.diagnostics.length > 0) {
+    throw new Error(merged.diagnostics.join('\n'));
   }
 
   const generated: string[] = [];
   const includeRoot = resolveWorkspacePath(workspaceFolder, config.build.include);
   const sourceRoot = resolveWorkspacePath(workspaceFolder, config.build.source);
-  const modules = collectModules(parsed.root);
+  const modules = collectModules(merged.root);
   const symbols = buildTypeSymbols(modules);
   const templateSymbols = buildTemplateSymbols(modules);
+
+  collectExternSymbols(merged.root, symbols, templateSymbols);
 
   resolveModuleDependencies(modules, symbols, templateSymbols);
 
@@ -247,6 +232,67 @@ export async function generateDsl(workspaceFolder: vscode.WorkspaceFolder, sourc
 
   await runClangFormat(workspaceFolder, generated);
   return generated;
+}
+
+async function collectAllDslSources(workspaceFolder: vscode.WorkspaceFolder, extensionUri: vscode.Uri, primarySource: string): Promise<string[]> {
+  const sources: string[] = [primarySource];
+  const seen = new Set<string>([primarySource]);
+
+  const packagesUri = vscode.Uri.joinPath(extensionUri, 'packages');
+  try {
+    const entries = await vscode.workspace.fs.readDirectory(packagesUri);
+    for (const [name, type] of entries) {
+      if (type !== vscode.FileType.File || !name.endsWith('.cgen')) {
+        continue;
+      }
+      const bytes = await vscode.workspace.fs.readFile(vscode.Uri.joinPath(packagesUri, name));
+      const builtinSource = Buffer.from(bytes).toString('utf8');
+      if (!seen.has(builtinSource)) {
+        seen.add(builtinSource);
+        sources.push(builtinSource);
+      }
+    }
+  } catch {
+    // No bundled packages found.
+  }
+
+  const files = await vscode.workspace.findFiles(
+    new vscode.RelativePattern(workspaceFolder, '**/*.cgen'),
+    '**/{node_modules,out,build,dist,releases,.cgen}/**',
+    256
+  );
+
+  for (const uri of files) {
+    const sourcePath = path.relative(workspaceFolder.uri.fsPath, uri.fsPath).replace(/\\/g, '/');
+    if (sourcePath.startsWith('.cgen/')) {
+      continue;
+    }
+
+    const bytes = await vscode.workspace.fs.readFile(uri);
+    const fileSource = Buffer.from(bytes).toString('utf8');
+    if (!seen.has(fileSource)) {
+      seen.add(fileSource);
+      sources.push(fileSource);
+    }
+  }
+
+  return sources;
+}
+
+function mergeDsls(parsedList: ParsedDsl[]): ParsedDsl {
+  const root = createSection('root', '', 0);
+  const diagnostics: string[] = [];
+
+  for (const parsed of parsedList) {
+    for (const child of parsed.root.children) {
+      root.children.push(child);
+    }
+    for (const diagnostic of parsed.diagnostics) {
+      diagnostics.push(diagnostic);
+    }
+  }
+
+  return { root, diagnostics };
 }
 
 async function runClangFormat(workspaceFolder: vscode.WorkspaceFolder, files: string[]): Promise<void> {
@@ -420,7 +466,7 @@ function parseAttribute(line: string, lineNumber: number): Attribute | undefined
 }
 
 function parseSection(line: string, lineNumber: number): SectionNode | undefined {
-  const match = line.match(/^(package|module|scope)\s+([A-Za-z_][A-Za-z0-9_]*)\s*:\s*$/);
+  const match = line.match(/^(package|module|scope|extern)\s+([A-Za-z_][A-Za-z0-9_]*)\s*:\s*$/);
   if (!match) {
     return undefined;
   }
@@ -487,7 +533,7 @@ function parseTemplateParam(line: string, lineNumber: number): TemplateParam | u
     return { variadic: true, name: variadicMatch[1], line: lineNumber };
   }
 
-  const normalMatch = line.match(/^param\s+([A-Za-z_][A-Za-z0-9_]*)$/);
+  const normalMatch = line.match(/^param\s+([A-Za-z_][A-Za-z0-9_]*)(?:\s+as\s+\S+)?$/);
   if (normalMatch) {
     return { variadic: false, name: normalMatch[1], line: lineNumber };
   }
@@ -517,7 +563,7 @@ function expandTemplateBody(template: TemplateNode, templateSymbols: Map<string,
 
   const variadicParam = template.params.find((p) => p.variadic);
   const args = expression.args.map((arg) => expandTemplateArgument(arg, template.bodyLine, templateSymbols));
-  let result = expression.callee.startsWith('c.')
+  let result = expression.callee.startsWith('c.') && knownTemplateBuiltins.has(expression.callee)
     ? applyTemplateBuiltin(expression.callee, args, template.bodyLine)
     : applyTemplateSymbol(expression.callee, args, template.bodyLine, templateSymbols);
 
@@ -560,7 +606,7 @@ function expandTemplateArgument(arg: string, line: number, templateSymbols: Map<
   }
 
   const args = expression.args.map((nestedArg) => expandTemplateArgument(nestedArg, line, templateSymbols));
-  return expression.callee.startsWith('c.')
+  return expression.callee.startsWith('c.') && knownTemplateBuiltins.has(expression.callee)
     ? applyTemplateBuiltin(expression.callee, args, line)
     : applyTemplateSymbol(expression.callee, args, line, templateSymbols);
 }
@@ -623,43 +669,6 @@ function applyTemplateSymbol(templateKey: string, args: string[], line: number, 
   return `${symbol.macroName}(${args.join(', ')})`;
 }
 
-function applyTemplateBuiltin(builtin: string, args: string[], line: number): string {
-  const operand = (index: number) => protectTemplateOperand(args[index], line);
-
-  switch (builtin) {
-    case 'c.ret': return `(${args[0]})`;
-    case 'c.initializer': return `{ ${args.join(', ')} }`;
-    case 'c.sel': return `(${operand(0)} ? ${operand(1)} : ${operand(2)})`;
-    case 'c.eq': return `(${operand(0)} == ${operand(1)})`;
-    case 'c.ne': return `(${operand(0)} != ${operand(1)})`;
-    case 'c.lt': return `(${operand(0)} < ${operand(1)})`;
-    case 'c.le': return `(${operand(0)} <= ${operand(1)})`;
-    case 'c.gt': return `(${operand(0)} > ${operand(1)})`;
-    case 'c.ge': return `(${operand(0)} >= ${operand(1)})`;
-    case 'c.math.add': return `(${operand(0)} + ${operand(1)})`;
-    case 'c.math.sub': return `(${operand(0)} - ${operand(1)})`;
-    case 'c.math.mul': return `(${operand(0)} * ${operand(1)})`;
-    case 'c.math.div': return `(${operand(0)} / ${operand(1)})`;
-    case 'c.math.mod': return `(${operand(0)} % ${operand(1)})`;
-    case 'c.math.neg': return `(-${operand(0)})`;
-    case 'c.math.bit.and': return `(${operand(0)} & ${operand(1)})`;
-    case 'c.math.bit.or': return `(${operand(0)} | ${operand(1)})`;
-    case 'c.math.bit.xor': return `(${operand(0)} ^ ${operand(1)})`;
-    case 'c.math.bit.not': return `(~${operand(0)})`;
-    case 'c.math.bit.shl': return `(${operand(0)} << ${operand(1)})`;
-    case 'c.math.bit.shr': return `(${operand(0)} >> ${operand(1)})`;
-    case 'c.math.bit.set': return `(${operand(0)} |= ${operand(1)})`;
-    default: throw new Error(`Line ${line}: unknown template builtin "${builtin}"`);
-  }
-}
-
-function protectTemplateOperand(arg: string, line: number): string {
-  if (parseCallExpression(arg, line)) {
-    return arg;
-  }
-
-  return `(${arg})`;
-}
 
 function escapeRegex(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -679,7 +688,7 @@ function expandInlineDsl(source: string): string {
 
   for (const rawLine of source.split(/\r?\n/)) {
     const trimmed = rawLine.trim();
-    if (!trimmed || !/^(package|module|scope)\b/.test(trimmed)) {
+    if (!trimmed || !/^(package|module|scope|extern)\b/.test(trimmed)) {
       lines.push(rawLine);
       continue;
     }
@@ -692,7 +701,7 @@ function expandInlineDsl(source: string): string {
 
     for (let index = 0; index < parts.length; index += 1) {
       const part = parts[index];
-      const isSection = /^(package|module|scope)\s+[A-Za-z_][A-Za-z0-9_]*$/.test(part);
+      const isSection = /^(package|module|scope|extern)\s+[A-Za-z_][A-Za-z0-9_]*$/.test(part);
       const indent = '    '.repeat(index);
       lines.push(`${indent}${part}${isSection ? ':' : ''}`);
     }
@@ -745,7 +754,8 @@ function collectModules(root: SectionNode): ModuleArtifact[] {
       symbolPrefix: context.symbolParts.join('_'),
       symbolParts: context.symbolParts,
       typeParts: context.typeParts,
-      dependencies: new Set<string>()
+      dependencies: new Set<string>(),
+      externHeaders: new Set<string>()
     });
   });
 
@@ -758,6 +768,10 @@ function walkSections(
   onModule: (section: SectionNode, context: ModuleContext) => void
 ): void {
   for (const child of section.children) {
+    if (child.kind === 'extern') {
+      continue;
+    }
+
     const next = applySectionContext(child, context);
     if (child.kind === 'module') {
       onModule(child, next);
@@ -768,7 +782,7 @@ function walkSections(
 }
 
 function applySectionContext(section: SectionNode, context: ModuleContext): ModuleContext {
-  if (section.kind === 'root' || section.kind === 'scope') {
+  if (section.kind === 'root' || section.kind === 'scope' || section.kind === 'extern') {
     return context;
   }
 
@@ -789,6 +803,82 @@ function hasAttribute(node: SectionNode | AliasNode | EnumNode, name: string, ar
 
     return arg === undefined || attribute.args.includes(arg);
   });
+}
+
+function collectExternAliases(root: SectionNode): AliasNode[] {
+  const aliases: AliasNode[] = [];
+  for (const child of root.children) {
+    if (child.kind === 'extern') {
+      for (const alias of child.aliases) {
+        aliases.push(alias);
+      }
+    }
+  }
+  return aliases;
+}
+
+function collectExternTemplates(root: SectionNode): TemplateNode[] {
+  const templates: TemplateNode[] = [];
+  for (const child of root.children) {
+    if (child.kind === 'extern') {
+      for (const template of child.templates) {
+        templates.push(template);
+      }
+    }
+  }
+  return templates;
+}
+
+function getHeaderArg(attributes: Attribute[]): string | undefined {
+  for (const attr of attributes) {
+    if (attr.name === 'header' && attr.args.length > 0) {
+      return attr.args[0];
+    }
+  }
+  return undefined;
+}
+
+function collectExternSymbols(
+  root: SectionNode,
+  symbols: Map<string, TypeSymbol>,
+  templateSymbols: Map<string, TemplateSymbol>
+): void {
+  for (const alias of collectExternAliases(root)) {
+    const key = `c.${alias.name}`;
+    const existing = symbols.get(key);
+    if (existing) {
+      throw new Error(`Line ${alias.line}: type "${key}" already defined`);
+    }
+
+    const cType = alias.target.replace(/^"(.*)"$/, '$1');
+    symbols.set(key, {
+      key,
+      cName: cType,
+      moduleId: 'extern/c',
+      includePath: 'extern/c',
+      kind: 'alias',
+      target: alias.target,
+      line: alias.line,
+      defineOnly: false,
+      externHeader: getHeaderArg(alias.attributes)
+    });
+  }
+
+  for (const template of collectExternTemplates(root)) {
+    const key = `c.${template.name}`;
+    const existing = templateSymbols.get(key);
+    if (existing) {
+      throw new Error(`Line ${template.line}: template "${key}" already defined`);
+    }
+
+    templateSymbols.set(key, {
+      key,
+      macroName: template.name,
+      moduleId: 'extern/c',
+      includePath: 'extern/c',
+      externHeader: getHeaderArg(template.attributes)
+    });
+  }
 }
 
 function buildTypeSymbols(modules: ModuleArtifact[]): Map<string, TypeSymbol> {
@@ -898,7 +988,11 @@ function resolveModuleDependencies(
     for (const { declaration } of collectScopeTypeDeclarations(module.section, [])) {
       for (const symbol of getTypeExpressionSymbols(declaration.target, declaration.line, symbols)) {
         if (symbol.moduleId !== module.id) {
-          module.dependencies.add(symbol.moduleId);
+          if (symbol.externHeader) {
+            module.externHeaders.add(symbol.externHeader);
+          } else {
+            module.dependencies.add(symbol.moduleId);
+          }
         }
       }
     }
@@ -910,7 +1004,11 @@ function resolveModuleDependencies(
           if (paramNames.has(field.target)) { continue; }
           for (const symbol of getTypeExpressionSymbols(field.target, field.line, symbols)) {
             if (symbol.moduleId !== module.id) {
-              module.dependencies.add(symbol.moduleId);
+              if (symbol.externHeader) {
+                module.externHeaders.add(symbol.externHeader);
+              } else {
+                module.dependencies.add(symbol.moduleId);
+              }
             }
           }
         }
@@ -921,7 +1019,11 @@ function resolveModuleDependencies(
         for (const field of template.fields) {
           for (const symbol of getTypeExpressionSymbols(field.target, field.line, symbols)) {
             if (symbol.moduleId !== module.id) {
-              module.dependencies.add(symbol.moduleId);
+              if (symbol.externHeader) {
+                module.externHeaders.add(symbol.externHeader);
+              } else {
+                module.dependencies.add(symbol.moduleId);
+              }
             }
           }
         }
@@ -930,7 +1032,11 @@ function resolveModuleDependencies(
 
       for (const usedTemplate of getUsedTemplateSymbols(template, templateSymbols)) {
         if (usedTemplate.moduleId !== module.id) {
-          module.dependencies.add(usedTemplate.moduleId);
+          if (usedTemplate.externHeader) {
+            module.externHeaders.add(usedTemplate.externHeader);
+          } else {
+            module.dependencies.add(usedTemplate.moduleId);
+          }
         }
       }
     }
@@ -951,7 +1057,7 @@ function collectUsedTemplateSymbols(
   templateSymbols: Map<string, TemplateSymbol>,
   result: TemplateSymbol[]
 ): void {
-  if (!expression.callee.startsWith('c.')) {
+  if (!(expression.callee.startsWith('c.') && knownTemplateBuiltins.has(expression.callee))) {
     const symbol = templateSymbols.get(expression.callee);
     if (!symbol) {
       throw new Error(`Line ${line}: unknown template "${expression.callee}"`);
@@ -1018,11 +1124,15 @@ function renderHeader(
     ''
   ];
 
+  for (const header of [...module.externHeaders].sort()) {
+    lines.push(`#include ${header}`);
+  }
+
   for (const includePath of includes) {
     lines.push(`#include <${includePath}>`);
   }
 
-  if (includes.length > 0) {
+  if (module.externHeaders.size > 0 || includes.length > 0) {
     lines.push('');
   }
 
@@ -1177,7 +1287,8 @@ function resolveTypeExpression(target: string, line: number, symbols: Map<string
 
 function getTypeExpressionSymbols(target: string, line: number, symbols: Map<string, TypeSymbol>): TypeSymbol[] {
   if (builtinCTypes[target]) {
-    return [];
+    const symbol = symbols.get(target);
+    return symbol?.externHeader ? [symbol] : [];
   }
 
   const expression = parseCallExpression(target, line);
