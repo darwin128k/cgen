@@ -418,15 +418,15 @@ body.vscode-high-contrast-light .ci-method {
 }
 
 .kw {
-  color: var(--vscode-symbolIcon-keywordForeground, var(--vscode-debugTokenExpression-name));
+  color: var(--vscode-symbolIcon-keywordForeground);
 }
 
 .attr {
-  color: var(--vscode-symbolIcon-propertyForeground, var(--vscode-debugTokenExpression-string));
+  color: var(--vscode-symbolIcon-propertyForeground, var(--vscode-symbolIcon-variableForeground));
 }
 
 .builtin {
-  color: var(--vscode-symbolIcon-structForeground, var(--vscode-debugTokenExpression-value));
+  color: var(--vscode-symbolIcon-structForeground, var(--vscode-symbolIcon-classForeground));
 }
 
 .comment {

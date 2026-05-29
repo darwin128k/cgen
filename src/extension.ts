@@ -39,8 +39,13 @@ async function openDslEditor(context: vscode.ExtensionContext) {
   );
 
   const config = vscode.workspace.getConfiguration('cgen');
-  const savedContent = context.globalState.get<string>('cgen.dslEditorContent');
-  const initialValue = savedContent ?? config.get<string>('defaultDsl', '');
+  const scratchUri = vscode.Uri.joinPath(workspaceFolder.uri, '.cgen', 'scratch.cgen');
+  let initialValue: string;
+  try {
+    initialValue = Buffer.from(await vscode.workspace.fs.readFile(scratchUri)).toString('utf8');
+  } catch {
+    initialValue = config.get<string>('defaultDsl', '');
+  }
   panel.webview.html = getWebviewHtml(panel.webview, context.extensionUri, initialValue);
 
   let currentFilePath: string | undefined;
@@ -75,7 +80,8 @@ async function openDslEditor(context: vscode.ExtensionContext) {
 
     if (message.type === 'change' && typeof message.text === 'string') {
       currentContent = message.text;
-      await context.globalState.update('cgen.dslEditorContent', message.text);
+      await vscode.workspace.fs.createDirectory(vscode.Uri.joinPath(workspaceFolder.uri, '.cgen'));
+      await vscode.workspace.fs.writeFile(scratchUri, Buffer.from(message.text, 'utf8'));
       return;
     }
 

@@ -937,10 +937,11 @@
       filename.textContent = ` — ${event.data.text}`;
     }
     if (event.data.type === 'suggestion' && event.data.id === suggestRequestId) {
-      suggestionInsertText = event.data.insertText || '';
+      const serverInsertText = event.data.insertText || '';
       const candidates = event.data.candidates || [];
-      if (candidates.length > 0 && suggestionInsertText) {
-        const tailLen = Math.max(0, candidates[0].length - suggestionInsertText.length);
+      if (candidates.length > 0 && serverInsertText) {
+        suggestionInsertText = serverInsertText;
+        const tailLen = Math.max(0, candidates[0].length - serverInsertText.length);
         const insertTexts = candidates.map((c) => c.slice(tailLen));
         showCompletionList(candidates, insertTexts);
       } else {

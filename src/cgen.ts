@@ -777,7 +777,7 @@ function applySectionContext(section: SectionNode, context: ModuleContext): Modu
     pathParts: section.kind === 'package' ? [...context.pathParts, section.name] : context.pathParts,
     guardParts: [...context.guardParts, section.name],
     symbolParts: guardOnly ? context.symbolParts : [...context.symbolParts, section.name],
-    typeParts: guardOnly ? context.typeParts : [...context.typeParts, section.name]
+    typeParts: [...context.typeParts, section.name]
   };
 }
 
