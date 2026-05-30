@@ -1,6 +1,6 @@
 # CGen VS Code Extension
 
-Prototype VS Code extension for a compact C generation DSL.
+VS Code extension for a compact C generation DSL.
 
 ## Usage
 
@@ -8,11 +8,23 @@ Prototype VS Code extension for a compact C generation DSL.
 2. Run `npm run compile`.
 3. Install the package with `code --install-extension releases/cgen-vscode-<version>.vsix --force`, or press `F5` in VS Code for extension development.
 4. Open a workspace that contains `cgen.json`.
-5. Run `CGen: Open Editor` or open a `.cgen` file.
+5. Run `CGen: Open Editor` (`Ctrl+Alt+G`) or `CGen: Open DSL File` to start editing.
 
-`CGen: Generate From Current DSL File` and its `Ctrl+Enter` keybinding are available only for `.cgen` files. The CGen editor also supports `Ctrl+Enter`.
+### Commands
 
-The editor toolbar has an expand button that toggles fullscreen mode.
+| Command | Keybinding | Description |
+|---------|------------|-------------|
+| `CGen: Open Editor` | `Ctrl+Alt+G` | Opens the built-in DSL webview editor |
+| `CGen: Open DSL File` | — | Opens `.cgen/main.cgen` in the standard text editor |
+| `CGen: Generate From Current DSL File` | `Ctrl+Enter` | Generates C files from the active `.cgen` file |
+
+`CGen: Generate From Current DSL File` is available only when a `.cgen` file is active in the standard text editor. The CGen webview editor also supports `Ctrl+Enter` to generate.
+
+### DSL editor
+
+The editor toolbar shows the current file name and a breadcrumb of the cursor's position in the DSL. The footer has load, save, and generate (▶) buttons. The expand button in the toolbar toggles fullscreen mode.
+
+The editor saves its state (content, cursor position, scroll offset, and bound file path) to `.cgen/session.json` in the workspace and restores it on next open. Unsaved content is also written to `.cgen/session.cgen`.
 
 ## Config
 
@@ -58,15 +70,19 @@ package lh:
         template add:
             param a
             param b
-            use c.add(a, b)
+            use c.math.add(a, b)
 ```
 
-Inline nesting is also supported for `package`, `module`, and `scope`:
+Inline nesting is supported for `package`, `module`, `scope`, and `extern`:
 
 ```cgen
 package lh: module char:
     alias char as c.char
 ```
+
+### Multi-file projects
+
+Before generating, CGen merges the current DSL with all `.cgen` files found in the workspace (excluding `node_modules`, `out`, `build`, `dist`, `releases`, and `.cgen` directories) and with the bundled built-in packages. Declarations from different files can freely reference each other.
 
 ## Sections
 
@@ -75,6 +91,7 @@ package lh: module char:
 | `package` | Creates a directory level and a path/guard/symbol prefix |
 | `module`  | Creates a `.h` file (and optionally a `.c` file) |
 | `scope`   | Virtual namespace — adds to guard and path, not to symbol names |
+| `extern`  | Declares external C types and macros available for use in DSL expressions |
 
 ## Attributes
 
@@ -92,6 +109,37 @@ module char:
 ```
 
 Guard: `LH_CHAR_H`. Type name: `lh_uchar_t` (not `lh_char_uchar_t`).
+
+### `@header(<header.h>)`
+
+Attaches to declarations inside an `extern` section. Specifies which C header to `#include` in any generated file that uses the declared name.
+
+```cgen
+extern c:
+    @header(<stddef.h>)
+    alias size as "size_t"
+```
+
+## extern
+
+The `extern` section brings external C types and macros into the CGen type system.
+
+```cgen
+extern c:
+    alias char as "char"
+    alias uint as "unsigned int"
+
+    @header(<stddef.h>)
+    alias size as "size_t"
+
+    @header(<stdlib.h>)
+    template malloc:
+        param size as c.size
+```
+
+Alias declarations map a DSL name to a raw C type string. Template declarations map a DSL name to a C macro or function — they produce no output themselves but can be called from template `use` bodies or used as field types.
+
+A bundled `packages/c.cgen` file declares the standard C types and common stdlib/string.h functions (see [Built-in C Types](#built-in-c-types)), so they are always available without any extra setup.
 
 ## Aliases
 
@@ -211,7 +259,9 @@ template add_one:
 #define lh_math_add_one(a) lh_math_add(a, 1)
 ```
 
-Templates with fields generate `typedef struct` declarations:
+### Struct templates
+
+Templates with fields and no params generate `typedef struct` declarations:
 
 ```cgen
 module version:
@@ -227,13 +277,26 @@ typedef struct lh_version_t {
 } lh_version_t;
 ```
 
+When a field template also declares params, it generates a macro that expands to a semicolon-separated list of typed fields, suitable for use in compound literals or designated initializers:
+
+```cgen
+template pair:
+    param T
+    field first as T
+    field second as T
+```
+
+```c
+#define lh_pair(T) T first; T second
+```
+
 ### Parameters
 
 | Syntax              | Meaning |
 |---------------------|---------|
 | `param name`        | Regular parameter |
 | `param ... as name` | Variadic parameter; `name` is the alias for `__VA_ARGS__`. The `...` form without an alias is a parse error. |
-| `field name as type` | Struct field; field templates cannot be mixed with `param` or `use` bodies. |
+| `field name as type` | Struct field; plain field templates (no params) cannot be mixed with `param` or `use` bodies. |
 
 ### Built-in template operations
 
@@ -267,7 +330,7 @@ typedef struct lh_version_t {
 | DSL                          | C output        |
 |------------------------------|-----------------|
 | `use c.math.bit.and(a, b)`   | `((a) & (b))`; macro calls are not wrapped again |
-| `use c.math.bit.or(a, b)`    | `((a) | (b))`; macro calls are not wrapped again |
+| `use c.math.bit.or(a, b)`    | `((a) \| (b))`; macro calls are not wrapped again |
 | `use c.math.bit.xor(a, b)`   | `((a) ^ (b))`; macro calls are not wrapped again |
 | `use c.math.bit.not(a)`      | `(~(a))`; macro calls are not wrapped again |
 | `use c.math.bit.shl(a, b)`   | `((a) << (b))`; macro calls are not wrapped again |
@@ -289,7 +352,9 @@ module initializer:
 
 ## Built-in C Types
 
-Available in `alias` targets and as enum base types:
+The bundled `packages/c.cgen` file declares the following names in the `c` package. Types that require a standard header automatically add the corresponding `#include` to any generated file that uses them.
+
+**Core types** (no include required):
 
 ```text
 c.void
@@ -300,6 +365,30 @@ c.long    c.slong   c.ulong
 c.llong   c.sllong  c.ullong
 c.float   c.double
 c.bool
-c.size
 c.ptr.of(T)
+```
+
+**`<stddef.h>` types:**
+
+```text
+c.size  c.ptrdiff  c.wchar  c.nullptr
+```
+
+**`<stdint.h>` types:**
+
+```text
+c.i8   c.i16  c.i32  c.i64   c.imax  c.iptr
+c.u8   c.u16  c.u32  c.u64   c.umax  c.uptr
+```
+
+**`<stdlib.h>` templates:**
+
+```text
+c.malloc(size)  c.calloc(count, size)  c.free(ptr)
+```
+
+**`<string.h>` templates:**
+
+```text
+c.memcpy(dest, src, size)  c.memset(dest, value, size)
 ```
