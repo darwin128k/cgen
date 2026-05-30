@@ -738,6 +738,7 @@ function smartBackspace(): boolean {
 
 source.addEventListener('input', () => {
   clearDiagnosticLines();
+  snippetEngine.clear();
   clearSuggestion();
   paint();
   requestSuggestion();
@@ -748,6 +749,7 @@ source.addEventListener('click', (event) => {
     return;
   }
 
+  snippetEngine.clear();
   clearSuggestion();
   updateSelectionMode();
   updateActiveLine();

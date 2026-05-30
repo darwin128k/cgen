@@ -476,7 +476,7 @@ function parseSection(line: string, lineNumber: number): SectionNode | undefined
 }
 
 function parseAlias(line: string, lineNumber: number): AliasNode | undefined {
-  const match = line.match(/^alias\s+([A-Za-z_][A-Za-z0-9_]*)\s+as\s+(.+)$/);
+  const match = line.match(/^alias\s+([A-Za-z_][A-Za-z0-9_]*)(?:\s+as\s+|\s+->\s*)(.+)$/);
   if (!match) {
     return undefined;
   }
@@ -491,7 +491,7 @@ function parseAlias(line: string, lineNumber: number): AliasNode | undefined {
 }
 
 function parseEnum(line: string, lineNumber: number): EnumNode | undefined {
-  const match = line.match(/^enum\s+([A-Za-z_][A-Za-z0-9_]*)\s+as\s+(.+)\s*:\s*$/);
+  const match = line.match(/^enum\s+([A-Za-z_][A-Za-z0-9_]*)(?:\s+as\s+|\s+->\s*)(.+)\s*:\s*$/);
   if (!match) {
     return undefined;
   }
@@ -539,12 +539,12 @@ function parseTemplate(line: string, lineNumber: number): TemplateNode | undefin
 }
 
 function parseTemplateParam(line: string, lineNumber: number): TemplateParam | undefined {
-  const variadicMatch = line.match(/^param\s+\.\.\.\s+as\s+([A-Za-z_][A-Za-z0-9_]*)$/);
+  const variadicMatch = line.match(/^param\s+\.\.\.(?:\s+as\s+|\s+->\s*)([A-Za-z_][A-Za-z0-9_]*)$/);
   if (variadicMatch) {
     return { variadic: true, callable: false, name: variadicMatch[1], line: lineNumber };
   }
 
-  const normalMatch = line.match(/^param\s+([A-Za-z_][A-Za-z0-9_]*)(?:\s+as\s+(\S+))?$/);
+  const normalMatch = line.match(/^param\s+([A-Za-z_][A-Za-z0-9_]*)(?:(?:\s+as\s+|\s+->\s*)(\S+))?$/);
   if (normalMatch) {
     return { variadic: false, callable: normalMatch[2] === 'template', name: normalMatch[1], line: lineNumber };
   }
@@ -553,7 +553,7 @@ function parseTemplateParam(line: string, lineNumber: number): TemplateParam | u
 }
 
 function parseTemplateField(line: string, lineNumber: number): TemplateField | undefined {
-  const match = line.match(/^field\s+([A-Za-z_][A-Za-z0-9_]*)\s+as\s+(.+)$/);
+  const match = line.match(/^field\s+([A-Za-z_][A-Za-z0-9_]*)(?:\s+as\s+|\s+->\s*)(.+)$/);
   if (!match) {
     return undefined;
   }
