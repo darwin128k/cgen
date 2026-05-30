@@ -71,6 +71,7 @@ const snippets = [
   'enum name as c.int:',
   'case name',
   'template name:',
+  'template name():',
   'param name',
   'param ... as values',
   'field name as type',
@@ -81,6 +82,7 @@ const declarationSnippets = [
   'alias name as type',
   'enum name as type:',
   'template name:',
+  'template name():',
   'param name',
   'param name as any',
   'param name as template',
@@ -183,14 +185,28 @@ function findCurrentTemplate(textBeforeLine: string): CurrentTemplate {
       continue;
     }
 
-    const templateMatch = line.match(/^template\s+([A-Za-z_][A-Za-z0-9_]*)\s*:\s*$/);
+    const templateMatch = line.match(/^template\s+([A-Za-z_][A-Za-z0-9_]*)(?:\(([^)]*)\))?\s*:\s*$/);
     if (templateMatch) {
+      const params: string[] = [];
+      const callableParams: string[] = [];
+      if (templateMatch[2]) {
+        for (const part of templateMatch[2].split(',')) {
+          const trimmed = part.trim();
+          const variadicM = trimmed.match(/^param\s+\.\.\.\s+as\s+([A-Za-z_][A-Za-z0-9_]*)$/);
+          const normalM = trimmed.match(/^param\s+([A-Za-z_][A-Za-z0-9_]*)(?:\s+as\s+(\S+))?$/);
+          const paramName = variadicM?.[1] ?? normalM?.[1];
+          if (paramName) {
+            params.push(paramName);
+            if (normalM?.[2] === 'template') { callableParams.push(paramName); }
+          }
+        }
+      }
       currentTemplate = {
         indent,
         name: templateMatch[1],
         path: [...sectionStack[sectionStack.length - 1].path, templateMatch[1]],
-        params: [],
-        callableParams: []
+        params,
+        callableParams
       };
       continue;
     }
@@ -333,6 +349,10 @@ function getCandidates(typed: string, contextPath: string[], currentTemplate: Cu
     return snippets.filter((snippet) => snippet.startsWith('case '));
   }
 
+  if (/^template\s+[A-Za-z_][A-Za-z0-9_]*\(/.test(typed)) {
+    return getInlineParamCandidates(typed);
+  }
+
   if (/^(alias|enum|template|param|field)\b/.test(typed)) {
     return declarationSnippets;
   }
@@ -341,6 +361,30 @@ function getCandidates(typed: string, contextPath: string[], currentTemplate: Cu
     ...getContextObjectCandidates(contextPath, index),
     ...snippets
   ];
+}
+
+function getInlineParamCandidates(typed: string): string[] {
+  const separatorIdx = Math.max(typed.lastIndexOf('('), typed.lastIndexOf(','));
+  const currentFragment = typed.slice(separatorIdx + 1).trimStart();
+  const head = typed.slice(0, typed.length - currentFragment.length);
+
+  const asMatch = currentFragment.match(/^param\s+\S+\s+as\s+(\S*)$/);
+  if (asMatch) {
+    const typeFragment = asMatch[1];
+    const typeHead = typed.slice(0, typed.length - typeFragment.length);
+    return ['any', 'template']
+      .filter((t) => t.startsWith(typeFragment))
+      .map((t) => `${typeHead}${t}`);
+  }
+
+  return [
+    'param ... as values',
+    'param name as template',
+    'param name as any',
+    'param name'
+  ]
+    .filter((s) => s.startsWith(currentFragment))
+    .map((s) => `${head}${s}`);
 }
 
 function getContextObjectCandidates(contextPath: string[], index: DslIndex): string[] {

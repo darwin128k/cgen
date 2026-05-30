@@ -520,12 +520,22 @@ function parseEnumMember(line: string, lineNumber: number): EnumMemberNode | und
 }
 
 function parseTemplate(line: string, lineNumber: number): TemplateNode | undefined {
-  const match = line.match(/^template\s+([A-Za-z_][A-Za-z0-9_]*)\s*:\s*$/);
+  const match = line.match(/^template\s+([A-Za-z_][A-Za-z0-9_]*)(?:\(([^)]*)\))?\s*:\s*$/);
   if (!match) {
     return undefined;
   }
 
-  return { kind: 'template', name: match[1], params: [], fields: [], body: '', bodyLine: lineNumber, attributes: [], line: lineNumber };
+  const params: TemplateParam[] = [];
+  if (match[2]) {
+    for (const part of match[2].split(',')) {
+      const param = parseTemplateParam(part.trim(), lineNumber);
+      if (param) {
+        params.push(param);
+      }
+    }
+  }
+
+  return { kind: 'template', name: match[1], params, fields: [], body: '', bodyLine: lineNumber, attributes: [], line: lineNumber };
 }
 
 function parseTemplateParam(line: string, lineNumber: number): TemplateParam | undefined {
