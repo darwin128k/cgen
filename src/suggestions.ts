@@ -110,13 +110,11 @@ export async function createDslSuggestion(
   }
 
   const linePrefix = lineRange.before;
-  if (linePrefix.trim().length === 0) {
-    return undefined;
-  }
 
   await projectIndex.indexVirtualText(request.text);
   const index = projectIndex.getSnapshot();
-  const context = findCurrentContext(request.text.slice(0, lineRange.lineStart));
+  const currentIndent = lineRange.before.match(/^\s*/)?.[0].length ?? 0;
+  const context = findCurrentContext(request.text.slice(0, lineRange.lineStart), currentIndent);
   const currentTemplate = findCurrentTemplate(request.text.slice(0, lineRange.lineStart));
   const matches = pickSuggestions(linePrefix, context, currentTemplate, index);
   if (!matches.length) {
@@ -140,7 +138,7 @@ function getCurrentLineRange(text: string, cursor: number): LineRange {
   };
 }
 
-function findCurrentContext(textBeforeLine: string): string[] {
+function findCurrentContext(textBeforeLine: string, currentIndent?: number): string[] {
   const stack: string[][] = [[]];
 
   for (const rawLine of expandInlineDsl(textBeforeLine).split(/\r?\n/)) {
@@ -159,6 +157,11 @@ function findCurrentContext(textBeforeLine: string): string[] {
     const level = Math.floor(indent / 4) + 1;
     stack.length = Math.max(1, level);
     stack[level] = [...(stack[level - 1] ?? []), sectionMatch[2]];
+  }
+
+  if (currentIndent !== undefined) {
+    const targetLevel = Math.floor(currentIndent / 4);
+    return stack[Math.min(targetLevel, stack.length - 1)] ?? [];
   }
 
   return stack[stack.length - 1] ?? [];
@@ -313,7 +316,7 @@ function pickSuggestions(linePrefix: string, contextPath: string[], currentTempl
       }
       return false;
     })
-    .slice(0, 5)
+    .slice(0, 8)
     .map((candidate) => `${indent}${candidate}`);
 }
 
@@ -368,13 +371,51 @@ function getCandidates(typed: string, contextPath: string[], currentTemplate: Cu
   }
 
   if (/^(alias|enum|template|fn|param|field)\b/.test(typed)) {
-    return declarationSnippets;
+    return getDeclarationSnippetsForContext(contextPath, currentTemplate, index);
+  }
+
+  return getContextSnippets(contextPath, currentTemplate, index);
+}
+
+function getContextSnippets(contextPath: string[], currentTemplate: CurrentTemplate, index: DslIndex): string[] {
+  if (currentTemplate.excludeNames.length > 0) {
+    return ['param name', 'param name -> any', 'param name -> template', 'param ... -> values', 'field name -> type', 'use c.ptr(value)'];
+  }
+
+  const node = findNode(index.root, contextPath);
+  const kind = node?.kind ?? 'root';
+
+  if (kind === 'module' || kind === 'scope' || kind === 'extern') {
+    return [
+      'alias name -> c.int',
+      'enum name -> c.int:',
+      'template name:',
+      'template name():',
+      'fn name() -> type:',
+      'scope name:',
+    ];
   }
 
   return [
-    ...getContextObjectCandidates(contextPath, index),
-    ...snippets
+    'package name:',
+    'module name:',
+    'scope name:',
   ];
+}
+
+function getDeclarationSnippetsForContext(contextPath: string[], currentTemplate: CurrentTemplate, index: DslIndex): string[] {
+  if (currentTemplate.excludeNames.length > 0) {
+    return ['param name', 'param name -> any', 'param name -> template', 'param ... -> values', 'field name -> type'];
+  }
+
+  const node = findNode(index.root, contextPath);
+  const kind = node?.kind ?? 'root';
+
+  if (kind === 'module' || kind === 'scope' || kind === 'extern') {
+    return ['alias name -> type', 'enum name -> type:', 'template name:', 'template name():', 'fn name() -> type:', 'scope name:'];
+  }
+
+  return ['package name:', 'module name:', 'scope name:'];
 }
 
 function getInlineParamCandidates(typed: string): string[] {
