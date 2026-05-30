@@ -111,18 +111,17 @@ export class CgenProjectIndex {
     const symbols: IndexedSymbol[] = [];
 
     for (const row of queryRows(db, 'SELECT kind, name, path, parent_path FROM sections ORDER BY path')) {
-      const parentPathStr = String(row.parent_path);
-      const pathParts = makePublicPath(splitPath(String(row.path)));
-      if (pathParts.length === 0 || pathParts.join('.') === parentPathStr) {
+      const pathParts = splitPath(String(row.path));
+      if (pathParts.length === 0) {
         continue;
       }
 
-      const parent = findOrCreatePath(root, splitPath(parentPathStr));
+      const parent = findOrCreatePath(root, splitPath(String(row.parent_path)));
       findOrCreateChild(parent, row.kind as SectionKind, String(row.name), pathParts);
     }
 
     for (const row of queryRows(db, 'SELECT kind, name, path, parent_path, params FROM symbols ORDER BY path')) {
-      const parent = findOrCreatePath(root, makePublicPath(splitPath(String(row.parent_path))));
+      const parent = findOrCreatePath(root, splitPath(String(row.parent_path)));
       const symbol = {
         kind: row.kind as SymbolKind,
         name: String(row.name),

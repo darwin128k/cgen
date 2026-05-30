@@ -136,10 +136,11 @@ export async function generateDsl(workspaceFolder: vscode.WorkspaceFolder, exten
   const modules = collectModules(merged.root);
   const symbols = buildTypeSymbols(modules);
   const templateSymbols = buildTemplateSymbols(modules);
+  const paramTemplates = buildParamTemplateMap(modules);
 
   collectExternSymbols(merged.root, symbols, templateSymbols);
 
-  resolveModuleDependencies(modules, symbols, templateSymbols);
+  resolveModuleDependencies(modules, symbols, templateSymbols, paramTemplates);
 
   for (const module of modules) {
     const headerPath = path.join(includeRoot, ...module.headerPathParts);
@@ -148,7 +149,7 @@ export async function generateDsl(workspaceFolder: vscode.WorkspaceFolder, exten
       .filter((candidate): candidate is ModuleArtifact => candidate !== undefined)
       .map((candidate) => candidate.includePath)
       .sort();
-    const text = renderHeader(module, includes, symbols, templateSymbols);
+    const text = renderHeader(module, includes, symbols, templateSymbols, paramTemplates);
 
     await vscode.workspace.fs.createDirectory(vscode.Uri.file(path.dirname(headerPath)));
     await vscode.workspace.fs.writeFile(vscode.Uri.file(headerPath), Buffer.from(text, 'utf8'));
@@ -641,6 +642,45 @@ function collectScopeStructs(
   return result;
 }
 
+function buildParamTemplateMap(modules: ModuleArtifact[]): Map<string, TemplateNode> {
+  const map = new Map<string, TemplateNode>();
+  for (const module of modules) {
+    for (const { template, typeParts } of collectScopeTemplates(module.section, [])) {
+      if (template.params.length > 0 && template.fields.length > 0) {
+        const key = makeTypeKey([...module.typeParts, ...typeParts], template.name);
+        map.set(key, template);
+      }
+    }
+  }
+  return map;
+}
+
+function expandStructUse(
+  useExpr: string | undefined,
+  line: number,
+  paramTemplates: Map<string, TemplateNode>
+): TemplateField[] {
+  if (!useExpr) { return []; }
+  const call = parseCallExpression(useExpr, line);
+  if (!call) { return []; }
+
+  const template = paramTemplates.get(call.callee);
+  if (!template) { return []; }
+
+  const paramMap = new Map<string, string>();
+  template.params.forEach((param, i) => {
+    if (i < call.args.length) {
+      paramMap.set(param.name, call.args[i].trim());
+    }
+  });
+
+  return template.fields.map((field) => ({
+    name: field.name,
+    target: paramMap.get(field.target) ?? field.target,
+    line: field.line
+  }));
+}
+
 function buildTemplateSymbols(modules: ModuleArtifact[]): Map<string, TemplateSymbol> {
   const symbols = new Map<string, TemplateSymbol>();
 
@@ -676,7 +716,8 @@ function buildTemplateSymbols(modules: ModuleArtifact[]): Map<string, TemplateSy
 function resolveModuleDependencies(
   modules: ModuleArtifact[],
   symbols: Map<string, TypeSymbol>,
-  templateSymbols: Map<string, TemplateSymbol>
+  templateSymbols: Map<string, TemplateSymbol>,
+  paramTemplates: Map<string, TemplateNode>
 ): void {
   for (const module of modules) {
     for (const { declaration } of collectScopeTypeDeclarations(module.section, [])) {
@@ -730,6 +771,25 @@ function resolveModuleDependencies(
             module.externHeaders.add(usedTemplate.externHeader);
           } else {
             module.dependencies.add(usedTemplate.moduleId);
+          }
+        }
+      }
+    }
+
+    for (const { struct } of collectScopeStructs(module.section, [])) {
+      for (const field of struct.fields) {
+        for (const symbol of getTypeExpressionSymbols(field.target, field.line, symbols)) {
+          if (symbol.moduleId !== module.id) {
+            if (symbol.externHeader) { module.externHeaders.add(symbol.externHeader); } else { module.dependencies.add(symbol.moduleId); }
+          }
+        }
+      }
+      for (const useExpr of (struct.uses ?? [])) {
+        for (const field of expandStructUse(useExpr, struct.line, paramTemplates)) {
+          for (const symbol of getTypeExpressionSymbols(field.target, field.line, symbols)) {
+            if (symbol.moduleId !== module.id) {
+              if (symbol.externHeader) { module.externHeaders.add(symbol.externHeader); } else { module.dependencies.add(symbol.moduleId); }
+            }
           }
         }
       }
@@ -874,7 +934,8 @@ function renderHeader(
   module: ModuleArtifact,
   includes: string[],
   symbols: Map<string, TypeSymbol>,
-  templateSymbols: Map<string, TemplateSymbol>
+  templateSymbols: Map<string, TemplateSymbol>,
+  paramTemplates: Map<string, TemplateNode>
 ): string {
   const lines = [
     `#ifndef ${module.guard}`,
@@ -959,6 +1020,11 @@ function renderHeader(
     lines.push(`typedef struct ${tagName} {`);
     for (const field of struct.fields) {
       lines.push(`  ${resolveTypeExpression(field.target, field.line, symbols)} ${field.name};`);
+    }
+    for (const useExpr of (struct.uses ?? [])) {
+      for (const field of expandStructUse(useExpr, struct.line, paramTemplates)) {
+        lines.push(`  ${resolveTypeExpression(field.target, field.line, symbols)} ${field.name};`);
+      }
     }
     lines.push(`} ${typedefName};`);
   }
@@ -1108,7 +1174,7 @@ function resolveTypeSymbolDefineOnly(
   symbols: Map<string, TypeSymbol>,
   seen: Set<string>
 ): boolean {
-  if (symbol.kind === 'enum' || symbol.kind === 'template') {
+  if (symbol.kind === 'enum' || symbol.kind === 'template' || symbol.kind === 'struct') {
     return false;
   }
 

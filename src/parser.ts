@@ -50,6 +50,7 @@ export interface StructNode {
   kind: 'struct';
   name: string;
   fields: TemplateField[];
+  uses: string[];
   attributes: Attribute[];
   line: number;
 }
@@ -215,6 +216,10 @@ export function parseDsl(source: string): ParsedDsl {
       const field = parseTemplateField(line, lineNumber);
       if (field) {
         currentStruct.node.fields.push(field);
+        return;
+      }
+      if (/^use\s+/.test(line)) {
+        currentStruct.node.uses.push(line.slice(4).trim());
         return;
       }
     }
@@ -453,7 +458,7 @@ function parseStruct(line: string, lineNumber: number): StructNode | undefined {
   if (!match) {
     return undefined;
   }
-  return { kind: 'struct', name: match[1], fields: [], attributes: [], line: lineNumber };
+  return { kind: 'struct', name: match[1], fields: [], uses: [], attributes: [], line: lineNumber };
 }
 
 function parseTemplateParam(line: string, lineNumber: number): TemplateParam | undefined {

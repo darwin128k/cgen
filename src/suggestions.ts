@@ -47,6 +47,7 @@ interface CurrentTemplate {
   params: string[];
   callableParams: string[];
   excludeNames: string[];
+  insideStruct: boolean;
 }
 
 const builtinTemplates = [
@@ -180,6 +181,7 @@ function findCurrentContext(textBeforeLine: string, currentIndent?: number): str
 function findCurrentTemplate(textBeforeLine: string, currentIndent?: number): CurrentTemplate {
   const sectionStack: Array<{ indent: number; path: string[] }> = [{ indent: -1, path: [] }];
   let currentTemplate: { indent: number; name: string; path: string[]; params: string[]; callableParams: string[] } | undefined;
+  let currentStruct: { indent: number } | undefined;
 
   for (const rawLine of expandInlineDsl(textBeforeLine).split(/\r?\n/)) {
     const withoutComment = rawLine.replace(/#.*$/, '').trimEnd();
@@ -192,6 +194,9 @@ function findCurrentTemplate(textBeforeLine: string, currentIndent?: number): Cu
     if (currentTemplate && indent <= currentTemplate.indent) {
       currentTemplate = undefined;
     }
+    if (currentStruct && indent <= currentStruct.indent) {
+      currentStruct = undefined;
+    }
 
     while (sectionStack.length > 1 && indent <= sectionStack[sectionStack.length - 1].indent) {
       sectionStack.pop();
@@ -201,6 +206,11 @@ function findCurrentTemplate(textBeforeLine: string, currentIndent?: number): Cu
     if (sectionMatch) {
       const parentPath = sectionStack[sectionStack.length - 1].path;
       sectionStack.push({ indent, path: [...parentPath, sectionMatch[2]] });
+      continue;
+    }
+
+    if (/^struct\s+[A-Za-z_][A-Za-z0-9_]*\s*:\s*$/.test(line)) {
+      currentStruct = { indent };
       continue;
     }
 
@@ -245,14 +255,17 @@ function findCurrentTemplate(textBeforeLine: string, currentIndent?: number): Cu
     }
   }
 
+  const insideStruct = !!currentStruct && (currentIndent === undefined || currentIndent > currentStruct.indent);
+
   if (!currentTemplate || (currentIndent !== undefined && currentIndent <= currentTemplate.indent)) {
-    return { params: [], callableParams: [], excludeNames: [] };
+    return { params: [], callableParams: [], excludeNames: [], insideStruct };
   }
 
   return {
     params: currentTemplate.params,
     callableParams: currentTemplate.callableParams,
-    excludeNames: [currentTemplate.name, makePublicPath(currentTemplate.path).join('.')]
+    excludeNames: [currentTemplate.name, makePublicPath(currentTemplate.path).join('.')],
+    insideStruct
   };
 }
 
@@ -292,7 +305,7 @@ function walk(node: DslNode, visit: (node: DslNode) => void): void {
 }
 
 function makePublicSymbolPath(symbol: DslSymbol): string[] {
-  return makePublicPath(symbol.path);
+  return symbol.path;
 }
 
 function sortUnique(values: string[]): string[] {
@@ -383,6 +396,9 @@ function getCandidates(typed: string, contextPath: string[], currentTemplate: Cu
 }
 
 function getContextSnippets(contextPath: string[], currentTemplate: CurrentTemplate, index: DslIndex): string[] {
+  if (currentTemplate.insideStruct) {
+    return ['field name -> type', 'use c.ptr(value)'];
+  }
   if (currentTemplate.excludeNames.length > 0) {
     return ['param name', 'param name -> any', 'param name -> template', 'param ... -> values', 'field name -> type', 'use c.ptr(value)'];
   }
@@ -410,6 +426,9 @@ function getContextSnippets(contextPath: string[], currentTemplate: CurrentTempl
 }
 
 function getDeclarationSnippetsForContext(contextPath: string[], currentTemplate: CurrentTemplate, index: DslIndex): string[] {
+  if (currentTemplate.insideStruct) {
+    return ['field name -> type'];
+  }
   if (currentTemplate.excludeNames.length > 0) {
     return ['param name', 'param name -> any', 'param name -> template', 'param ... -> values', 'field name -> type'];
   }
