@@ -71,8 +71,8 @@ const snippets = [
   'package name:',
   'module name:',
   'scope name:',
-  'alias name -> c.int',
-  'enum name -> c.int:',
+  'alias name -> type',
+  'enum name -> type:',
   'case name',
   'template name:',
   'template name():',
@@ -387,8 +387,8 @@ function getContextSnippets(contextPath: string[], currentTemplate: CurrentTempl
 
   if (kind === 'module' || kind === 'scope' || kind === 'extern') {
     return [
-      'alias name -> c.int',
-      'enum name -> c.int:',
+      'alias name -> type',
+      'enum name -> type:',
       'template name:',
       'template name():',
       'fn name() -> type:',

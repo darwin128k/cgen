@@ -50,15 +50,15 @@ const localSuggestionCandidates = [
   'package name:',
   'module name:',
   'scope name:',
-  'alias name as type',
-  'enum name as type:',
-  'alias ptr as c.ptr.of()',
+  'alias name -> type',
+  'enum name -> type:',
+  'alias ptr -> c.ptr.of()',
   'case name',
   'template name:',
   'fn name() -> type:',
   'param name',
-  'param ... as values',
-  'field name as type',
+  'param ... -> values',
+  'field name -> type',
   'use c.ptr(value)'
 ];
 let stripeCount = 0;
