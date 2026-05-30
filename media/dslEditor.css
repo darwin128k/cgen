@@ -321,6 +321,7 @@ button:hover {
   --completion-icon-active-color: var(--vscode-editorSuggestWidget-selectedForeground, #ffffff);
   min-width: 160px;
   max-width: 400px;
+  max-height: 176px;
   padding: 4px 0;
   background: var(--vscode-editorSuggestWidget-background, var(--vscode-editor-background));
   border: 1px solid var(--vscode-editorSuggestWidget-border, var(--vscode-editorWidget-border, #454545));
@@ -329,7 +330,7 @@ button:hover {
   font-family: var(--vscode-editor-font-family, monospace);
   font-size: var(--vscode-editor-font-size, 13px);
   line-height: 1.4;
-  overflow: hidden;
+  overflow-y: auto;
 }
 
 .completion-item {

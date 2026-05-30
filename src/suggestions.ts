@@ -316,7 +316,7 @@ function pickSuggestions(linePrefix: string, contextPath: string[], currentTempl
       }
       return false;
     })
-    .slice(0, 8)
+    .slice(0, 24)
     .map((candidate) => `${indent}${candidate}`);
 }
 

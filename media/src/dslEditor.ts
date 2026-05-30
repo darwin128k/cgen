@@ -387,6 +387,7 @@ function selectCompletionItem(index: number): void {
   completionIndex = Math.max(0, Math.min(index, completionCandidates.length - 1));
   suggestionInsertText = completionInsertTexts[completionIndex] ?? '';
   renderCompletionList();
+  completionList.querySelectorAll('.completion-item')[completionIndex]?.scrollIntoView({ block: 'nearest' });
   paintHighlight();
 }
 
@@ -421,7 +422,7 @@ function requestSuggestion(): void {
     return;
   }
 
-  suggestionInsertText = getLocalSuggestion();
+  suggestionInsertText = popupAllowed ? getLocalSuggestion() : '';
   renderSuggestion();
 
   suggestTimer = setTimeout(() => {
@@ -860,8 +861,9 @@ source.addEventListener('keydown', (event) => {
     snippetEngine.clear();
   }
 
-  if (event.key === 'Escape' && (suggestionInsertText || snippetEngine.active)) {
+  if (event.key === 'Escape' && (suggestionInsertText || !completionList.hidden || snippetEngine.active)) {
     event.preventDefault();
+    popupAllowed = false;
     clearSuggestion();
     snippetEngine.clear();
     paint();
@@ -904,9 +906,9 @@ window.addEventListener('message', (event: MessageEvent) => {
   if (event.data.type === 'suggestion' && event.data.id === suggestRequestId) {
     const serverInsertText: string = event.data.insertText || '';
     const candidates: string[] = event.data.candidates || [];
-    if (candidates.length > 0 && serverInsertText && !source.value.startsWith(serverInsertText, source.selectionEnd)) {
+    if (popupAllowed && candidates.length > 0 && serverInsertText && !source.value.startsWith(serverInsertText, source.selectionEnd)) {
       suggestionInsertText = serverInsertText;
-      if (popupAllowed && /\w/.test(serverInsertText)) {
+      if (/\w/.test(serverInsertText)) {
         const tailLen = Math.max(0, candidates[0].length - serverInsertText.length);
         const insertTexts = candidates.map((c) => c.slice(tailLen));
         showCompletionList(candidates, insertTexts);
