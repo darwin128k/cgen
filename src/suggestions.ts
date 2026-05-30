@@ -64,6 +64,10 @@ const snippets = [
   '@enum(static)',
   '@enum(define)',
   '@enum(extern)',
+  '@fn(static)',
+  '@fn(extern)',
+  '@fn(inline)',
+  '@fn(static, inline)',
   'package name:',
   'module name:',
   'scope name:',
@@ -72,6 +76,7 @@ const snippets = [
   'case name',
   'template name:',
   'template name():',
+  'fn name() -> type:',
   'param name',
   'param ... -> values',
   'field name -> type',
@@ -83,6 +88,7 @@ const declarationSnippets = [
   'enum name -> type:',
   'template name:',
   'template name():',
+  'fn name() -> type:',
   'param name',
   'param name -> any',
   'param name -> template',
@@ -353,7 +359,15 @@ function getCandidates(typed: string, contextPath: string[], currentTemplate: Cu
     return getInlineParamCandidates(typed);
   }
 
-  if (/^(alias|enum|template|param|field)\b/.test(typed)) {
+  if (/^fn\s+[A-Za-z_][A-Za-z0-9_]*\([^)]*\)\s*(?:as\s+|->\s*)/.test(typed)) {
+    return completeTail(typed, getTypeCandidates(typed, contextPath, index));
+  }
+
+  if (/^fn\s+[A-Za-z_][A-Za-z0-9_]*\(/.test(typed)) {
+    return getInlineParamCandidates(typed);
+  }
+
+  if (/^(alias|enum|template|fn|param|field)\b/.test(typed)) {
     return declarationSnippets;
   }
 

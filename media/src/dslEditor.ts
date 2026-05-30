@@ -54,6 +54,7 @@ const localSuggestionCandidates = [
   'alias ptr as c.ptr.of()',
   'case name',
   'template name:',
+  'fn name() -> type:',
   'param name',
   'param ... as values',
   'field name as type',
@@ -77,7 +78,7 @@ function highlightToken(token: string): string {
     return `<span class="attr">${escapeHtml(token)}</span>`;
   }
 
-  if (/^(package|module|scope|alias|enum|case|as|template|param|field|use)$/.test(token)) {
+  if (/^(package|module|scope|alias|enum|case|as|fn|template|param|field|use)$/.test(token) || token === '->') {
     return `<span class="kw">${escapeHtml(token)}</span>`;
   }
 
@@ -93,7 +94,7 @@ function highlightLine(line: string): string {
   const rawCode = commentIndex === -1 ? line : line.slice(0, commentIndex);
   const comment = commentIndex === -1 ? '' : line.slice(commentIndex);
   const highlightedCode = escapeHtml(rawCode).replace(
-    /(@[A-Za-z_][A-Za-z0-9_]*|\bc\.[A-Za-z_][A-Za-z0-9_.]*\b|\bpackage\b|\bmodule\b|\bscope\b|\balias\b|\benum\b|\bcase\b|\bas\b|\btemplate\b|\bparam\b|\bfield\b|\buse\b)/g,
+    /(@[A-Za-z_][A-Za-z0-9_]*|\bc\.[A-Za-z_][A-Za-z0-9_.]*\b|->|\bpackage\b|\bmodule\b|\bscope\b|\balias\b|\benum\b|\bcase\b|\bas\b|\bfn\b|\btemplate\b|\bparam\b|\bfield\b|\buse\b)/g,
     highlightToken
   );
   return `${highlightedCode}${comment ? highlightToken(comment) : ''}`;
@@ -624,7 +625,7 @@ function buildDeclarationIndex(): Array<{ name: string; path: string[]; position
       continue;
     }
 
-    const symbol = trimmed.match(/^(alias|enum|template)\s+([A-Za-z_][A-Za-z0-9_]*)\b/);
+    const symbol = trimmed.match(/^(alias|enum|template|fn)\s+([A-Za-z_][A-Za-z0-9_]*)\b/);
     if (symbol) {
       const path = [...stack.map((item) => item.name), symbol[2]];
       declarations.push({ name: symbol[2], path, position: offset + rawLine.indexOf(symbol[2]) });

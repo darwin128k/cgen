@@ -23,6 +23,22 @@ interface Attribute {
   line: number;
 }
 
+interface FnParam {
+  name: string;
+  type: string;
+  variadic: boolean;
+  line: number;
+}
+
+interface FnNode {
+  kind: 'fn';
+  name: string;
+  params: FnParam[];
+  returnType: string;
+  attributes: Attribute[];
+  line: number;
+}
+
 interface SectionNode {
   kind: SectionKind;
   name: string;
@@ -30,6 +46,7 @@ interface SectionNode {
   aliases: AliasNode[];
   enums: EnumNode[];
   templates: TemplateNode[];
+  fns: FnNode[];
   children: SectionNode[];
   line: number;
 }
@@ -222,7 +239,7 @@ export async function generateDsl(workspaceFolder: vscode.WorkspaceFolder, exten
     await vscode.workspace.fs.writeFile(vscode.Uri.file(headerPath), Buffer.from(text, 'utf8'));
     generated.push(headerPath);
 
-    const sourceText = renderSource(module);
+    const sourceText = renderSource(module, symbols);
     if (sourceText) {
       const sourcePath = path.join(sourceRoot, ...module.context.pathParts, `${module.section.name}.c`);
       await vscode.workspace.fs.createDirectory(vscode.Uri.file(path.dirname(sourcePath)));
@@ -443,6 +460,14 @@ function parseDsl(source: string): ParsedDsl {
       return;
     }
 
+    const fnNode = parseFn(line, lineNumber);
+    if (fnNode) {
+      fnNode.attributes = [...parentFrame.inheritedAttributes, ...pendingAttributes];
+      pendingAttributes = [];
+      parent.fns.push(fnNode);
+      return;
+    }
+
     diagnostics.push(`Line ${lineNumber}: cannot parse "${line}"`);
   });
 
@@ -517,6 +542,65 @@ function parseEnumMember(line: string, lineNumber: number): EnumMemberNode | und
     value: match[2],
     line: lineNumber
   };
+}
+
+function parseFn(line: string, lineNumber: number): FnNode | undefined {
+  const startMatch = line.match(/^fn\s+([A-Za-z_][A-Za-z0-9_]*)\s*(\()?/);
+  if (!startMatch) {
+    return undefined;
+  }
+
+  const name = startMatch[1];
+  let rest = line.slice(startMatch[0].length);
+  const params: FnParam[] = [];
+
+  if (startMatch[2]) {
+    let depth = 1;
+    let i = 0;
+    for (; i < rest.length; i++) {
+      if (rest[i] === '(') { depth++; } else if (rest[i] === ')') { depth--; if (depth === 0) { break; } }
+    }
+    if (depth !== 0) { return undefined; }
+    const paramStr = rest.slice(0, i);
+    rest = rest.slice(i + 1).trim();
+    for (const part of splitByCommaBalanced(paramStr)) {
+      const p = parseFnParam(part.trim(), lineNumber);
+      if (p) { params.push(p); }
+    }
+  }
+
+  const returnMatch = rest.match(/^(?:as\s+|->\s*)(.+?)\s*:\s*$/);
+  if (!returnMatch) {
+    return undefined;
+  }
+
+  return { kind: 'fn', name, params, returnType: returnMatch[1].trim(), attributes: [], line: lineNumber };
+}
+
+function parseFnParam(text: string, lineNumber: number): FnParam | undefined {
+  const variadicMatch = text.match(/^param\s+\.\.\.(?:\s+as\s+|\s+->\s*)([A-Za-z_][A-Za-z0-9_]*)$/);
+  if (variadicMatch) {
+    return { name: variadicMatch[1], type: '...', variadic: true, line: lineNumber };
+  }
+
+  const normalMatch = text.match(/^param\s+([A-Za-z_][A-Za-z0-9_]*)(?:\s+as\s+|\s+->\s*)(.+)$/);
+  if (normalMatch) {
+    return { name: normalMatch[1], type: normalMatch[2].trim(), variadic: false, line: lineNumber };
+  }
+
+  return undefined;
+}
+
+function splitByCommaBalanced(source: string): string[] {
+  if (!source.trim()) { return []; }
+  const parts: string[] = [];
+  let depth = 0;
+  let start = 0;
+  for (let i = 0; i < source.length; i++) {
+    if (source[i] === '(') { depth++; } else if (source[i] === ')') { depth--; } else if (source[i] === ',' && depth === 0) { parts.push(source.slice(start, i)); start = i + 1; }
+  }
+  parts.push(source.slice(start));
+  return parts;
 }
 
 function parseTemplate(line: string, lineNumber: number): TemplateNode | undefined {
@@ -736,6 +820,7 @@ function createSection(kind: SectionKind, name: string, line: number): SectionNo
     aliases: [],
     enums: [],
     templates: [],
+    fns: [],
     children: [],
     line
   };
@@ -1058,6 +1143,22 @@ function resolveModuleDependencies(
         }
       }
     }
+
+    for (const { fn } of collectScopeFns(module.section, [])) {
+      for (const p of fn.params) {
+        if (p.variadic) { continue; }
+        for (const symbol of getTypeExpressionSymbols(p.type, p.line, symbols)) {
+          if (symbol.moduleId !== module.id) {
+            if (symbol.externHeader) { module.externHeaders.add(symbol.externHeader); } else { module.dependencies.add(symbol.moduleId); }
+          }
+        }
+      }
+      for (const symbol of getTypeExpressionSymbols(fn.returnType, fn.line, symbols)) {
+        if (symbol.moduleId !== module.id) {
+          if (symbol.externHeader) { module.externHeaders.add(symbol.externHeader); } else { module.dependencies.add(symbol.moduleId); }
+        }
+      }
+    }
   }
 }
 
@@ -1130,6 +1231,52 @@ function collectTransitiveDependencies(module: ModuleArtifact, byId: Map<string,
   }
 
   return result;
+}
+
+function collectScopeFns(
+  section: SectionNode,
+  extraParts: string[]
+): Array<{ fn: FnNode; symbolParts: string[] }> {
+  const result = section.fns.map((fn) => ({ fn, symbolParts: extraParts }));
+  for (const child of section.children) {
+    if (child.kind === 'scope') {
+      result.push(...collectScopeFns(child, [...extraParts, child.name]));
+    }
+  }
+  return result;
+}
+
+function getFnSpecifiers(fn: FnNode): string {
+  const fnAttrs = fn.attributes.filter((a) => a.name === 'fn');
+  if (fnAttrs.length === 0) { return ''; }
+  const last = fnAttrs[fnAttrs.length - 1];
+  const valid = new Set(['static', 'extern', 'inline']);
+  for (const arg of last.args) {
+    if (!valid.has(arg)) {
+      throw new Error(`Line ${last.line}: @fn only supports static, extern, inline`);
+    }
+  }
+  return last.args.join(' ');
+}
+
+function getFnEmitTarget(fn: FnNode): EmitTarget {
+  const emitAttrs = fn.attributes.filter((a) => a.name === 'emit');
+  if (emitAttrs.length === 0) { return 'header'; }
+  const last = emitAttrs[emitAttrs.length - 1];
+  if (last.args.length !== 1 || !['header', 'source', 'both'].includes(last.args[0])) {
+    throw new Error(`Line ${last.line}: @emit only supports @emit(header), @emit(source), and @emit(both)`);
+  }
+  return last.args[0] as EmitTarget;
+}
+
+function makeFnSignature(fn: FnNode, fnCName: string, symbols: Map<string, TypeSymbol>): string {
+  const specifiers = getFnSpecifiers(fn);
+  const prefix = specifiers ? `${specifiers} ` : '';
+  const returnC = resolveTypeExpression(fn.returnType, fn.line, symbols);
+  const paramsC = fn.params.length > 0
+    ? fn.params.map((p) => p.variadic ? '...' : `${resolveTypeExpression(p.type, p.line, symbols)} ${p.name}`).join(', ')
+    : 'void';
+  return `${prefix}${returnC} ${fnCName}(${paramsC})`;
 }
 
 function renderHeader(
@@ -1214,11 +1361,21 @@ function renderHeader(
     lines.push(`#define ${makeMacroName(allSymbolParts, template.name)}(${paramList}) ${body}`);
   }
 
+  for (const { fn, symbolParts: extraParts } of collectScopeFns(module.section, [])) {
+    const emit = getFnEmitTarget(fn);
+    if (emit === 'source') { continue; }
+    const allSymbolParts = [...module.symbolParts, ...extraParts];
+    const nameParts = [...allSymbolParts];
+    if (nameParts[nameParts.length - 1] !== fn.name) { nameParts.push(fn.name); }
+    const fnCName = nameParts.join('_');
+    lines.push(`${makeFnSignature(fn, fnCName, symbols)};`);
+  }
+
   lines.push('', `#endif // ${module.guard}`, '');
   return lines.join('\n');
 }
 
-function renderSource(module: ModuleArtifact): string | undefined {
+function renderSource(module: ModuleArtifact, symbols: Map<string, TypeSymbol>): string | undefined {
   const lines = [`#include <${module.includePath}>`, ''];
   let hasDefinitions = false;
 
@@ -1242,6 +1399,18 @@ function renderSource(module: ModuleArtifact): string | undefined {
       lines.push(`const ${cName} ${memberName} = ${rawValue};`);
       hasDefinitions = true;
     }
+  }
+
+  for (const { fn, symbolParts: extraParts } of collectScopeFns(module.section, [])) {
+    const emit = getFnEmitTarget(fn);
+    if (emit !== 'source' && emit !== 'both') { continue; }
+    const allSymbolParts = [...module.symbolParts, ...extraParts];
+    const nameParts = [...allSymbolParts];
+    if (nameParts[nameParts.length - 1] !== fn.name) { nameParts.push(fn.name); }
+    const fnCName = nameParts.join('_');
+    lines.push(`${makeFnSignature(fn, fnCName, symbols)} {`);
+    lines.push('}');
+    hasDefinitions = true;
   }
 
   if (!hasDefinitions) {
