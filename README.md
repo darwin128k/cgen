@@ -259,6 +259,21 @@ template add_one:
 #define lh_math_add_one(a) lh_math_add(a, 1)
 ```
 
+### Face templates
+
+When a template has the same name as its containing module, it is addressed without repeating the name:
+
+```cgen
+module initializer:
+    template initializer:        # addressed as lh.initializer(...)
+        param ... as values
+        use c.initializer(values)
+```
+
+```c
+#define lh_initializer(...) { __VA_ARGS__ }
+```
+
 ### Struct templates
 
 Templates with fields and no params generate `typedef struct` declarations:
@@ -277,7 +292,7 @@ typedef struct lh_version_t {
 } lh_version_t;
 ```
 
-When a field template also declares params, it generates a macro that expands to a semicolon-separated list of typed fields, suitable for use in compound literals or designated initializers:
+When a field template also declares params, it generates a macro that expands to a semicolon-separated list of typed fields:
 
 ```cgen
 template pair:
@@ -292,63 +307,57 @@ template pair:
 
 ### Parameters
 
-| Syntax              | Meaning |
-|---------------------|---------|
-| `param name`        | Regular parameter |
-| `param ... as name` | Variadic parameter; `name` is the alias for `__VA_ARGS__`. The `...` form without an alias is a parse error. |
-| `field name as type` | Struct field; plain field templates (no params) cannot be mixed with `param` or `use` bodies. |
+| Syntax                   | Meaning |
+|--------------------------|---------|
+| `param name`             | Regular parameter |
+| `param name as any`      | Same — `any` is an explicit "untyped" annotation, DSL-level only |
+| `param name as template` | Callable parameter — `name(args)` in the `use` body expands as a raw C call |
+| `param ... as name`      | Variadic — `name` becomes `__VA_ARGS__` in output. The `...` form without `as` is a parse error. |
+| `field name as type`     | Struct field; cannot mix with `param` or `use` in the same template |
 
 ### Built-in template operations
 
+Operands that are themselves macro calls are passed through without extra wrapping; plain identifiers and literals are wrapped in `()` to protect against operator precedence.
+
 **`c` package** — C language primitives:
 
-| DSL                        | C output           |
-|----------------------------|--------------------|
-| `use c.ret(expr)`          | `(expr)`           |
-| `use c.initializer(values)`| `{ values }`       |
-| `use c.sel(cond, a, b)`    | `((cond) ? (a) : (b))`; macro calls are not wrapped again |
-| `use c.eq(a, b)`           | `((a) == (b))`; macro calls are not wrapped again |
-| `use c.ne(a, b)`           | `((a) != (b))`; macro calls are not wrapped again |
-| `use c.lt(a, b)`           | `((a) < (b))`; macro calls are not wrapped again |
-| `use c.le(a, b)`           | `((a) <= (b))`; macro calls are not wrapped again |
-| `use c.gt(a, b)`           | `((a) > (b))`; macro calls are not wrapped again |
-| `use c.ge(a, b)`           | `((a) >= (b))`; macro calls are not wrapped again |
+| DSL                         | C output              |
+|-----------------------------|-----------------------|
+| `use c.ret(expr)`           | `expr`                |
+| `use c.cast(type, expr)`    | `((type)expr)`        |
+| `use c.call(fn, arg, ...)`  | `fn(arg, ...)`        |
+| `use c.struct.of(type)`     | `struct type`         |
+| `use c.initializer(...)`    | `{ ... }`             |
+| `use c.sel(cond, a, b)`     | `(cond ? a : b)`      |
+| `use c.eq(a, b)`            | `(a == b)`            |
+| `use c.ne(a, b)`            | `(a != b)`            |
+| `use c.lt(a, b)`            | `(a < b)`             |
+| `use c.le(a, b)`            | `(a <= b)`            |
+| `use c.gt(a, b)`            | `(a > b)`             |
+| `use c.ge(a, b)`            | `(a >= b)`            |
 
 **`c.math` package** — arithmetic:
 
-| DSL                       | C output        |
-|---------------------------|-----------------|
-| `use c.math.add(a, b)`    | `((a) + (b))`; macro calls are not wrapped again |
-| `use c.math.sub(a, b)`    | `((a) - (b))`; macro calls are not wrapped again |
-| `use c.math.mul(a, b)`    | `((a) * (b))`; macro calls are not wrapped again |
-| `use c.math.div(a, b)`    | `((a) / (b))`; macro calls are not wrapped again |
-| `use c.math.mod(a, b)`    | `((a) % (b))`; macro calls are not wrapped again |
-| `use c.math.neg(a)`       | `(-(a))`        |
+| DSL                      | C output       |
+|--------------------------|----------------|
+| `use c.math.add(a, b)`   | `(a + b)`      |
+| `use c.math.sub(a, b)`   | `(a - b)`      |
+| `use c.math.mul(a, b)`   | `(a * b)`      |
+| `use c.math.div(a, b)`   | `(a / b)`      |
+| `use c.math.mod(a, b)`   | `(a % b)`      |
+| `use c.math.neg(a)`      | `(-a)`         |
 
-**`c.math.bit` package** — bitwise operations:
+**`c.math.bit` package** — bitwise:
 
-| DSL                          | C output        |
-|------------------------------|-----------------|
-| `use c.math.bit.and(a, b)`   | `((a) & (b))`; macro calls are not wrapped again |
-| `use c.math.bit.or(a, b)`    | `((a) \| (b))`; macro calls are not wrapped again |
-| `use c.math.bit.xor(a, b)`   | `((a) ^ (b))`; macro calls are not wrapped again |
-| `use c.math.bit.not(a)`      | `(~(a))`; macro calls are not wrapped again |
-| `use c.math.bit.shl(a, b)`   | `((a) << (b))`; macro calls are not wrapped again |
-| `use c.math.bit.shr(a, b)`   | `((a) >> (b))`; macro calls are not wrapped again |
-| `use c.math.bit.set(a, b)`   | `((a) \|= (b))`; macro calls are not wrapped again |
-
-Variadic example:
-
-```cgen
-module initializer:
-    template initializer:
-        param ... as values
-        use c.initializer(values)
-```
-
-```c
-#define lh_initializer(...) { __VA_ARGS__ }
-```
+| DSL                        | C output       |
+|----------------------------|----------------|
+| `use c.math.bit.and(a, b)` | `(a & b)`      |
+| `use c.math.bit.or(a, b)`  | `(a \| b)`     |
+| `use c.math.bit.xor(a, b)` | `(a ^ b)`      |
+| `use c.math.bit.not(a)`    | `(~a)`         |
+| `use c.math.bit.shl(a, b)` | `(a << b)`     |
+| `use c.math.bit.shr(a, b)` | `(a >> b)`     |
+| `use c.math.bit.set(a, b)` | `(a \|= b)`    |
 
 ## Built-in C Types
 

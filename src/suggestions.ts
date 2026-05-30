@@ -43,6 +43,7 @@ interface LineRange {
 
 interface CurrentTemplate {
   params: string[];
+  callableParams: string[];
   excludeNames: string[];
 }
 
@@ -81,6 +82,8 @@ const declarationSnippets = [
   'enum name as type:',
   'template name:',
   'param name',
+  'param name as any',
+  'param name as template',
   'param ... as values',
   'field name as type'
 ];
@@ -155,7 +158,7 @@ function findCurrentContext(textBeforeLine: string): string[] {
 
 function findCurrentTemplate(textBeforeLine: string): CurrentTemplate {
   const sectionStack: Array<{ indent: number; path: string[] }> = [{ indent: -1, path: [] }];
-  let currentTemplate: { indent: number; name: string; path: string[]; params: string[] } | undefined;
+  let currentTemplate: { indent: number; name: string; path: string[]; params: string[]; callableParams: string[] } | undefined;
 
   for (const rawLine of expandInlineDsl(textBeforeLine).split(/\r?\n/)) {
     const withoutComment = rawLine.replace(/#.*$/, '').trimEnd();
@@ -186,7 +189,8 @@ function findCurrentTemplate(textBeforeLine: string): CurrentTemplate {
         indent,
         name: templateMatch[1],
         path: [...sectionStack[sectionStack.length - 1].path, templateMatch[1]],
-        params: []
+        params: [],
+        callableParams: []
       };
       continue;
     }
@@ -196,19 +200,23 @@ function findCurrentTemplate(textBeforeLine: string): CurrentTemplate {
     }
 
     const variadicParam = line.match(/^param\s+\.\.\.\s+as\s+([A-Za-z_][A-Za-z0-9_]*)$/);
-    const normalParam = line.match(/^param\s+([A-Za-z_][A-Za-z0-9_]*)$/);
+    const normalParam = line.match(/^param\s+([A-Za-z_][A-Za-z0-9_]*)(\s+as\s+(\S+))?$/);
     const paramName = variadicParam?.[1] ?? normalParam?.[1];
     if (paramName) {
       currentTemplate.params.push(paramName);
+      if (normalParam?.[3] === 'template') {
+        currentTemplate.callableParams.push(paramName);
+      }
     }
   }
 
   if (!currentTemplate) {
-    return { params: [], excludeNames: [] };
+    return { params: [], callableParams: [], excludeNames: [] };
   }
 
   return {
     params: currentTemplate.params,
+    callableParams: currentTemplate.callableParams,
     excludeNames: [currentTemplate.name, makePublicPath(currentTemplate.path).join('.')]
   };
 }
@@ -274,7 +282,15 @@ function pickSuggestions(linePrefix: string, contextPath: string[], currentTempl
   const typed = linePrefix.trimStart();
   const candidates = getCandidates(typed, contextPath, currentTemplate, index);
   return candidates
-    .filter((candidate) => candidate.startsWith(typed) && candidate.length > typed.length)
+    .filter((candidate) => {
+      if (candidate.startsWith(typed) && candidate.length > typed.length) { return true; }
+      if (typed.endsWith('.')) {
+        const withoutDot = typed.slice(0, -1);
+        const tail = candidate.slice(withoutDot.length);
+        return candidate.startsWith(withoutDot) && tail.length > 0 && !tail.startsWith('.');
+      }
+      return false;
+    })
     .slice(0, 5)
     .map((candidate) => `${indent}${candidate}`);
 }
@@ -416,7 +432,8 @@ function getUseArgumentCandidates(
   }
 
   return sortUnique([
-    ...currentTemplate.params,
+    ...currentTemplate.params.filter((p) => !currentTemplate.callableParams.includes(p)),
+    ...currentTemplate.callableParams.map((p) => `${p}()`),
     ...getTemplateUseCandidates(typed, contextPath, currentTemplate, index)
   ]);
 }
@@ -446,7 +463,7 @@ function getNodeTemplateUseMembers(node: DslNode, prefix: string, currentTemplat
     ...node.symbols
       .filter((symbol) => symbol.kind === 'template')
       .map((symbol) => {
-        const name = `${prefix}${symbol.name}`;
+        const name = makePublicSymbolPath(symbol).join('.');
         if (currentTemplate.excludeNames.includes(name)) { return null; }
         const args = symbol.params.length > 0 ? symbol.params.join(', ') : '';
         return `${name}(${args})`;

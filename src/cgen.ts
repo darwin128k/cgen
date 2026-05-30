@@ -37,6 +37,7 @@ interface SectionNode {
 interface TemplateParam {
   variadic: boolean;
   name: string;
+  callable: boolean;
   line: number;
 }
 
@@ -530,12 +531,12 @@ function parseTemplate(line: string, lineNumber: number): TemplateNode | undefin
 function parseTemplateParam(line: string, lineNumber: number): TemplateParam | undefined {
   const variadicMatch = line.match(/^param\s+\.\.\.\s+as\s+([A-Za-z_][A-Za-z0-9_]*)$/);
   if (variadicMatch) {
-    return { variadic: true, name: variadicMatch[1], line: lineNumber };
+    return { variadic: true, callable: false, name: variadicMatch[1], line: lineNumber };
   }
 
-  const normalMatch = line.match(/^param\s+([A-Za-z_][A-Za-z0-9_]*)(?:\s+as\s+\S+)?$/);
+  const normalMatch = line.match(/^param\s+([A-Za-z_][A-Za-z0-9_]*)(?:\s+as\s+(\S+))?$/);
   if (normalMatch) {
-    return { variadic: false, name: normalMatch[1], line: lineNumber };
+    return { variadic: false, callable: normalMatch[2] === 'template', name: normalMatch[1], line: lineNumber };
   }
 
   return undefined;
@@ -560,9 +561,10 @@ function expandTemplateBody(template: TemplateNode, templateSymbols: Map<string,
   }
 
   const expression = parseUseExpression(template.body, template.bodyLine);
+  const callableParams = new Set(template.params.filter((p) => p.callable).map((p) => p.name));
 
   const variadicParam = template.params.find((p) => p.variadic);
-  const args = expression.args.map((arg) => expandTemplateArgument(arg, template.bodyLine, templateSymbols));
+  const args = expression.args.map((arg) => expandTemplateArgument(arg, template.bodyLine, templateSymbols, callableParams));
   let result = expression.callee.startsWith('c.') && knownTemplateBuiltins.has(expression.callee)
     ? applyTemplateBuiltin(expression.callee, args, template.bodyLine)
     : applyTemplateSymbol(expression.callee, args, template.bodyLine, templateSymbols);
@@ -599,13 +601,19 @@ function parseCallExpression(expression: string, line: number): UseExpression | 
   };
 }
 
-function expandTemplateArgument(arg: string, line: number, templateSymbols: Map<string, TemplateSymbol>): string {
+function expandTemplateArgument(arg: string, line: number, templateSymbols: Map<string, TemplateSymbol>, callableParams: Set<string>): string {
   const expression = parseCallExpression(arg, line);
   if (!expression) {
-    return arg;
+    const symbol = templateSymbols.get(arg);
+    return symbol ? symbol.macroName : arg;
   }
 
-  const args = expression.args.map((nestedArg) => expandTemplateArgument(nestedArg, line, templateSymbols));
+  const args = expression.args.map((nestedArg) => expandTemplateArgument(nestedArg, line, templateSymbols, callableParams));
+
+  if (callableParams.has(expression.callee)) {
+    return `${expression.callee}(${args.join(', ')})`;
+  }
+
   return expression.callee.startsWith('c.') && knownTemplateBuiltins.has(expression.callee)
     ? applyTemplateBuiltin(expression.callee, args, line)
     : applyTemplateSymbol(expression.callee, args, line, templateSymbols);
@@ -1045,9 +1053,10 @@ function resolveModuleDependencies(
 
 function getUsedTemplateSymbols(template: TemplateNode, templateSymbols: Map<string, TemplateSymbol>): TemplateSymbol[] {
   const expression = parseUseExpression(template.body, template.bodyLine);
+  const callableParams = new Set(template.params.filter((p) => p.callable).map((p) => p.name));
   const result: TemplateSymbol[] = [];
 
-  collectUsedTemplateSymbols(expression, template.bodyLine, templateSymbols, result);
+  collectUsedTemplateSymbols(expression, template.bodyLine, templateSymbols, result, callableParams);
   return result;
 }
 
@@ -1055,9 +1064,10 @@ function collectUsedTemplateSymbols(
   expression: UseExpression,
   line: number,
   templateSymbols: Map<string, TemplateSymbol>,
-  result: TemplateSymbol[]
+  result: TemplateSymbol[],
+  callableParams: Set<string>
 ): void {
-  if (!(expression.callee.startsWith('c.') && knownTemplateBuiltins.has(expression.callee))) {
+  if (!callableParams.has(expression.callee) && !(expression.callee.startsWith('c.') && knownTemplateBuiltins.has(expression.callee))) {
     const symbol = templateSymbols.get(expression.callee);
     if (!symbol) {
       throw new Error(`Line ${line}: unknown template "${expression.callee}"`);
@@ -1069,7 +1079,7 @@ function collectUsedTemplateSymbols(
   for (const arg of expression.args) {
     const nested = parseCallExpression(arg, line);
     if (nested) {
-      collectUsedTemplateSymbols(nested, line, templateSymbols, result);
+      collectUsedTemplateSymbols(nested, line, templateSymbols, result, callableParams);
     }
   }
 }
