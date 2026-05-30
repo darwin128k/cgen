@@ -25,6 +25,7 @@ let autoSaveTimer: ReturnType<typeof setTimeout> | undefined;
 let suggestTimer: ReturnType<typeof setTimeout> | undefined;
 let suggestRequestId = 0;
 let suggestionInsertText = '';
+let popupAllowed = false;
 const snippetEngine = new SnippetEngine();
 let navHoverRange: { start: number; end: number } | undefined;
 let completionCandidates: string[] = [];
@@ -742,6 +743,7 @@ source.addEventListener('input', () => {
   snippetEngine.clear();
   clearSuggestion();
   paint();
+  popupAllowed = true;
   requestSuggestion();
   queueChangeMessage();
 });
@@ -751,6 +753,7 @@ source.addEventListener('click', (event) => {
   }
 
   snippetEngine.clear();
+  popupAllowed = false;
   clearSuggestion();
   updateSelectionMode();
   updateActiveLine();
@@ -795,6 +798,7 @@ source.addEventListener('keydown', (event) => {
 
   if ((event.ctrlKey || event.metaKey) && (event.key === ' ' || event.code === 'Space')) {
     event.preventDefault();
+    popupAllowed = true;
     requestSuggestion();
     return;
   }
@@ -902,7 +906,7 @@ window.addEventListener('message', (event: MessageEvent) => {
     const candidates: string[] = event.data.candidates || [];
     if (candidates.length > 0 && serverInsertText && !source.value.startsWith(serverInsertText, source.selectionEnd)) {
       suggestionInsertText = serverInsertText;
-      if (/\w/.test(serverInsertText)) {
+      if (popupAllowed && /\w/.test(serverInsertText)) {
         const tailLen = Math.max(0, candidates[0].length - serverInsertText.length);
         const insertTexts = candidates.map((c) => c.slice(tailLen));
         showCompletionList(candidates, insertTexts);

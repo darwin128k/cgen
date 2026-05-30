@@ -115,7 +115,7 @@ export async function createDslSuggestion(
   const index = projectIndex.getSnapshot();
   const currentIndent = lineRange.before.match(/^\s*/)?.[0].length ?? 0;
   const context = findCurrentContext(request.text.slice(0, lineRange.lineStart), currentIndent);
-  const currentTemplate = findCurrentTemplate(request.text.slice(0, lineRange.lineStart));
+  const currentTemplate = findCurrentTemplate(request.text.slice(0, lineRange.lineStart), currentIndent);
   const matches = pickSuggestions(linePrefix, context, currentTemplate, index);
   if (!matches.length) {
     return undefined;
@@ -167,7 +167,7 @@ function findCurrentContext(textBeforeLine: string, currentIndent?: number): str
   return stack[stack.length - 1] ?? [];
 }
 
-function findCurrentTemplate(textBeforeLine: string): CurrentTemplate {
+function findCurrentTemplate(textBeforeLine: string, currentIndent?: number): CurrentTemplate {
   const sectionStack: Array<{ indent: number; path: string[] }> = [{ indent: -1, path: [] }];
   let currentTemplate: { indent: number; name: string; path: string[]; params: string[]; callableParams: string[] } | undefined;
 
@@ -235,7 +235,7 @@ function findCurrentTemplate(textBeforeLine: string): CurrentTemplate {
     }
   }
 
-  if (!currentTemplate) {
+  if (!currentTemplate || (currentIndent !== undefined && currentIndent <= currentTemplate.indent)) {
     return { params: [], callableParams: [], excludeNames: [] };
   }
 
