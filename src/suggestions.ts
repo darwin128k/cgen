@@ -666,10 +666,12 @@ function getDottedCandidates(token: string, contextPath: string[], index: DslInd
     const node = findNode(index.root, parentPath);
     if (node) {
       const parentPrefix = parentPath.join('.');
-      const typeNames = sortUnique([
-        ...node.children.map((child) => child.name),
-        ...node.symbols.filter((s) => s.kind !== 'template').map((s) => s.name)
-      ]).map((name) => `${parentPrefix}.${name}`);
+      const childCandidates = sortUnique(node.children.map((child) => child.name))
+        .map((name) => `${parentPrefix}.${name}`);
+      const symbolCandidates = sortUnique(
+        node.symbols.filter((s) => s.kind !== 'template').map((s) => s.path.join('.'))
+      );
+      const typeNames = sortUnique([...childCandidates, ...symbolCandidates]);
       const fallbackMatches = fallback.filter((f) => f.startsWith(token));
       return uniqueInOrder([...typeNames, ...fallbackMatches]);
     }
