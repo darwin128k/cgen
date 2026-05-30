@@ -31,6 +31,7 @@ const snippetEngine = new SnippetEngine();
 let navHoverRange: { start: number; end: number } | undefined;
 let completionCandidates: string[] = [];
 let completionInsertTexts: string[] = [];
+let completionCandidateKinds: string[] = [];
 let completionIndex = 0;
 
 const completionList = document.createElement('div');
@@ -322,6 +323,7 @@ function clearSuggestion(): void {
   suggestionReplaceLeft = 0;
   completionCandidates = [];
   completionInsertTexts = [];
+  completionCandidateKinds = [];
   completionIndex = 0;
   completionList.hidden = true;
   if (hadSuggestion) {
@@ -341,22 +343,29 @@ function getCursorPixelPos(): { x: number; y: number } {
   return { x, y };
 }
 
-function completionIconFor(label: string): [string, string] {
-  if (/^@/.test(label)) return ['symbol-keyword', 'keyword'];
-  if (/^(package|module|scope)\b/.test(label)) return ['symbol-module', 'module'];
-  if (/^alias\b/.test(label)) return ['symbol-interface', 'interface'];
-  if (/^enum\b/.test(label)) return ['symbol-enum', 'enum'];
-  if (/^case\b/.test(label)) return ['symbol-enum-member', 'enum'];
-  if (/^template\b/.test(label)) return ['symbol-function', 'function'];
-  if (/^param\b/.test(label)) return ['symbol-variable', 'variable'];
-  if (/^field\b/.test(label)) return ['symbol-field', 'variable'];
-  if (/\(\)/.test(label)) return ['symbol-method', 'method'];
-  return ['symbol-struct', 'struct'];
+function completionIconFor(kind: string): [string, string] {
+  switch (kind) {
+    case 'keyword': return ['symbol-keyword', 'keyword'];
+    case 'package':
+    case 'module':
+    case 'scope':
+    case 'extern': return ['symbol-module', 'module'];
+    case 'alias': return ['symbol-interface', 'interface'];
+    case 'enum': return ['symbol-enum', 'enum'];
+    case 'case': return ['symbol-enum-member', 'enum'];
+    case 'struct':
+    case 'record': return ['symbol-struct', 'struct'];
+    case 'template':
+    case 'fn': return ['symbol-method', 'method'];
+    case 'field': return ['symbol-field', 'variable'];
+    case 'param': return ['symbol-variable', 'variable'];
+    default: return ['symbol-struct', 'struct'];
+  }
 }
 
 function renderCompletionList(): void {
   completionList.innerHTML = completionCandidates.map((label, i) => {
-    const [iconClass, colorClass] = completionIconFor(label);
+    const [iconClass, colorClass] = completionIconFor(completionCandidateKinds[i] ?? '');
     return `<div class="completion-item${i === completionIndex ? ' active' : ''}" data-index="${i}">` +
       `<span class="completion-icon-col ci-${colorClass}">` +
       `<i class="codicon codicon-${iconClass}" aria-hidden="true"></i>` +
@@ -366,13 +375,14 @@ function renderCompletionList(): void {
   }).join('');
 }
 
-function showCompletionList(candidates: string[], insertTexts: string[]): void {
+function showCompletionList(candidates: string[], insertTexts: string[], kinds: string[]): void {
   if (!candidates.length) {
     completionList.hidden = true;
     return;
   }
   completionCandidates = candidates;
   completionInsertTexts = insertTexts;
+  completionCandidateKinds = kinds;
   completionIndex = 0;
   renderCompletionList();
 
@@ -927,13 +937,14 @@ window.addEventListener('message', (event: MessageEvent) => {
     const serverInsertText: string = event.data.insertText || '';
     const serverReplaceLeft: number = event.data.replaceLeft || 0;
     const candidates: string[] = event.data.candidates || [];
+    const candidateKinds: string[] = event.data.candidateKinds || [];
     if (popupAllowed && candidates.length > 0 && serverInsertText && !source.value.startsWith(serverInsertText, source.selectionEnd)) {
       suggestionInsertText = serverInsertText;
       suggestionReplaceLeft = serverReplaceLeft;
       if (/\w/.test(serverInsertText)) {
         const tailLen = Math.max(0, candidates[0].length - serverInsertText.length);
         const insertTexts = candidates.map((c) => c.slice(tailLen));
-        showCompletionList(candidates, insertTexts);
+        showCompletionList(candidates, insertTexts, candidateKinds);
       } else {
         completionList.hidden = true;
       }

@@ -42,7 +42,14 @@ export interface TemplateNode {
   fields: TemplateField[];
   body: string;
   bodyLine: number;
+  bodyInline: boolean;
   attributes: Attribute[];
+  line: number;
+}
+
+export interface StructUse {
+  expr: string;
+  inline: boolean;
   line: number;
 }
 
@@ -50,7 +57,7 @@ export interface StructNode {
   kind: 'struct';
   name: string;
   fields: TemplateField[];
-  uses: string[];
+  uses: StructUse[];
   attributes: Attribute[];
   line: number;
 }
@@ -203,6 +210,8 @@ export function parseDsl(source: string): ParsedDsl {
           diagnostics.push(`Line ${lineNumber}: template "${currentTemplate.node.name}" with fields cannot have a body`);
           return;
         }
+        currentTemplate.node.bodyInline = pendingAttributes.some((a) => a.name === 'use' && a.args[0] === 'inline');
+        pendingAttributes = [];
         currentTemplate.node.body = line;
         currentTemplate.node.bodyLine = lineNumber;
         return;
@@ -219,7 +228,9 @@ export function parseDsl(source: string): ParsedDsl {
         return;
       }
       if (/^use\s+/.test(line)) {
-        currentStruct.node.uses.push(line.slice(4).trim());
+        const inline = pendingAttributes.some((a) => a.name === 'use' && a.args[0] === 'inline');
+        pendingAttributes = [];
+        currentStruct.node.uses.push({ expr: line.slice(4).trim(), inline, line: lineNumber });
         return;
       }
     }
@@ -450,7 +461,7 @@ function parseTemplate(line: string, lineNumber: number): TemplateNode | undefin
       if (param) { params.push(param); }
     }
   }
-  return { kind: 'template', name: match[1], params, fields: [], body: '', bodyLine: lineNumber, attributes: [], line: lineNumber };
+  return { kind: 'template', name: match[1], params, fields: [], body: '', bodyLine: lineNumber, bodyInline: false, attributes: [], line: lineNumber };
 }
 
 function parseStruct(line: string, lineNumber: number): StructNode | undefined {

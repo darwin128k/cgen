@@ -11,6 +11,7 @@ export interface SuggestionResult {
   insertText: string;
   replaceLeft: number;
   candidates: string[];
+  candidateKinds: string[];
 }
 
 type SectionKind = 'root' | 'package' | 'module' | 'scope' | 'extern';
@@ -48,6 +49,7 @@ interface CurrentTemplate {
   callableParams: string[];
   excludeNames: string[];
   insideStruct: boolean;
+  insideTemplate: boolean;
 }
 
 const builtinTemplates = [
@@ -132,10 +134,12 @@ export async function createDslSuggestion(
   const sliceFrom = divergeAtDot ? linePrefix.length - 1 : linePrefix.length;
   const tailForCandidates = divergeAtDot ? tailToken.slice(0, -1) : tailToken;
   const trimDot = (s: string) => s.endsWith('.') ? s.slice(0, -1) : s;
+  const resolvedCandidates = matches.map((m) => trimDot(`${tailForCandidates}${m.slice(sliceFrom)}`));
   return {
     insertText: trimDot(matches[0].slice(sliceFrom)),
     replaceLeft: divergeAtDot ? 1 : 0,
-    candidates: matches.map((m) => trimDot(`${tailForCandidates}${m.slice(sliceFrom)}`))
+    candidates: resolvedCandidates,
+    candidateKinds: resolvedCandidates.map((c) => resolveKindForCandidate(c, index))
   };
 }
 
@@ -258,14 +262,15 @@ function findCurrentTemplate(textBeforeLine: string, currentIndent?: number): Cu
   const insideStruct = !!currentStruct && (currentIndent === undefined || currentIndent > currentStruct.indent);
 
   if (!currentTemplate || (currentIndent !== undefined && currentIndent <= currentTemplate.indent)) {
-    return { params: [], callableParams: [], excludeNames: [], insideStruct };
+    return { params: [], callableParams: [], excludeNames: [], insideStruct, insideTemplate: false };
   }
 
   return {
     params: currentTemplate.params,
     callableParams: currentTemplate.callableParams,
     excludeNames: [currentTemplate.name, makePublicPath(currentTemplate.path).join('.')],
-    insideStruct
+    insideStruct,
+    insideTemplate: true
   };
 }
 
@@ -336,7 +341,11 @@ function pickSuggestions(linePrefix: string, contextPath: string[], currentTempl
 
 function getCandidates(typed: string, contextPath: string[], currentTemplate: CurrentTemplate, index: DslIndex): string[] {
   if (/^@/.test(typed)) {
-    return snippets.filter((snippet) => snippet.startsWith('@'));
+    const attrSnippets = snippets.filter((snippet) => snippet.startsWith('@'));
+    if (currentTemplate.insideStruct || currentTemplate.insideTemplate) {
+      return [...attrSnippets, '@use(inline)'];
+    }
+    return attrSnippets;
   }
 
   if (/^alias\s+\S+(?:\s+as\s+|\s+->\s*)/.test(typed)) {
@@ -709,4 +718,29 @@ function findNode(root: DslNode, path: string[]): DslNode | undefined {
   }
 
   return current;
+}
+
+function resolveKindForCandidate(candidate: string, index: DslIndex): string {
+  if (/^@/.test(candidate)) return 'keyword';
+  if (/^(package|module|scope|extern)\b/.test(candidate)) return 'module';
+  if (/^alias\b/.test(candidate)) return 'alias';
+  if (/^enum\b/.test(candidate)) return 'enum';
+  if (/^struct\b/.test(candidate)) return 'struct';
+  if (/^template\b/.test(candidate)) return 'template';
+  if (/^fn\b/.test(candidate)) return 'fn';
+  if (/^field\b/.test(candidate)) return 'field';
+  if (/^param\b/.test(candidate)) return 'param';
+  if (/^(use|case|name|\.\.\.)/.test(candidate)) return 'keyword';
+  if (candidate.includes('(')) return 'template';
+
+  const pathStr = candidate.endsWith('.') ? candidate.slice(0, -1) : candidate;
+  const pathParts = pathStr.split('.').filter(Boolean);
+
+  const symbol = index.symbols.find((s) => s.path.join('.') === pathStr);
+  if (symbol) return symbol.kind;
+
+  const node = findNode(index.root, pathParts);
+  if (node) return node.kind;
+
+  return '';
 }

@@ -140,7 +140,8 @@ async function openDslEditor(context: vscode.ExtensionContext) {
         id: message.id,
         insertText: suggestion?.insertText ?? '',
         replaceLeft: suggestion?.replaceLeft ?? 0,
-        candidates: suggestion?.candidates ?? []
+        candidates: suggestion?.candidates ?? [],
+        candidateKinds: suggestion?.candidateKinds ?? []
       });
       return;
     }

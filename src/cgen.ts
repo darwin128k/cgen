@@ -697,7 +697,7 @@ function buildTemplateSymbols(modules: ModuleArtifact[]): Map<string, TemplateSy
         throw new Error(`Line ${template.line}: template "${key}" is already defined in ${existing.includePath}`);
       }
 
-      if (template.fields.length > 0) {
+      if (template.fields.length > 0 && template.params.length === 0) {
         continue;
       }
 
@@ -765,6 +765,28 @@ function resolveModuleDependencies(
         continue;
       }
 
+      if (template.bodyInline) {
+        const expression = parseUseExpression(template.body, template.bodyLine);
+        const fieldTemplate = paramTemplates.get(expression.callee);
+        if (fieldTemplate) {
+          const outerParamNames = new Set(template.params.map((p) => p.name));
+          const innerParamMap = new Map<string, string>();
+          fieldTemplate.params.forEach((p, i) => {
+            if (i < expression.args.length) { innerParamMap.set(p.name, expression.args[i].trim()); }
+          });
+          for (const field of fieldTemplate.fields) {
+            const mappedTarget = innerParamMap.get(field.target) ?? field.target;
+            if (outerParamNames.has(mappedTarget)) { continue; }
+            for (const sym of getTypeExpressionSymbols(mappedTarget, field.line, symbols)) {
+              if (sym.moduleId !== module.id) {
+                if (sym.externHeader) { module.externHeaders.add(sym.externHeader); } else { module.dependencies.add(sym.moduleId); }
+              }
+            }
+          }
+        }
+        continue;
+      }
+
       for (const usedTemplate of getUsedTemplateSymbols(template, templateSymbols)) {
         if (usedTemplate.moduleId !== module.id) {
           if (usedTemplate.externHeader) {
@@ -784,11 +806,27 @@ function resolveModuleDependencies(
           }
         }
       }
-      for (const useExpr of (struct.uses ?? [])) {
-        for (const field of expandStructUse(useExpr, struct.line, paramTemplates)) {
-          for (const symbol of getTypeExpressionSymbols(field.target, field.line, symbols)) {
-            if (symbol.moduleId !== module.id) {
-              if (symbol.externHeader) { module.externHeaders.add(symbol.externHeader); } else { module.dependencies.add(symbol.moduleId); }
+      for (const use of (struct.uses ?? [])) {
+        if (use.inline) {
+          for (const field of expandStructUse(use.expr, struct.line, paramTemplates)) {
+            for (const sym of getTypeExpressionSymbols(field.target, field.line, symbols)) {
+              if (sym.moduleId !== module.id) {
+                if (sym.externHeader) { module.externHeaders.add(sym.externHeader); } else { module.dependencies.add(sym.moduleId); }
+              }
+            }
+          }
+          continue;
+        }
+        const call = parseCallExpression(use.expr, struct.line);
+        if (!call) { continue; }
+        const tmpl = templateSymbols.get(call.callee);
+        if (tmpl && tmpl.moduleId !== module.id) {
+          module.dependencies.add(tmpl.moduleId);
+        }
+        for (const arg of call.args) {
+          for (const sym of getTypeExpressionSymbols(arg, struct.line, symbols)) {
+            if (sym.moduleId !== module.id) {
+              if (sym.externHeader) { module.externHeaders.add(sym.externHeader); } else { module.dependencies.add(sym.moduleId); }
             }
           }
         }
@@ -1009,6 +1047,27 @@ function renderHeader(
     }
 
     const paramList = template.params.map((p) => (p.variadic ? '...' : p.name)).join(', ');
+    if (template.bodyInline) {
+      const expression = parseUseExpression(template.body, template.bodyLine);
+      const fieldTemplate = paramTemplates.get(expression.callee);
+      if (fieldTemplate) {
+        const outerParamNames = new Set(template.params.map((p) => p.name));
+        const innerParamMap = new Map<string, string>();
+        fieldTemplate.params.forEach((p, i) => {
+          if (i < expression.args.length) { innerParamMap.set(p.name, expression.args[i].trim()); }
+        });
+        const fieldDefs = fieldTemplate.fields.map((field, index) => {
+          const mappedTarget = innerParamMap.get(field.target) ?? field.target;
+          const typeName = outerParamNames.has(mappedTarget)
+            ? mappedTarget
+            : resolveTypeExpression(mappedTarget, field.line, symbols);
+          const semi = index < fieldTemplate.fields.length - 1 ? ';' : '';
+          return `${typeName} ${field.name}${semi}`;
+        }).join(' ');
+        lines.push(`#define ${makeMacroName(allSymbolParts, template.name)}(${paramList}) ${fieldDefs}`);
+        continue;
+      }
+    }
     const body = expandTemplateBody(template, templateSymbols);
     lines.push(`#define ${makeMacroName(allSymbolParts, template.name)}(${paramList}) ${body}`);
   }
@@ -1021,10 +1080,19 @@ function renderHeader(
     for (const field of struct.fields) {
       lines.push(`  ${resolveTypeExpression(field.target, field.line, symbols)} ${field.name};`);
     }
-    for (const useExpr of (struct.uses ?? [])) {
-      for (const field of expandStructUse(useExpr, struct.line, paramTemplates)) {
-        lines.push(`  ${resolveTypeExpression(field.target, field.line, symbols)} ${field.name};`);
+    for (const use of (struct.uses ?? [])) {
+      if (use.inline) {
+        for (const field of expandStructUse(use.expr, struct.line, paramTemplates)) {
+          lines.push(`  ${resolveTypeExpression(field.target, field.line, symbols)} ${field.name};`);
+        }
+        continue;
       }
+      const call = parseCallExpression(use.expr, struct.line);
+      if (!call) { continue; }
+      const tmpl = templateSymbols.get(call.callee);
+      if (!tmpl) { continue; }
+      const resolvedArgs = call.args.map((arg) => resolveTypeExpression(arg, struct.line, symbols));
+      lines.push(`  ${tmpl.macroName}(${resolvedArgs.join(', ')});`);
     }
     lines.push(`} ${typedefName};`);
   }
