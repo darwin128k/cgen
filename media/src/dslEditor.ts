@@ -25,6 +25,7 @@ let autoSaveTimer: ReturnType<typeof setTimeout> | undefined;
 let suggestTimer: ReturnType<typeof setTimeout> | undefined;
 let suggestRequestId = 0;
 let suggestionInsertText = '';
+let suggestionReplaceLeft = 0;
 let popupAllowed = false;
 const snippetEngine = new SnippetEngine();
 let navHoverRange: { start: number; end: number } | undefined;
@@ -52,6 +53,7 @@ const localSuggestionCandidates = [
   'scope name:',
   'alias name -> type',
   'enum name -> type:',
+  'struct name:',
   'alias ptr -> c.ptr.of()',
   'case name',
   'template name:',
@@ -79,7 +81,7 @@ function highlightToken(token: string): string {
     return `<span class="attr">${escapeHtml(token)}</span>`;
   }
 
-  if (/^(package|module|scope|alias|enum|case|as|fn|template|param|field|use)$/.test(token) || token === '->') {
+  if (/^(package|module|scope|alias|enum|case|as|fn|template|struct|param|field|use)$/.test(token) || token === '->') {
     return `<span class="kw">${escapeHtml(token)}</span>`;
   }
 
@@ -95,7 +97,7 @@ function highlightLine(line: string): string {
   const rawCode = commentIndex === -1 ? line : line.slice(0, commentIndex);
   const comment = commentIndex === -1 ? '' : line.slice(commentIndex);
   const highlightedCode = escapeHtml(rawCode).replace(
-    /(@[A-Za-z_][A-Za-z0-9_]*|\bc\.[A-Za-z_][A-Za-z0-9_.]*\b|->|\bpackage\b|\bmodule\b|\bscope\b|\balias\b|\benum\b|\bcase\b|\bas\b|\bfn\b|\btemplate\b|\bparam\b|\bfield\b|\buse\b)/g,
+    /(@[A-Za-z_][A-Za-z0-9_]*|\bc\.[A-Za-z_][A-Za-z0-9_.]*\b|->|\bpackage\b|\bmodule\b|\bscope\b|\balias\b|\benum\b|\bcase\b|\bas\b|\bfn\b|\btemplate\b|\bstruct\b|\bparam\b|\bfield\b|\buse\b)/g,
     highlightToken
   );
   return `${highlightedCode}${comment ? highlightToken(comment) : ''}`;
@@ -135,13 +137,19 @@ function highlightLinesWithGhost(lines: string[]): string {
   const linesBefore = source.value.slice(0, cursor).split('\n');
   const cursorLineIndex = linesBefore.length - 1;
   const cursorCol = linesBefore[cursorLineIndex].length;
+  let offset = 0;
   return lines.map((line, i) => {
+    const lineStart = offset;
+    offset += line.length + 1;
     if (i !== cursorLineIndex) {
       return highlightLine(line);
     }
-    const before = line.slice(0, cursorCol);
+    const before = line.slice(0, cursorCol - suggestionReplaceLeft);
     const after = line.slice(cursorCol);
-    return `${highlightLine(before)}<span class="ghost-text">${escapeHtml(suggestionInsertText)}</span>${highlightLine(after)}`;
+    const highlightedAfter = snippetEngine.active
+      ? snippetEngine.highlightPart(after, lineStart + cursorCol, source.value, highlightLine, escapeHtml)
+      : highlightLine(after);
+    return `${highlightLine(before)}<span class="ghost-text">${escapeHtml(suggestionInsertText)}</span>${highlightedAfter}`;
   }).join('\n');
 }
 
@@ -311,6 +319,7 @@ function clearSuggestion(): void {
   clearTimeout(suggestTimer);
   suggestRequestId += 1;
   suggestionInsertText = '';
+  suggestionReplaceLeft = 0;
   completionCandidates = [];
   completionInsertTexts = [];
   completionIndex = 0;
@@ -417,7 +426,7 @@ function renderSuggestionNow(): void {
 
 function requestSuggestion(): void {
   clearTimeout(suggestTimer);
-  if (source.selectionStart !== source.selectionEnd || snippetEngine.active) {
+  if (source.selectionStart !== source.selectionEnd) {
     clearSuggestion();
     return;
   }
@@ -463,13 +472,25 @@ function acceptSuggestion(): boolean {
     insertText = insertText.slice(0, -1);
   }
 
+  if (suggestionReplaceLeft > 0) {
+    const pos = source.selectionStart - suggestionReplaceLeft;
+    source.value = source.value.slice(0, pos) + source.value.slice(source.selectionStart);
+    source.selectionStart = pos;
+    source.selectionEnd = pos;
+  }
+
   const paramWords = snippetEngine.extractTabStopWords(insertText);
-  snippetEngine.setTabStopWords(paramWords.length > 0 ? paramWords : []);
+  if (paramWords.length > 0) {
+    snippetEngine.setTabStopWords(paramWords);
+  }
   const edit = snippetEngine.getSuggestionEdit(insertText);
   replaceSelection(edit.text, undefined, edit.selection);
   clearSuggestion();
-  snippetEngine.activate(edit);
-  if (snippetEngine.active) {
+  const wasActive = snippetEngine.active;
+  if (edit.tabStops && edit.tabStops.length > 0) {
+    snippetEngine.activate(edit);
+  }
+  if (snippetEngine.active || wasActive) {
     paint();
   }
   requestSuggestion();
@@ -741,7 +762,6 @@ function smartBackspace(): boolean {
 
 source.addEventListener('input', () => {
   clearDiagnosticLines();
-  snippetEngine.clear();
   clearSuggestion();
   paint();
   popupAllowed = true;
@@ -905,9 +925,11 @@ window.addEventListener('message', (event: MessageEvent) => {
   }
   if (event.data.type === 'suggestion' && event.data.id === suggestRequestId) {
     const serverInsertText: string = event.data.insertText || '';
+    const serverReplaceLeft: number = event.data.replaceLeft || 0;
     const candidates: string[] = event.data.candidates || [];
     if (popupAllowed && candidates.length > 0 && serverInsertText && !source.value.startsWith(serverInsertText, source.selectionEnd)) {
       suggestionInsertText = serverInsertText;
+      suggestionReplaceLeft = serverReplaceLeft;
       if (/\w/.test(serverInsertText)) {
         const tailLen = Math.max(0, candidates[0].length - serverInsertText.length);
         const insertTexts = candidates.map((c) => c.slice(tailLen));

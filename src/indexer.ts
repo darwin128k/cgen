@@ -1,9 +1,9 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
 import initSqlJs, { Database, SqlJsStatic } from 'sql.js';
+import { parseDsl, makePublicPath, type SectionKind, type SectionNode } from './parser';
 
-type SectionKind = 'root' | 'package' | 'module' | 'scope' | 'extern';
-type SymbolKind = 'alias' | 'enum' | 'template' | 'record';
+type SymbolKind = 'alias' | 'enum' | 'template' | 'record' | 'struct';
 
 export interface IndexedNode {
   kind: SectionKind;
@@ -111,17 +111,18 @@ export class CgenProjectIndex {
     const symbols: IndexedSymbol[] = [];
 
     for (const row of queryRows(db, 'SELECT kind, name, path, parent_path FROM sections ORDER BY path')) {
-      const pathParts = splitPath(String(row.path));
-      if (pathParts.length === 0) {
+      const parentPathStr = String(row.parent_path);
+      const pathParts = makePublicPath(splitPath(String(row.path)));
+      if (pathParts.length === 0 || pathParts.join('.') === parentPathStr) {
         continue;
       }
 
-      const parent = findOrCreatePath(root, splitPath(String(row.parent_path)));
+      const parent = findOrCreatePath(root, splitPath(parentPathStr));
       findOrCreateChild(parent, row.kind as SectionKind, String(row.name), pathParts);
     }
 
     for (const row of queryRows(db, 'SELECT kind, name, path, parent_path, params FROM symbols ORDER BY path')) {
-      const parent = findOrCreatePath(root, splitPath(String(row.parent_path)));
+      const parent = findOrCreatePath(root, makePublicPath(splitPath(String(row.parent_path))));
       const symbol = {
         kind: row.kind as SymbolKind,
         name: String(row.name),
@@ -140,7 +141,7 @@ export class CgenProjectIndex {
       typeNames: sortUnique([
         ...builtinTypes,
         ...symbols
-          .filter((symbol) => symbol.kind === 'alias' || symbol.kind === 'enum' || symbol.kind === 'record')
+          .filter((symbol) => symbol.kind === 'alias' || symbol.kind === 'enum' || symbol.kind === 'record' || symbol.kind === 'struct')
           .map((symbol) => symbol.path.join('.'))
       ])
     };
@@ -230,7 +231,7 @@ export class CgenProjectIndex {
 
   private replaceSource(sourcePath: string, text: string): void {
     const db = this.ensureDb();
-    const records = parseDslRecords(text, sourcePath);
+    const records = extractRecords(text, sourcePath);
     db.run('BEGIN');
     try {
       db.run('DELETE FROM sections WHERE source_path = ?', [sourcePath]);
@@ -334,114 +335,86 @@ export class CgenProjectIndex {
   }
 }
 
-function parseDslRecords(text: string, sourcePath: string): { sections: SectionRecord[]; symbols: SymbolRecord[] } {
+function extractRecords(text: string, sourcePath: string): { sections: SectionRecord[]; symbols: SymbolRecord[] } {
   const sections: SectionRecord[] = [];
   const symbols: SymbolRecord[] = [];
-  const stack: Array<{ indent: number; path: string[] }> = [{ indent: -1, path: [] }];
-  let currentTemplate: { indent: number; symbolIndex: number; hasParams: boolean; params: string[] } | undefined;
 
-  for (const { line: rawLine, lineNumber } of expandInlineDsl(text)) {
-    const withoutComment = rawLine.replace(/#.*$/, '').trimEnd();
-    if (withoutComment.trim().length === 0) {
-      continue;
-    }
+  const { root } = parseDsl(text);
 
-    const indent = withoutComment.match(/^\s*/)?.[0].length ?? 0;
-    const line = withoutComment.trim();
-    if (currentTemplate && indent <= currentTemplate.indent) {
-      symbols[currentTemplate.symbolIndex].params = currentTemplate.params.join(',');
-      currentTemplate = undefined;
-    }
-
-    while (stack.length > 1 && indent <= stack[stack.length - 1].indent) {
-      stack.pop();
-    }
-
-    const parentPath = stack[stack.length - 1].path;
-    const sectionMatch = line.match(/^(package|module|scope|extern)\s+([A-Za-z_][A-Za-z0-9_]*)\s*:/);
-    if (sectionMatch) {
-      const pathParts = [...parentPath, sectionMatch[2]];
-      sections.push({
-        kind: sectionMatch[1] as SectionKind,
-        name: sectionMatch[2],
-        path: pathParts.join('.'),
-        parentPath: parentPath.join('.'),
-        sourcePath,
-        line: lineNumber
-      });
-      stack.push({ indent, path: pathParts });
-      continue;
-    }
-
-    if (currentTemplate && /^param\s+/.test(line)) {
-      currentTemplate.hasParams = true;
-      const variadicParam = line.match(/^param\s+\.\.\.\s+as\s+([A-Za-z_][A-Za-z0-9_]*)$/);
-      const normalParam = line.match(/^param\s+([A-Za-z_][A-Za-z0-9_]*)(?:\s+as\s+\S+)?$/);
-      const paramName = variadicParam?.[1] ?? normalParam?.[1];
-      if (paramName) {
-        currentTemplate.params.push(paramName);
+  function walkSection(node: SectionNode, pathParts: string[]): void {
+    if (node.kind !== 'root') {
+      const publicPath = makePublicPath(pathParts);
+      const publicParentPath = makePublicPath(pathParts.slice(0, -1));
+      if (publicPath.join('.') !== publicParentPath.join('.')) {
+        sections.push({
+          kind: node.kind,
+          name: node.name,
+          path: publicPath.join('.'),
+          parentPath: publicParentPath.join('.'),
+          sourcePath,
+          line: node.line
+        });
       }
-      continue;
     }
 
-    if (currentTemplate && /^field\s+[A-Za-z_][A-Za-z0-9_]*\s+as\s+/.test(line)) {
-      if (!currentTemplate.hasParams) {
-        symbols[currentTemplate.symbolIndex].kind = 'record';
-      }
-      continue;
-    }
+    const symbolParentPath = makePublicPath(pathParts).join('.');
 
-    const symbolMatch = line.match(/^(alias|enum|template)\s+([A-Za-z_][A-Za-z0-9_]*)\b/);
-    if (symbolMatch) {
-      const pathParts = [...parentPath, symbolMatch[2]];
+    for (const alias of node.aliases) {
       symbols.push({
-        kind: symbolMatch[1] as SymbolKind,
-        name: symbolMatch[2],
-        path: makePublicPath(pathParts).join('.'),
-        parentPath: parentPath.join('.'),
+        kind: 'alias',
+        name: alias.name,
+        path: makePublicPath([...pathParts, alias.name]).join('.'),
+        parentPath: symbolParentPath,
         sourcePath,
-        line: lineNumber,
+        line: alias.line,
         params: ''
       });
-      if (symbolMatch[1] === 'template') {
-        currentTemplate = { indent, symbolIndex: symbols.length - 1, hasParams: false, params: [] };
-      }
+    }
+
+    for (const enumNode of node.enums) {
+      symbols.push({
+        kind: 'enum',
+        name: enumNode.name,
+        path: makePublicPath([...pathParts, enumNode.name]).join('.'),
+        parentPath: symbolParentPath,
+        sourcePath,
+        line: enumNode.line,
+        params: ''
+      });
+    }
+
+    for (const template of node.templates) {
+      const isRecord = template.fields.length > 0 && template.params.length === 0;
+      symbols.push({
+        kind: isRecord ? 'record' : 'template',
+        name: template.name,
+        path: makePublicPath([...pathParts, template.name]).join('.'),
+        parentPath: symbolParentPath,
+        sourcePath,
+        line: template.line,
+        params: template.params.map((p) => p.name).join(',')
+      });
+    }
+
+    for (const struct of node.structs) {
+      symbols.push({
+        kind: 'struct',
+        name: struct.name,
+        path: makePublicPath([...pathParts, struct.name]).join('.'),
+        parentPath: symbolParentPath,
+        sourcePath,
+        line: struct.line,
+        params: ''
+      });
+    }
+
+    for (const child of node.children) {
+      walkSection(child, [...pathParts, child.name]);
     }
   }
 
-  if (currentTemplate) {
-    symbols[currentTemplate.symbolIndex].params = currentTemplate.params.join(',');
-  }
-
+  walkSection(root, []);
   return { sections, symbols };
-}
-
-function expandInlineDsl(source: string): Array<{ line: string; lineNumber: number }> {
-  const lines: Array<{ line: string; lineNumber: number }> = [];
-  source.split(/\r?\n/).forEach((rawLine, rawIndex) => {
-    const lineNumber = rawIndex + 1;
-    const baseIndent = rawLine.match(/^\s*/)?.[0] ?? '';
-    const trimmed = rawLine.trim();
-    if (!trimmed || !/^(package|module|scope|extern)\b/.test(trimmed)) {
-      lines.push({ line: rawLine, lineNumber });
-      return;
-    }
-
-    const parts = trimmed.split(/\s*:\s*/).filter(Boolean);
-    if (parts.length <= 1) {
-      lines.push({ line: rawLine, lineNumber });
-      return;
-    }
-
-    for (let index = 0; index < parts.length; index += 1) {
-      const part = parts[index];
-      const isSection = /^(package|module|scope)\s+[A-Za-z_][A-Za-z0-9_]*$/.test(part);
-      const indent = `${baseIndent}${'    '.repeat(index)}`;
-      lines.push({ line: `${indent}${part}${isSection ? ':' : ''}`, lineNumber });
-    }
-  });
-
-  return lines;
 }
 
 function createNode(kind: SectionKind, name: string, nodePath: string[]): IndexedNode {
@@ -480,15 +453,6 @@ function queryRows(db: Database, sql: string): Record<string, unknown>[] {
 
 function splitPath(value: string): string[] {
   return value ? value.split('.').filter(Boolean) : [];
-}
-
-function makePublicPath(pathParts: string[]): string[] {
-  const parts = [...pathParts];
-  if (parts.length >= 2 && parts[parts.length - 1] === parts[parts.length - 2]) {
-    parts.pop();
-  }
-
-  return parts;
 }
 
 function sortUnique(values: string[]): string[] {

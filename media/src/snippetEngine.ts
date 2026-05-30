@@ -121,4 +121,30 @@ export class SnippetEngine {
       return result + highlightLine(line.slice(pos));
     }).join('\n');
   }
+
+  highlightPart(
+    text: string,
+    absoluteStart: number,
+    fullValue: string,
+    highlightLine: (line: string) => string,
+    escapeHtml: (s: string) => string
+  ): string {
+    if (!this.mode) { return highlightLine(text); }
+    const region = fullValue.slice(absoluteStart, absoluteStart + text.length);
+    const placeholderRegex = this.tabStopRegex(true);
+    const matches: Array<{ start: number; end: number }> = [];
+    let match: RegExpExecArray | null;
+    while ((match = placeholderRegex.exec(region)) !== null) {
+      matches.push({ start: match.index, end: match.index + match[0].length });
+    }
+    if (matches.length === 0) { return highlightLine(text); }
+    let result = '';
+    let pos = 0;
+    for (const m of matches) {
+      result += highlightLine(text.slice(pos, m.start));
+      result += `<span class="tab-stop">${escapeHtml(text.slice(m.start, m.end))}</span>`;
+      pos = m.end;
+    }
+    return result + highlightLine(text.slice(pos));
+  }
 }

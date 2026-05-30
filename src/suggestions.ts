@@ -1,5 +1,6 @@
 import { CgenProjectIndex } from './indexer';
 import { knownTemplateBuiltins } from './clib';
+import { makePublicPath } from './parser';
 
 export interface SuggestionRequest {
   text: string;
@@ -8,11 +9,12 @@ export interface SuggestionRequest {
 
 export interface SuggestionResult {
   insertText: string;
+  replaceLeft: number;
   candidates: string[];
 }
 
 type SectionKind = 'root' | 'package' | 'module' | 'scope' | 'extern';
-type SymbolKind = 'alias' | 'enum' | 'template' | 'record';
+type SymbolKind = 'alias' | 'enum' | 'template' | 'record' | 'struct';
 
 interface DslNode {
   kind: SectionKind;
@@ -73,6 +75,7 @@ const snippets = [
   'scope name:',
   'alias name -> type',
   'enum name -> type:',
+  'struct name:',
   'case name',
   'template name:',
   'template name():',
@@ -86,6 +89,7 @@ const snippets = [
 const declarationSnippets = [
   'alias name -> type',
   'enum name -> type:',
+  'struct name:',
   'template name:',
   'template name():',
   'fn name() -> type:',
@@ -105,7 +109,8 @@ export async function createDslSuggestion(
   }
 
   const lineRange = getCurrentLineRange(request.text, request.cursor);
-  if (lineRange.after.trim().length > 0 && lineRange.after.trim() !== ':') {
+  const afterTrim = lineRange.after.trim();
+  if (afterTrim.length > 0 && afterTrim !== ':' && !afterTrim.startsWith(',') && !afterTrim.startsWith(')')) {
     return undefined;
   }
 
@@ -122,9 +127,14 @@ export async function createDslSuggestion(
   }
 
   const tailToken = linePrefix.trimStart().match(/(@?[A-Za-z_][A-Za-z0-9_.]*)?$/)?.[0] ?? '';
+  const divergeAtDot = linePrefix.endsWith('.') && !matches[0].startsWith(linePrefix);
+  const sliceFrom = divergeAtDot ? linePrefix.length - 1 : linePrefix.length;
+  const tailForCandidates = divergeAtDot ? tailToken.slice(0, -1) : tailToken;
+  const trimDot = (s: string) => s.endsWith('.') ? s.slice(0, -1) : s;
   return {
-    insertText: matches[0].slice(linePrefix.length),
-    candidates: matches.map((m) => `${tailToken}${m.slice(linePrefix.length)}`)
+    insertText: trimDot(matches[0].slice(sliceFrom)),
+    replaceLeft: divergeAtDot ? 1 : 0,
+    candidates: matches.map((m) => trimDot(`${tailForCandidates}${m.slice(sliceFrom)}`))
   };
 }
 
@@ -285,15 +295,6 @@ function makePublicSymbolPath(symbol: DslSymbol): string[] {
   return makePublicPath(symbol.path);
 }
 
-function makePublicPath(path: string[]): string[] {
-  const parts = [...path];
-  if (parts.length >= 2 && parts[parts.length - 1] === parts[parts.length - 2]) {
-    parts.pop();
-  }
-
-  return parts;
-}
-
 function sortUnique(values: string[]): string[] {
   return [...new Set(values)].sort((a, b) => a.localeCompare(b));
 }
@@ -370,6 +371,10 @@ function getCandidates(typed: string, contextPath: string[], currentTemplate: Cu
     return getInlineParamCandidates(typed);
   }
 
+  if (/^struct\b/.test(typed)) {
+    return getDeclarationSnippetsForContext(contextPath, currentTemplate, index);
+  }
+
   if (/^(alias|enum|template|fn|param|field)\b/.test(typed)) {
     return getDeclarationSnippetsForContext(contextPath, currentTemplate, index);
   }
@@ -389,6 +394,7 @@ function getContextSnippets(contextPath: string[], currentTemplate: CurrentTempl
     return [
       'alias name -> type',
       'enum name -> type:',
+      'struct name:',
       'template name:',
       'template name():',
       'fn name() -> type:',
@@ -412,7 +418,7 @@ function getDeclarationSnippetsForContext(contextPath: string[], currentTemplate
   const kind = node?.kind ?? 'root';
 
   if (kind === 'module' || kind === 'scope' || kind === 'extern') {
-    return ['alias name -> type', 'enum name -> type:', 'template name:', 'template name():', 'fn name() -> type:', 'scope name:'];
+    return ['alias name -> type', 'enum name -> type:', 'struct name:', 'template name:', 'template name():', 'fn name() -> type:', 'scope name:'];
   }
 
   return ['package name:', 'module name:', 'scope name:'];
@@ -527,7 +533,10 @@ function getUseArgumentCandidates(
 ): string[] {
   const token = getTailToken(typed);
   if (token.includes('.')) {
-    return getTemplateUseCandidates(typed, contextPath, currentTemplate, index);
+    return uniqueInOrder([
+      ...getTemplateUseCandidates(typed, contextPath, currentTemplate, index),
+      ...getTypeCandidates(typed, contextPath, index)
+    ]);
   }
 
   return sortUnique([
@@ -556,19 +565,36 @@ function getDottedTemplateUseCandidates(token: string, index: DslIndex, currentT
   ]);
 }
 
+function nodeHasTemplates(node: DslNode): boolean {
+  if (node.symbols.some((s) => s.kind === 'template')) { return true; }
+  return node.children.some(nodeHasTemplates);
+}
+
 function getNodeTemplateUseMembers(node: DslNode, prefix: string, currentTemplate: CurrentTemplate): string[] {
-  return uniqueInOrder([
-    ...node.children.map((child) => `${prefix}${child.name}.`),
-    ...node.symbols
-      .filter((symbol) => symbol.kind === 'template')
-      .map((symbol) => {
-        const name = makePublicSymbolPath(symbol).join('.');
-        if (currentTemplate.excludeNames.includes(name)) { return null; }
-        const args = symbol.params.length > 0 ? symbol.params.join(', ') : '';
-        return `${name}(${args})`;
-      })
-      .filter((name): name is string => name !== null)
-  ]);
+  const childCandidates = node.children.flatMap((child) => {
+    const childPath = `${prefix}${child.name}`;
+    const collapsible = child.symbols.find(
+      (s) => s.kind === 'template' && makePublicSymbolPath(s).join('.') === childPath
+    );
+    if (collapsible) {
+      if (currentTemplate.excludeNames.includes(childPath)) { return []; }
+      const args = collapsible.params.length > 0 ? collapsible.params.join(', ') : '';
+      return [`${childPath}(${args})`];
+    }
+    return nodeHasTemplates(child) ? [`${childPath}.`] : [];
+  });
+
+  const directTemplates = node.symbols
+    .filter((symbol) => symbol.kind === 'template')
+    .map((symbol) => {
+      const name = makePublicSymbolPath(symbol).join('.');
+      if (currentTemplate.excludeNames.includes(name)) { return null; }
+      const args = symbol.params.length > 0 ? symbol.params.join(', ') : '';
+      return `${name}(${args})`;
+    })
+    .filter((name): name is string => name !== null);
+
+  return uniqueInOrder([...childCandidates, ...directTemplates]);
 }
 
 function getRootUseNamespaces(contextPath: string[], index: DslIndex): string[] {
@@ -589,7 +615,7 @@ function getRootUseNamespaces(contextPath: string[], index: DslIndex): string[] 
 function getAllUsePaths(index: DslIndex, currentTemplate: CurrentTemplate): string[] {
   const result: string[] = [];
   walk(index.root, (node) => {
-    if (node.kind !== 'root') {
+    if (node.kind !== 'root' && nodeHasTemplates(node)) {
       result.push(`${node.path.join('.')}.`);
     }
 
@@ -606,11 +632,13 @@ function getAllUsePaths(index: DslIndex, currentTemplate: CurrentTemplate): stri
     }
   });
 
-  return uniqueInOrder([
+  const all = uniqueInOrder([
     ...result,
     ...builtinTemplates.map((name) => `${name}()`),
     ...[...knownTemplateBuiltins].map((name) => `${name}()`)
   ]);
+  const callPrefixes = new Set(all.filter((s) => s.includes('(')).map((s) => s.slice(0, s.indexOf('('))));
+  return all.filter((s) => !s.endsWith('.') || !callPrefixes.has(s.slice(0, -1)));
 }
 
 function getDottedCandidates(token: string, contextPath: string[], index: DslIndex, fallback: string[]): string[] {
