@@ -81,8 +81,8 @@ const snippets = [
   'template name:',
   'template name():',
   'fn name() -> type:',
-  'param name',
-  'param ... -> values',
+  'name',
+  '... -> values',
   'field name -> type',
   'use c.ptr(value)'
 ];
@@ -94,10 +94,10 @@ const declarationSnippets = [
   'template name:',
   'template name():',
   'fn name() -> type:',
-  'param name',
-  'param name -> any',
-  'param name -> template',
-  'param ... -> values',
+  'name',
+  'name -> any',
+  'name -> template',
+  '... -> values',
   'field name -> type'
 ];
 
@@ -221,8 +221,8 @@ function findCurrentTemplate(textBeforeLine: string, currentIndent?: number): Cu
       if (templateMatch[2]) {
         for (const part of templateMatch[2].split(',')) {
           const trimmed = part.trim();
-          const variadicM = trimmed.match(/^param\s+\.\.\.(?:\s+as\s+|\s+->\s*)([A-Za-z_][A-Za-z0-9_]*)$/);
-          const normalM = trimmed.match(/^param\s+([A-Za-z_][A-Za-z0-9_]*)(?:(?:\s+as\s+|\s+->\s*)(\S+))?$/);
+          const variadicM = trimmed.match(/^(?:param\s+)?\.\.\.(?:\s+as\s+|\s+->\s*)([A-Za-z_][A-Za-z0-9_]*)$/);
+          const normalM = trimmed.match(/^(?:param\s+)?([A-Za-z_][A-Za-z0-9_]*)(?:(?:\s+as\s+|\s+->\s*)(\S+))?$/);
           const paramName = variadicM?.[1] ?? normalM?.[1];
           if (paramName) {
             params.push(paramName);
@@ -244,8 +244,8 @@ function findCurrentTemplate(textBeforeLine: string, currentIndent?: number): Cu
       continue;
     }
 
-    const variadicParam = line.match(/^param\s+\.\.\.(?:\s+as\s+|\s+->\s*)([A-Za-z_][A-Za-z0-9_]*)$/);
-    const normalParam = line.match(/^param\s+([A-Za-z_][A-Za-z0-9_]*)((?:\s+as\s+|\s+->\s*)(\S+))?$/);
+    const variadicParam = line.match(/^(?:param\s+)?\.\.\.(?:\s+as\s+|\s+->\s*)([A-Za-z_][A-Za-z0-9_]*)$/);
+    const normalParam = line.match(/^(?:param\s+)?([A-Za-z_][A-Za-z0-9_]*)((?:\s+as\s+|\s+->\s*)(\S+))?$/);
     const paramName = variadicParam?.[1] ?? normalParam?.[1];
     if (paramName) {
       currentTemplate.params.push(paramName);
@@ -400,7 +400,7 @@ function getContextSnippets(contextPath: string[], currentTemplate: CurrentTempl
     return ['field name -> type', 'use c.ptr(value)'];
   }
   if (currentTemplate.excludeNames.length > 0) {
-    return ['param name', 'param name -> any', 'param name -> template', 'param ... -> values', 'field name -> type', 'use c.ptr(value)'];
+    return ['name', 'name -> any', 'name -> template', '... -> values', 'field name -> type', 'use c.ptr(value)'];
   }
 
   const node = findNode(index.root, contextPath);
@@ -430,7 +430,7 @@ function getDeclarationSnippetsForContext(contextPath: string[], currentTemplate
     return ['field name -> type'];
   }
   if (currentTemplate.excludeNames.length > 0) {
-    return ['param name', 'param name -> any', 'param name -> template', 'param ... -> values', 'field name -> type'];
+    return ['name', 'name -> any', 'name -> template', '... -> values', 'field name -> type'];
   }
 
   const node = findNode(index.root, contextPath);
@@ -448,7 +448,7 @@ function getInlineParamCandidates(typed: string): string[] {
   const currentFragment = typed.slice(separatorIdx + 1).trimStart();
   const head = typed.slice(0, typed.length - currentFragment.length);
 
-  const asMatch = currentFragment.match(/^param\s+\S+(?:\s+as\s+|\s+->\s*)(\S*)$/);
+  const asMatch = currentFragment.match(/^(?:param\s+)?\S+(?:\s+as\s+|\s+->\s*)(\S*)$/);
   if (asMatch) {
     const typeFragment = asMatch[1];
     const typeHead = typed.slice(0, typed.length - typeFragment.length);
@@ -458,10 +458,10 @@ function getInlineParamCandidates(typed: string): string[] {
   }
 
   return [
-    'param ... -> values',
-    'param name -> template',
-    'param name -> any',
-    'param name'
+    '... -> values',
+    'name -> template',
+    'name -> any',
+    'name'
   ]
     .filter((s) => s.startsWith(currentFragment))
     .map((s) => `${head}${s}`);

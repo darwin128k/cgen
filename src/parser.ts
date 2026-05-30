@@ -177,7 +177,7 @@ export function parseDsl(source: string): ParsedDsl {
     }
 
     if (currentTemplate) {
-      if (/^param\s+\.\.\.$/.test(line)) {
+      if (/^(?:param\s+)?\.\.\.$/.test(line)) {
         diagnostics.push(`Line ${lineNumber}: variadic param must have an alias: use \`param ... as name\``);
         return;
       }
@@ -415,11 +415,11 @@ function parseFn(line: string, lineNumber: number): FnNode | undefined {
 }
 
 function parseFnParam(text: string, lineNumber: number): FnParam | undefined {
-  const variadicMatch = text.match(/^param\s+\.\.\.(?:\s+as\s+|\s+->\s*)([A-Za-z_][A-Za-z0-9_]*)$/);
+  const variadicMatch = text.match(/^(?:param\s+)?\.\.\.(?:\s+as\s+|\s+->\s*)([A-Za-z_][A-Za-z0-9_]*)$/);
   if (variadicMatch) {
     return { name: variadicMatch[1], type: '...', variadic: true, line: lineNumber };
   }
-  const normalMatch = text.match(/^param\s+([A-Za-z_][A-Za-z0-9_]*)(?:\s+as\s+|\s+->\s*)(.+)$/);
+  const normalMatch = text.match(/^(?:param\s+)?([A-Za-z_][A-Za-z0-9_]*)(?:\s+as\s+|\s+->\s*)(.+)$/);
   if (normalMatch) {
     return { name: normalMatch[1], type: normalMatch[2].trim(), variadic: false, line: lineNumber };
   }
@@ -462,11 +462,11 @@ function parseStruct(line: string, lineNumber: number): StructNode | undefined {
 }
 
 function parseTemplateParam(line: string, lineNumber: number): TemplateParam | undefined {
-  const variadicMatch = line.match(/^param\s+\.\.\.(?:\s+as\s+|\s+->\s*)([A-Za-z_][A-Za-z0-9_]*)$/);
+  const variadicMatch = line.match(/^(?:param\s+)?\.\.\.(?:\s+as\s+|\s+->\s*)([A-Za-z_][A-Za-z0-9_]*)$/);
   if (variadicMatch) {
     return { variadic: true, callable: false, name: variadicMatch[1], line: lineNumber };
   }
-  const normalMatch = line.match(/^param\s+([A-Za-z_][A-Za-z0-9_]*)(?:(?:\s+as\s+|\s+->\s*)(\S+))?$/);
+  const normalMatch = line.match(/^(?:param\s+)?([A-Za-z_][A-Za-z0-9_]*)(?:(?:\s+as\s+|\s+->\s*)(\S+))?$/);
   if (normalMatch) {
     return { variadic: false, callable: normalMatch[2] === 'template', name: normalMatch[1], line: lineNumber };
   }
