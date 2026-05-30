@@ -137,6 +137,7 @@ export async function generateDsl(workspaceFolder: vscode.WorkspaceFolder, exten
   const symbols = buildTypeSymbols(modules);
   const templateSymbols = buildTemplateSymbols(modules);
   const paramTemplates = buildParamTemplateMap(modules);
+  const bodyTemplates = buildBodyTemplateMap(modules);
 
   collectExternSymbols(merged.root, symbols, templateSymbols);
 
@@ -149,7 +150,7 @@ export async function generateDsl(workspaceFolder: vscode.WorkspaceFolder, exten
       .filter((candidate): candidate is ModuleArtifact => candidate !== undefined)
       .map((candidate) => candidate.includePath)
       .sort();
-    const text = renderHeader(module, includes, symbols, templateSymbols, paramTemplates);
+    const text = renderHeader(module, includes, symbols, templateSymbols, paramTemplates, bodyTemplates);
 
     await vscode.workspace.fs.createDirectory(vscode.Uri.file(path.dirname(headerPath)));
     await vscode.workspace.fs.writeFile(vscode.Uri.file(headerPath), Buffer.from(text, 'utf8'));
@@ -655,6 +656,94 @@ function buildParamTemplateMap(modules: ModuleArtifact[]): Map<string, TemplateN
   return map;
 }
 
+function buildBodyTemplateMap(modules: ModuleArtifact[]): Map<string, TemplateNode> {
+  const map = new Map<string, TemplateNode>();
+  for (const module of modules) {
+    for (const { template, typeParts } of collectScopeTemplates(module.section, [])) {
+      if (template.body) {
+        const key = makeTypeKey([...module.typeParts, ...typeParts], template.name);
+        map.set(key, template);
+      }
+    }
+  }
+  return map;
+}
+
+function expandArgWithSubst(
+  arg: string,
+  line: number,
+  templateSymbols: Map<string, TemplateSymbol>,
+  paramMap: Map<string, string>,
+  callableParamMap: Map<string, string>
+): string {
+  const expression = parseCallExpression(arg, line);
+  if (expression) {
+    const callee = callableParamMap.get(expression.callee) ?? expression.callee;
+    const expandedArgs = expression.args.map((a) => expandArgWithSubst(a, line, templateSymbols, paramMap, callableParamMap));
+    if (callee.startsWith('c.') && knownTemplateBuiltins.has(callee)) {
+      return applyTemplateBuiltin(callee, expandedArgs, line);
+    }
+    const symbol = templateSymbols.get(callee);
+    return symbol ? `${symbol.macroName}(${expandedArgs.join(', ')})` : `${callee}(${expandedArgs.join(', ')})`;
+  }
+  if (paramMap.has(arg)) { return paramMap.get(arg)!; }
+  const symbol = templateSymbols.get(arg);
+  return symbol ? symbol.macroName : arg;
+}
+
+function applyBodyTemplateInline(
+  calleeTemplate: TemplateNode,
+  args: string[],
+  line: number,
+  templateSymbols: Map<string, TemplateSymbol>
+): string {
+  const paramMap = new Map<string, string>();
+  const callableParamMap = new Map<string, string>();
+  calleeTemplate.params.forEach((p, i) => {
+    if (p.variadic) {
+      paramMap.set(p.name, args.slice(i).join(', '));
+    } else if (i < args.length) {
+      paramMap.set(p.name, args[i]);
+      if (p.callable) { callableParamMap.set(p.name, args[i]); }
+    }
+  });
+  const expression = parseUseExpression(calleeTemplate.body, calleeTemplate.bodyLine);
+  const expandedArgs = expression.args.map((arg) =>
+    expandArgWithSubst(arg, calleeTemplate.bodyLine, templateSymbols, paramMap, callableParamMap)
+  );
+  if (expression.callee.startsWith('c.') && knownTemplateBuiltins.has(expression.callee)) {
+    return applyTemplateBuiltin(expression.callee, expandedArgs, calleeTemplate.bodyLine);
+  }
+  return applyTemplateSymbol(expression.callee, expandedArgs, calleeTemplate.bodyLine, templateSymbols);
+}
+
+function expandTemplateBodyInline(
+  template: TemplateNode,
+  templateSymbols: Map<string, TemplateSymbol>,
+  bodyTemplates: Map<string, TemplateNode>
+): string {
+  const expression = parseUseExpression(template.body, template.bodyLine);
+  const callableParams = new Set(template.params.filter((p) => p.callable).map((p) => p.name));
+  const variadicParam = template.params.find((p) => p.variadic);
+
+  let args = expression.args.map((arg) => expandTemplateArgument(arg, template.bodyLine, templateSymbols, callableParams));
+  if (variadicParam) {
+    args = args.map((a) => a.replace(new RegExp(`\\b${escapeRegex(variadicParam.name)}\\b`, 'g'), '__VA_ARGS__'));
+  }
+
+  if (!(expression.callee.startsWith('c.') && knownTemplateBuiltins.has(expression.callee))) {
+    const calleeTemplate = bodyTemplates.get(expression.callee);
+    if (calleeTemplate) {
+      return applyBodyTemplateInline(calleeTemplate, args, template.bodyLine, templateSymbols);
+    }
+  }
+
+  if (expression.callee.startsWith('c.') && knownTemplateBuiltins.has(expression.callee)) {
+    return applyTemplateBuiltin(expression.callee, args, template.bodyLine);
+  }
+  return applyTemplateSymbol(expression.callee, args, template.bodyLine, templateSymbols);
+}
+
 function expandStructUse(
   useExpr: string | undefined,
   line: number,
@@ -973,7 +1062,8 @@ function renderHeader(
   includes: string[],
   symbols: Map<string, TypeSymbol>,
   templateSymbols: Map<string, TemplateSymbol>,
-  paramTemplates: Map<string, TemplateNode>
+  paramTemplates: Map<string, TemplateNode>,
+  bodyTemplates: Map<string, TemplateNode>
 ): string {
   const lines = [
     `#ifndef ${module.guard}`,
@@ -1047,28 +1137,9 @@ function renderHeader(
     }
 
     const paramList = template.params.map((p) => (p.variadic ? '...' : p.name)).join(', ');
-    if (template.bodyInline) {
-      const expression = parseUseExpression(template.body, template.bodyLine);
-      const fieldTemplate = paramTemplates.get(expression.callee);
-      if (fieldTemplate) {
-        const outerParamNames = new Set(template.params.map((p) => p.name));
-        const innerParamMap = new Map<string, string>();
-        fieldTemplate.params.forEach((p, i) => {
-          if (i < expression.args.length) { innerParamMap.set(p.name, expression.args[i].trim()); }
-        });
-        const fieldDefs = fieldTemplate.fields.map((field, index) => {
-          const mappedTarget = innerParamMap.get(field.target) ?? field.target;
-          const typeName = outerParamNames.has(mappedTarget)
-            ? mappedTarget
-            : resolveTypeExpression(mappedTarget, field.line, symbols);
-          const semi = index < fieldTemplate.fields.length - 1 ? ';' : '';
-          return `${typeName} ${field.name}${semi}`;
-        }).join(' ');
-        lines.push(`#define ${makeMacroName(allSymbolParts, template.name)}(${paramList}) ${fieldDefs}`);
-        continue;
-      }
-    }
-    const body = expandTemplateBody(template, templateSymbols);
+    const body = template.bodyInline
+      ? expandTemplateBodyInline(template, templateSymbols, bodyTemplates)
+      : expandTemplateBody(template, templateSymbols);
     lines.push(`#define ${makeMacroName(allSymbolParts, template.name)}(${paramList}) ${body}`);
   }
 
