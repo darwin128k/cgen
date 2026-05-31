@@ -246,9 +246,15 @@ struct point:
     field x as c.int
     field y as c.int
 
-    fn get_x(self as my.point) -> any:
+    fn get_x() -> any:
         return self.x
+
+    @self(mutable)
+    fn set_x(value as c.int):
+        use c.raw("self->x = value")
 ```
+
+Inside a struct, `self` is the implicit first parameter — a const pointer to the struct type by default. Use `@self(mutable)` on the method to get a non-const pointer.
 
 Function bodies support two statement forms:
 

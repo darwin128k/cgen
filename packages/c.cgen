@@ -64,9 +64,6 @@ scope c:
         @header(<stdint.h>)
         alias uptr as c.raw("uintptr_t")
 
-    @template(inline)
-    template ret(val):
-        use c.raw("${val}")
 
     @template(inline)
     template cast(type, val):

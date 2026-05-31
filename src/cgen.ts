@@ -1107,15 +1107,9 @@ function makeStructMethodSignature(
   const specifiers = getFnSpecifiers(fn);
   const prefix = specifiers ? `${specifiers} ` : '';
   const returnC = resolveStructMethodReturnType(fn, struct, paramTemplates, symbols);
-  const params = fn.params.map((p) => {
-    if (p.variadic) { return '...'; }
-    if (p.name === 'self') {
-      const prefix = p.mutable ? '' : 'const ';
-      return `${prefix}${selfTypeName} *self`;
-    }
-    return renderFnParam(p, symbols);
-  });
-  const paramsC = params.length > 0 ? params.join(', ') : 'void';
+  const selfPrefix = fn.selfMutable ? '' : 'const ';
+  const params = [`${selfPrefix}${selfTypeName} *self`, ...fn.params.map((p) => p.variadic ? '...' : renderFnParam(p, symbols))];
+  const paramsC = params.join(', ');
   return `${prefix}${returnC} ${fnCName}(${paramsC})`;
 }
 

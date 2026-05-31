@@ -22,6 +22,7 @@ export interface FnNode {
   returnType: string;
   body: string[];
   attributes: Attribute[];
+  selfMutable: boolean;
   line: number;
 }
 
@@ -342,6 +343,7 @@ export function parseDsl(source: string): ParsedDsl {
     const fnNode = parseFn(line, lineNumber);
     if (fnNode) {
       fnNode.attributes = [...parentFrame.inheritedAttributes, ...pendingAttributes];
+      fnNode.selfMutable = pendingAttributes.some((a) => a.name === 'self' && a.args[0] === 'mutable');
       pendingAttributes = [];
       parent.fns.push(fnNode);
       currentFn = { indent, node: fnNode };
@@ -483,7 +485,7 @@ function parseFn(line: string, lineNumber: number): FnNode | undefined {
     return undefined;
   }
 
-  return { kind: 'fn', name, params, returnType: returnMatch[1].trim(), body: [], attributes: [], line: lineNumber };
+  return { kind: 'fn', name, params, returnType: returnMatch[1].trim(), body: [], attributes: [], selfMutable: false, line: lineNumber };
 }
 
 function parseFnParam(text: string, lineNumber: number, attributes: Attribute[] = []): FnParam | undefined {
