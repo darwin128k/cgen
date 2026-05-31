@@ -1,99 +1,177 @@
-extern c:
-    alias char as "char"
-    alias schar as "signed char"
-    alias uchar as "unsigned char"
+scope c:
+    alias char as raw.of("char")
+    alias schar as raw.of("signed char")
+    alias uchar as raw.of("unsigned char")
 
-    alias short as "short"
-    alias sshort as "signed short"
-    alias ushort as "unsigned short"
+    alias short as raw.of("short")
+    alias sshort as raw.of("signed short")
+    alias ushort as raw.of("unsigned short")
 
-    alias int as "int"
-    alias sint as "signed int"
-    alias uint as "unsigned int"
+    alias int as raw.of("int")
+    alias sint as raw.of("signed int")
+    alias uint as raw.of("unsigned int")
 
-    alias long as "long"
-    alias slong as "signed long"
-    alias ulong as "unsigned long"
+    alias long as raw.of("long")
+    alias slong as raw.of("signed long")
+    alias ulong as raw.of("unsigned long")
 
-    alias llong as "long long"
-    alias sllong as "signed long long"
-    alias ullong as "unsigned long long"
+    alias llong as raw.of("long long")
+    alias sllong as raw.of("signed long long")
+    alias ullong as raw.of("unsigned long long")
 
-    alias float as "float"
-    alias double as "double"
+    alias float as raw.of("float")
+    alias double as raw.of("double")
+    alias bool as raw.of("_Bool")
 
-    alias bool as "_Bool"
-    alias void as "void"
-
-    @header(<stddef.h>)
-    alias size as "size_t"
+    @alias(define)
+    alias void as raw.of("void")
 
     @header(<stddef.h>)
-    alias nullptr as "NULL"
+    alias size as raw.of("size_t")
 
     @header(<stddef.h>)
-    alias ptrdiff as "ptrdiff_t"
+    alias nullptr as raw.of("NULL")
 
     @header(<stddef.h>)
-    alias wchar as "wchar_t"
+    alias ptrdiff as raw.of("ptrdiff_t")
 
-    @header(<stdint.h>)
-    alias i8 as "int8_t"
+    @header(<stddef.h>)
+    alias wchar as raw.of("wchar_t")
 
-    @header(<stdint.h>)
-    alias i16 as "int16_t"
+    scope fixed:
+        @header(<stdint.h>)
+        alias i8 as raw.of("int8_t")
+        @header(<stdint.h>)
+        alias i16 as raw.of("int16_t")
+        @header(<stdint.h>)
+        alias i32 as raw.of("int32_t")
+        @header(<stdint.h>)
+        alias i64 as raw.of("int64_t")
+        @header(<stdint.h>)
+        alias u8 as raw.of("uint8_t")
+        @header(<stdint.h>)
+        alias u16 as raw.of("uint16_t")
+        @header(<stdint.h>)
+        alias u32 as raw.of("uint32_t")
+        @header(<stdint.h>)
+        alias u64 as raw.of("uint64_t")
+        @header(<stdint.h>)
+        alias imax as raw.of("intmax_t")
+        @header(<stdint.h>)
+        alias umax as raw.of("uintmax_t")
+        @header(<stdint.h>)
+        alias iptr as raw.of("intptr_t")
+        @header(<stdint.h>)
+        alias uptr as raw.of("uintptr_t")
 
-    @header(<stdint.h>)
-    alias i32 as "int32_t"
+    @template(inline)
+    template ret(val):
+        use raw.of("${val}")
 
-    @header(<stdint.h>)
-    alias i64 as "int64_t"
+    @template(inline)
+    template cast(type, val):
+        use raw.of("((${type})${val})")
 
-    @header(<stdint.h>)
-    alias u8 as "uint8_t"
+    @template(inline)
+    template call(fn, ... as args):
+        use raw.of("${fn}(${args})")
 
-    @header(<stdint.h>)
-    alias u16 as "uint16_t"
+    @template(inline)
+    template initializer(... as values):
+        use raw.of("{ ${values} }")
 
-    @header(<stdint.h>)
-    alias u32 as "uint32_t"
+    @template(inline)
+    template sel(cond, a, b):
+        use raw.of("(${cond} ? ${a} : ${b})")
 
-    @header(<stdint.h>)
-    alias u64 as "uint64_t"
+    @template(inline)
+    template eq(a, b):
+        use raw.of("(${a} == ${b})")
 
-    @header(<stdint.h>)
-    alias imax as "intmax_t"
+    @template(inline)
+    template ne(a, b):
+        use raw.of("(${a} != ${b})")
 
-    @header(<stdint.h>)
-    alias umax as "uintmax_t"
+    @template(inline)
+    template lt(a, b):
+        use raw.of("(${a} < ${b})")
 
-    @header(<stdint.h>)
-    alias iptr as "intptr_t"
+    @template(inline)
+    template le(a, b):
+        use raw.of("(${a} <= ${b})")
 
-    @header(<stdint.h>)
-    alias uptr as "uintptr_t"
+    @template(inline)
+    template gt(a, b):
+        use raw.of("(${a} > ${b})")
+
+    @template(inline)
+    template ge(a, b):
+        use raw.of("(${a} >= ${b})")
+
+    scope struct:
+        @template(inline)
+        template of(type):
+            use raw.of("struct ${type}")
+
+    scope math:
+        @template(inline)
+        template add(a, b):
+            use raw.of("(${a} + ${b})")
+        @template(inline)
+        template sub(a, b):
+            use raw.of("(${a} - ${b})")
+        @template(inline)
+        template mul(a, b):
+            use raw.of("(${a} * ${b})")
+        @template(inline)
+        template div(a, b):
+            use raw.of("(${a} / ${b})")
+        @template(inline)
+        template mod(a, b):
+            use raw.of("(${a} % ${b})")
+        @template(inline)
+        template neg(a):
+            use raw.of("(-${a})")
+
+        scope bit:
+            @template(inline)
+            template and(a, b):
+                use raw.of("(${a} & ${b})")
+            @template(inline)
+            template or(a, b):
+                use raw.of("(${a} | ${b})")
+            @template(inline)
+            template xor(a, b):
+                use raw.of("(${a} ^ ${b})")
+            @template(inline)
+            template not(a):
+                use raw.of("(~${a})")
+            @template(inline)
+            template shl(a, b):
+                use raw.of("(${a} << ${b})")
+            @template(inline)
+            template shr(a, b):
+                use raw.of("(${a} >> ${b})")
+            @template(inline)
+            template set(a, b):
+                use raw.of("(${a} |= ${b})")
 
     @header(<stdlib.h>)
-    template malloc:
-        param size as c.size
+    template malloc(size):
+        use raw.of("malloc(${size})")
 
     @header(<stdlib.h>)
-    template calloc:
-        param count as c.size
-        param size as c.size
+    template calloc(count, size):
+        use raw.of("calloc(${count}, ${size})")
 
     @header(<stdlib.h>)
-    template free:
-        param ptr as c.void
+    template free(ptr):
+        use raw.of("free(${ptr})")
 
     @header(<string.h>)
-    template memcpy:
-        param dest as c.void
-        param src as c.void
-        param size as c.size
+    template memcpy(dest, src, size):
+        use raw.of("memcpy(${dest}, ${src}, ${size})")
 
     @header(<string.h>)
-    template memset:
-        param dest as c.void
-        param value as c.int
-        param size as c.size
+    template memset(dest, value, size):
+        use raw.of("memset(${dest}, ${value}, ${size})")

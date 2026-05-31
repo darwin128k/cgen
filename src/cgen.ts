@@ -2,7 +2,6 @@ import * as cp from 'child_process';
 import * as path from 'path';
 import * as util from 'util';
 import * as vscode from 'vscode';
-import { applyTemplateBuiltin, builtinCTypes, defineAliasBuiltins, knownTemplateBuiltins } from './clib';
 import {
   type SectionKind,
   type Attribute,
@@ -64,7 +63,6 @@ interface TypeSymbol {
   target?: string;
   line: number;
   defineOnly: boolean;
-  externHeader?: string;
 }
 
 interface TemplateSymbol {
@@ -72,7 +70,9 @@ interface TemplateSymbol {
   macroName: string;
   moduleId: string;
   includePath: string;
-  externHeader?: string;
+  inlineOnly: boolean;
+  rawBody?: string;
+  rawParams?: string[];
 }
 
 interface UseExpression {
@@ -139,16 +139,16 @@ export async function generateDsl(workspaceFolder: vscode.WorkspaceFolder, exten
   const paramTemplates = buildParamTemplateMap(modules);
   const bodyTemplates = buildBodyTemplateMap(modules);
 
-  collectExternSymbols(merged.root, symbols, templateSymbols);
-
   resolveModuleDependencies(modules, symbols, templateSymbols, paramTemplates);
 
   for (const module of modules) {
+    if (module.headerPathParts.length === 0) { continue; }
     const headerPath = path.join(includeRoot, ...module.headerPathParts);
     const includes = reduceTransitiveDependencies(module, modules)
       .map((moduleId) => modules.find((candidate) => candidate.id === moduleId))
       .filter((candidate): candidate is ModuleArtifact => candidate !== undefined)
       .map((candidate) => candidate.includePath)
+      .filter((p) => p.length > 0)
       .sort();
     const text = renderHeader(module, includes, symbols, templateSymbols, paramTemplates, bodyTemplates);
 
@@ -263,17 +263,24 @@ function expandTemplateBody(template: TemplateNode, templateSymbols: Map<string,
     throw new Error(`Line ${template.line}: template "${template.name}" has no body`);
   }
 
+  if (template.bodyRaw) {
+    const variadicParam = template.params.find((p) => p.variadic);
+    let result = template.body;
+    if (variadicParam) {
+      result = result.replace(new RegExp(`\\$\\{${escapeRegex(variadicParam.name)}\\}`, 'g'), '__VA_ARGS__');
+    }
+    return result;
+  }
+
   const expression = parseUseExpression(template.body, template.bodyLine);
   const callableParams = new Set(template.params.filter((p) => p.callable).map((p) => p.name));
 
   const variadicParam = template.params.find((p) => p.variadic);
   const args = expression.args.map((arg) => expandTemplateArgument(arg, template.bodyLine, templateSymbols, callableParams));
-  let result = expression.callee.startsWith('c.') && knownTemplateBuiltins.has(expression.callee)
-    ? applyTemplateBuiltin(expression.callee, args, template.bodyLine)
-    : applyTemplateSymbol(expression.callee, args, template.bodyLine, templateSymbols);
+  let result = applyTemplateSymbol(expression.callee, args, template.bodyLine, templateSymbols);
 
   if (variadicParam) {
-    result = result.replace(new RegExp(`\\b${escapeRegex(variadicParam.name)}\\b`, 'g'), '__VA_ARGS__');
+    result = result.replace(new RegExp(`\\$\\{${escapeRegex(variadicParam.name)}\\}`, 'g'), '__VA_ARGS__');
   }
 
   return result;
@@ -317,9 +324,7 @@ function expandTemplateArgument(arg: string, line: number, templateSymbols: Map<
     return `${expression.callee}(${args.join(', ')})`;
   }
 
-  return expression.callee.startsWith('c.') && knownTemplateBuiltins.has(expression.callee)
-    ? applyTemplateBuiltin(expression.callee, args, line)
-    : applyTemplateSymbol(expression.callee, args, line, templateSymbols);
+  return applyTemplateSymbol(expression.callee, args, line, templateSymbols);
 }
 
 function splitCallArgs(source: string, line: number): string[] {
@@ -377,12 +382,24 @@ function applyTemplateSymbol(templateKey: string, args: string[], line: number, 
     throw new Error(`Line ${line}: unknown template "${templateKey}"`);
   }
 
+  if (symbol.rawBody !== undefined) {
+    return applyRawBody(symbol.rawBody, symbol.rawParams ?? [], args);
+  }
+
   return `${symbol.macroName}(${args.join(', ')})`;
 }
 
 
 function escapeRegex(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function applyRawBody(body: string, paramNames: string[], args: string[]): string {
+  let result = body;
+  for (let i = 0; i < paramNames.length; i++) {
+    result = result.replace(new RegExp(`\\$\\{${escapeRegex(paramNames[i])}\\}`, 'g'), args[i] ?? '');
+  }
+  return result;
 }
 
 function makeMacroName(symbolParts: string[], name: string): string {
@@ -396,6 +413,29 @@ function makeMacroName(symbolParts: string[], name: string): string {
 
 function collectModules(root: SectionNode): ModuleArtifact[] {
   const modules: ModuleArtifact[] = [];
+
+  for (const child of root.children) {
+    if (child.kind !== 'scope') { continue; }
+    const ctx: ModuleContext = {
+      pathParts: [],
+      guardParts: [child.name],
+      symbolParts: [child.name],
+      typeParts: [child.name]
+    };
+    modules.push({
+      id: `__scope__/${child.name}`,
+      section: child,
+      context: ctx,
+      guard: makeGuard([child.name]),
+      headerPathParts: [],
+      includePath: '',
+      symbolPrefix: child.name,
+      symbolParts: [child.name],
+      typeParts: [child.name],
+      dependencies: new Set<string>(),
+      externHeaders: new Set<string>()
+    });
+  }
 
   walkSections(root, {
     pathParts: [],
@@ -431,9 +471,6 @@ function walkSections(
   onModule: (section: SectionNode, context: ModuleContext) => void
 ): void {
   for (const child of section.children) {
-    if (child.kind === 'extern') {
-      continue;
-    }
 
     const next = applySectionContext(child, context);
     if (child.kind === 'module') {
@@ -445,7 +482,7 @@ function walkSections(
 }
 
 function applySectionContext(section: SectionNode, context: ModuleContext): ModuleContext {
-  if (section.kind === 'root' || section.kind === 'scope' || section.kind === 'extern') {
+  if (section.kind === 'root' || section.kind === 'scope') {
     return context;
   }
 
@@ -468,30 +505,6 @@ function hasAttribute(node: SectionNode | AliasNode | EnumNode, name: string, ar
   });
 }
 
-function collectExternAliases(root: SectionNode): AliasNode[] {
-  const aliases: AliasNode[] = [];
-  for (const child of root.children) {
-    if (child.kind === 'extern') {
-      for (const alias of child.aliases) {
-        aliases.push(alias);
-      }
-    }
-  }
-  return aliases;
-}
-
-function collectExternTemplates(root: SectionNode): TemplateNode[] {
-  const templates: TemplateNode[] = [];
-  for (const child of root.children) {
-    if (child.kind === 'extern') {
-      for (const template of child.templates) {
-        templates.push(template);
-      }
-    }
-  }
-  return templates;
-}
-
 function getHeaderArg(attributes: Attribute[]): string | undefined {
   for (const attr of attributes) {
     if (attr.name === 'header' && attr.args.length > 0) {
@@ -501,52 +514,13 @@ function getHeaderArg(attributes: Attribute[]): string | undefined {
   return undefined;
 }
 
-function collectExternSymbols(
-  root: SectionNode,
-  symbols: Map<string, TypeSymbol>,
-  templateSymbols: Map<string, TemplateSymbol>
-): void {
-  for (const alias of collectExternAliases(root)) {
-    const key = `c.${alias.name}`;
-    const existing = symbols.get(key);
-    if (existing) {
-      throw new Error(`Line ${alias.line}: type "${key}" already defined`);
-    }
-
-    const cType = alias.target.replace(/^"(.*)"$/, '$1');
-    symbols.set(key, {
-      key,
-      cName: cType,
-      moduleId: 'extern/c',
-      includePath: 'extern/c',
-      kind: 'alias',
-      target: alias.target,
-      line: alias.line,
-      defineOnly: false,
-      externHeader: getHeaderArg(alias.attributes)
-    });
-  }
-
-  for (const template of collectExternTemplates(root)) {
-    const key = `c.${template.name}`;
-    const existing = templateSymbols.get(key);
-    if (existing) {
-      throw new Error(`Line ${template.line}: template "${key}" already defined`);
-    }
-
-    templateSymbols.set(key, {
-      key,
-      macroName: template.name,
-      moduleId: 'extern/c',
-      includePath: 'extern/c',
-      externHeader: getHeaderArg(template.attributes)
-    });
-  }
+function parseRawOf(target: string): string | undefined {
+  const match = target.match(/^raw\.of\("(.*)"\)$/);
+  return match ? match[1] : undefined;
 }
 
 function buildTypeSymbols(modules: ModuleArtifact[]): Map<string, TypeSymbol> {
   const symbols = new Map<string, TypeSymbol>();
-
   for (const module of modules) {
     for (const { declaration, symbolParts, typeParts } of collectScopeTypeDeclarations(module.section, [])) {
       const key = makeTypeKey([...module.typeParts, ...typeParts], declaration.name);
@@ -565,7 +539,7 @@ function buildTypeSymbols(modules: ModuleArtifact[]): Map<string, TypeSymbol> {
         kind: declaration.kind,
         target: declaration.target,
         line: declaration.line,
-        defineOnly: false
+        defineOnly: declaration.kind === 'alias' && declaration.attributes.some((a) => a.name === 'alias' && a.args[0] === 'define')
       });
     }
 
@@ -611,6 +585,7 @@ function buildTypeSymbols(modules: ModuleArtifact[]): Map<string, TypeSymbol> {
   }
 
   for (const symbol of symbols.values()) {
+    if (symbol.defineOnly) { continue; }
     symbol.defineOnly = resolveTypeSymbolDefineOnly(symbol, symbols, new Set());
   }
 
@@ -680,11 +655,13 @@ function expandArgWithSubst(
   if (expression) {
     const callee = callableParamMap.get(expression.callee) ?? expression.callee;
     const expandedArgs = expression.args.map((a) => expandArgWithSubst(a, line, templateSymbols, paramMap, callableParamMap));
-    if (callee.startsWith('c.') && knownTemplateBuiltins.has(callee)) {
-      return applyTemplateBuiltin(callee, expandedArgs, line);
-    }
     const symbol = templateSymbols.get(callee);
-    return symbol ? `${symbol.macroName}(${expandedArgs.join(', ')})` : `${callee}(${expandedArgs.join(', ')})`;
+    if (symbol) {
+      return symbol.rawBody !== undefined
+        ? applyRawBody(symbol.rawBody, symbol.rawParams ?? [], expandedArgs)
+        : `${symbol.macroName}(${expandedArgs.join(', ')})`;
+    }
+    return `${callee}(${expandedArgs.join(', ')})`;
   }
   if (paramMap.has(arg)) { return paramMap.get(arg)!; }
   const symbol = templateSymbols.get(arg);
@@ -707,13 +684,15 @@ function applyBodyTemplateInline(
       if (p.callable) { callableParamMap.set(p.name, args[i]); }
     }
   });
+  if (calleeTemplate.bodyRaw) {
+    const paramNames = calleeTemplate.params.map((p) => p.name);
+    const paramArgs = paramNames.map((name) => paramMap.get(name) ?? name);
+    return applyRawBody(calleeTemplate.body, paramNames, paramArgs);
+  }
   const expression = parseUseExpression(calleeTemplate.body, calleeTemplate.bodyLine);
   const expandedArgs = expression.args.map((arg) =>
     expandArgWithSubst(arg, calleeTemplate.bodyLine, templateSymbols, paramMap, callableParamMap)
   );
-  if (expression.callee.startsWith('c.') && knownTemplateBuiltins.has(expression.callee)) {
-    return applyTemplateBuiltin(expression.callee, expandedArgs, calleeTemplate.bodyLine);
-  }
   return applyTemplateSymbol(expression.callee, expandedArgs, calleeTemplate.bodyLine, templateSymbols);
 }
 
@@ -722,24 +701,27 @@ function expandTemplateBodyInline(
   templateSymbols: Map<string, TemplateSymbol>,
   bodyTemplates: Map<string, TemplateNode>
 ): string {
+  if (template.bodyRaw) {
+    const variadicParam = template.params.find((p) => p.variadic);
+    let result = template.body;
+    if (variadicParam) {
+      result = result.replace(new RegExp(`\\$\\{${escapeRegex(variadicParam.name)}\\}`, 'g'), '__VA_ARGS__');
+    }
+    return result;
+  }
+
   const expression = parseUseExpression(template.body, template.bodyLine);
   const callableParams = new Set(template.params.filter((p) => p.callable).map((p) => p.name));
   const variadicParam = template.params.find((p) => p.variadic);
 
   let args = expression.args.map((arg) => expandTemplateArgument(arg, template.bodyLine, templateSymbols, callableParams));
   if (variadicParam) {
-    args = args.map((a) => a.replace(new RegExp(`\\b${escapeRegex(variadicParam.name)}\\b`, 'g'), '__VA_ARGS__'));
+    args = args.map((a) => a.replace(new RegExp(`\\$\\{${escapeRegex(variadicParam.name)}\\}`, 'g'), '__VA_ARGS__'));
   }
 
-  if (!(expression.callee.startsWith('c.') && knownTemplateBuiltins.has(expression.callee))) {
-    const calleeTemplate = bodyTemplates.get(expression.callee);
-    if (calleeTemplate) {
-      return applyBodyTemplateInline(calleeTemplate, args, template.bodyLine, templateSymbols);
-    }
-  }
-
-  if (expression.callee.startsWith('c.') && knownTemplateBuiltins.has(expression.callee)) {
-    return applyTemplateBuiltin(expression.callee, args, template.bodyLine);
+  const calleeTemplate = bodyTemplates.get(expression.callee);
+  if (calleeTemplate) {
+    return applyBodyTemplateInline(calleeTemplate, args, template.bodyLine, templateSymbols);
   }
   return applyTemplateSymbol(expression.callee, args, template.bodyLine, templateSymbols);
 }
@@ -772,7 +754,6 @@ function expandStructUse(
 
 function buildTemplateSymbols(modules: ModuleArtifact[]): Map<string, TemplateSymbol> {
   const symbols = new Map<string, TemplateSymbol>();
-
   for (const module of modules) {
     for (const { template, typeParts } of collectScopeTemplates(module.section, [])) {
       const allTypeParts = [...module.typeParts, ...typeParts];
@@ -794,12 +775,20 @@ function buildTemplateSymbols(modules: ModuleArtifact[]): Map<string, TemplateSy
         key,
         macroName,
         moduleId: module.id,
-        includePath: module.includePath
+        includePath: module.includePath,
+        inlineOnly: template.attributes.some((a) => a.name === 'template' && a.args[0] === 'inline'),
+        ...(template.bodyRaw && template.body ? { rawBody: template.body, rawParams: template.params.map((p) => p.name) } : {})
       });
     }
   }
 
   return symbols;
+}
+
+function addDep(module: ModuleArtifact, otherModuleId: string): void {
+  if (otherModuleId !== module.id) {
+    module.dependencies.add(otherModuleId);
+  }
 }
 
 function resolveModuleDependencies(
@@ -810,30 +799,23 @@ function resolveModuleDependencies(
 ): void {
   for (const module of modules) {
     for (const { declaration } of collectScopeTypeDeclarations(module.section, [])) {
+      const header = getHeaderArg(declaration.attributes);
+      if (header) { module.externHeaders.add(header); }
       for (const symbol of getTypeExpressionSymbols(declaration.target, declaration.line, symbols)) {
-        if (symbol.moduleId !== module.id) {
-          if (symbol.externHeader) {
-            module.externHeaders.add(symbol.externHeader);
-          } else {
-            module.dependencies.add(symbol.moduleId);
-          }
-        }
+        addDep(module, symbol.moduleId);
       }
     }
 
     for (const { template } of collectScopeTemplates(module.section, [])) {
+      const header = getHeaderArg(template.attributes);
+      if (header) { module.externHeaders.add(header); }
+
       if (template.fields.length > 0 && template.params.length > 0) {
         const paramNames = new Set(template.params.map((p) => p.name));
         for (const field of template.fields) {
           if (paramNames.has(field.target)) { continue; }
           for (const symbol of getTypeExpressionSymbols(field.target, field.line, symbols)) {
-            if (symbol.moduleId !== module.id) {
-              if (symbol.externHeader) {
-                module.externHeaders.add(symbol.externHeader);
-              } else {
-                module.dependencies.add(symbol.moduleId);
-              }
-            }
+            addDep(module, symbol.moduleId);
           }
         }
         continue;
@@ -842,17 +824,13 @@ function resolveModuleDependencies(
       if (template.fields.length > 0) {
         for (const field of template.fields) {
           for (const symbol of getTypeExpressionSymbols(field.target, field.line, symbols)) {
-            if (symbol.moduleId !== module.id) {
-              if (symbol.externHeader) {
-                module.externHeaders.add(symbol.externHeader);
-              } else {
-                module.dependencies.add(symbol.moduleId);
-              }
-            }
+            addDep(module, symbol.moduleId);
           }
         }
         continue;
       }
+
+      if (template.bodyRaw) { continue; }
 
       if (template.bodyInline) {
         const expression = parseUseExpression(template.body, template.bodyLine);
@@ -867,9 +845,7 @@ function resolveModuleDependencies(
             const mappedTarget = innerParamMap.get(field.target) ?? field.target;
             if (outerParamNames.has(mappedTarget)) { continue; }
             for (const sym of getTypeExpressionSymbols(mappedTarget, field.line, symbols)) {
-              if (sym.moduleId !== module.id) {
-                if (sym.externHeader) { module.externHeaders.add(sym.externHeader); } else { module.dependencies.add(sym.moduleId); }
-              }
+              addDep(module, sym.moduleId);
             }
           }
         }
@@ -877,31 +853,21 @@ function resolveModuleDependencies(
       }
 
       for (const usedTemplate of getUsedTemplateSymbols(template, templateSymbols)) {
-        if (usedTemplate.moduleId !== module.id) {
-          if (usedTemplate.externHeader) {
-            module.externHeaders.add(usedTemplate.externHeader);
-          } else {
-            module.dependencies.add(usedTemplate.moduleId);
-          }
-        }
+        addDep(module, usedTemplate.moduleId);
       }
     }
 
     for (const { struct } of collectScopeStructs(module.section, [])) {
       for (const field of struct.fields) {
         for (const symbol of getTypeExpressionSymbols(field.target, field.line, symbols)) {
-          if (symbol.moduleId !== module.id) {
-            if (symbol.externHeader) { module.externHeaders.add(symbol.externHeader); } else { module.dependencies.add(symbol.moduleId); }
-          }
+          addDep(module, symbol.moduleId);
         }
       }
       for (const use of (struct.uses ?? [])) {
         if (use.inline) {
           for (const field of expandStructUse(use.expr, struct.line, paramTemplates)) {
             for (const sym of getTypeExpressionSymbols(field.target, field.line, symbols)) {
-              if (sym.moduleId !== module.id) {
-                if (sym.externHeader) { module.externHeaders.add(sym.externHeader); } else { module.dependencies.add(sym.moduleId); }
-              }
+              addDep(module, sym.moduleId);
             }
           }
           continue;
@@ -909,14 +875,10 @@ function resolveModuleDependencies(
         const call = parseCallExpression(use.expr, struct.line);
         if (!call) { continue; }
         const tmpl = templateSymbols.get(call.callee);
-        if (tmpl && tmpl.moduleId !== module.id) {
-          module.dependencies.add(tmpl.moduleId);
-        }
+        if (tmpl) { addDep(module, tmpl.moduleId); }
         for (const arg of call.args) {
           for (const sym of getTypeExpressionSymbols(arg, struct.line, symbols)) {
-            if (sym.moduleId !== module.id) {
-              if (sym.externHeader) { module.externHeaders.add(sym.externHeader); } else { module.dependencies.add(sym.moduleId); }
-            }
+            addDep(module, sym.moduleId);
           }
         }
       }
@@ -926,21 +888,31 @@ function resolveModuleDependencies(
       for (const p of fn.params) {
         if (p.variadic) { continue; }
         for (const symbol of getTypeExpressionSymbols(p.type, p.line, symbols)) {
-          if (symbol.moduleId !== module.id) {
-            if (symbol.externHeader) { module.externHeaders.add(symbol.externHeader); } else { module.dependencies.add(symbol.moduleId); }
-          }
+          addDep(module, symbol.moduleId);
         }
       }
       for (const symbol of getTypeExpressionSymbols(fn.returnType, fn.line, symbols)) {
-        if (symbol.moduleId !== module.id) {
-          if (symbol.externHeader) { module.externHeaders.add(symbol.externHeader); } else { module.dependencies.add(symbol.moduleId); }
+        addDep(module, symbol.moduleId);
+      }
+    }
+  }
+
+  const byId = new Map(modules.map((m) => [m.id, m]));
+  for (const module of modules) {
+    for (const depId of [...module.dependencies]) {
+      const dep = byId.get(depId);
+      if (dep && dep.headerPathParts.length === 0) {
+        for (const header of dep.externHeaders) {
+          module.externHeaders.add(header);
         }
+        module.dependencies.delete(depId);
       }
     }
   }
 }
 
 function getUsedTemplateSymbols(template: TemplateNode, templateSymbols: Map<string, TemplateSymbol>): TemplateSymbol[] {
+  if (template.bodyRaw) { return []; }
   const expression = parseUseExpression(template.body, template.bodyLine);
   const callableParams = new Set(template.params.filter((p) => p.callable).map((p) => p.name));
   const result: TemplateSymbol[] = [];
@@ -956,13 +928,14 @@ function collectUsedTemplateSymbols(
   result: TemplateSymbol[],
   callableParams: Set<string>
 ): void {
-  if (!callableParams.has(expression.callee) && !(expression.callee.startsWith('c.') && knownTemplateBuiltins.has(expression.callee))) {
+  if (!callableParams.has(expression.callee)) {
     const symbol = templateSymbols.get(expression.callee);
     if (!symbol) {
       throw new Error(`Line ${line}: unknown template "${expression.callee}"`);
     }
-
-    result.push(symbol);
+    if (!symbol.rawBody && !symbol.inlineOnly) {
+      result.push(symbol);
+    }
   }
 
   for (const arg of expression.args) {
@@ -1088,7 +1061,9 @@ function renderHeader(
     if (declaration.kind === 'alias') {
       const type = resolveTypeExpression(declaration.target, declaration.line, symbols);
       const cName = makeTypedefName(allSymbolParts, declaration.name);
-      lines.push(shouldDefineAlias(declaration.target, declaration.line, symbols) ? `#define ${cName} ${type}` : `typedef ${type} ${cName};`);
+      const aliasKey = makeTypeKey([...module.typeParts, ...symbolParts], declaration.name);
+      const defineOnly = symbols.get(aliasKey)?.defineOnly ?? shouldDefineAlias(declaration.target, declaration.line, symbols);
+      lines.push(defineOnly ? `#define ${cName} ${type}` : `typedef ${type} ${cName};`);
       continue;
     }
 
@@ -1135,6 +1110,10 @@ function renderHeader(
       lines.push(`} ${cName};`);
       continue;
     }
+
+    const typeKeyParts = [...module.typeParts, ...symbolParts];
+    if (typeKeyParts[typeKeyParts.length - 1] !== template.name) { typeKeyParts.push(template.name); }
+    if (templateSymbols.get(typeKeyParts.join('.'))?.inlineOnly) { continue; }
 
     const paramList = template.params.map((p) => (p.variadic ? '...' : p.name)).join(', ');
     const body = template.bodyInline
@@ -1259,10 +1238,8 @@ function renderEnumCaseForHeader(
 }
 
 function resolveTypeExpression(target: string, line: number, symbols: Map<string, TypeSymbol>): string {
-  const builtin = builtinCTypes[target];
-  if (builtin) {
-    return builtin;
-  }
+  const raw = parseRawOf(target);
+  if (raw !== undefined) { return raw; }
 
   const expression = parseCallExpression(target, line);
   if (expression) {
@@ -1282,10 +1259,7 @@ function resolveTypeExpression(target: string, line: number, symbols: Map<string
 }
 
 function getTypeExpressionSymbols(target: string, line: number, symbols: Map<string, TypeSymbol>): TypeSymbol[] {
-  if (builtinCTypes[target]) {
-    const symbol = symbols.get(target);
-    return symbol?.externHeader ? [symbol] : [];
-  }
+  if (parseRawOf(target) !== undefined) { return []; }
 
   const expression = parseCallExpression(target, line);
   if (expression) {
@@ -1333,9 +1307,7 @@ function isDefineOnlyTypeExpression(
   symbols: Map<string, TypeSymbol>,
   seen: Set<string>
 ): boolean {
-  if (builtinCTypes[target]) {
-    return defineAliasBuiltins.has(target);
-  }
+  if (parseRawOf(target) !== undefined) { return false; }
 
   const expression = parseCallExpression(target, line);
   if (expression) {
@@ -1343,7 +1315,7 @@ function isDefineOnlyTypeExpression(
       throw new Error(`Line ${line}: unknown type builtin "${expression.callee}"`);
     }
 
-    return defineAliasBuiltins.has(expression.callee);
+    return true;
   }
 
   const symbol = symbols.get(target);

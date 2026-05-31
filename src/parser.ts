@@ -1,4 +1,4 @@
-export type SectionKind = 'root' | 'package' | 'module' | 'scope' | 'extern';
+export type SectionKind = 'root' | 'package' | 'module' | 'scope';
 
 export interface Attribute {
   name: string;
@@ -43,6 +43,7 @@ export interface TemplateNode {
   body: string;
   bodyLine: number;
   bodyInline: boolean;
+  bodyRaw: boolean;
   attributes: Attribute[];
   line: number;
 }
@@ -151,7 +152,7 @@ export function parseDsl(source: string): ParsedDsl {
     const indent = countIndent(withoutComment, diagnostics, lineNumber);
     const line = withoutComment.trim();
 
-    if (currentEnum && indent <= currentEnum.indent) {
+if (currentEnum && indent <= currentEnum.indent) {
       currentEnum = undefined;
     }
 
@@ -208,6 +209,14 @@ export function parseDsl(source: string): ParsedDsl {
       if (currentTemplate.node.body === '') {
         if (currentTemplate.node.fields.length > 0) {
           diagnostics.push(`Line ${lineNumber}: template "${currentTemplate.node.name}" with fields cannot have a body`);
+          return;
+        }
+        const rawOfMatch = line.match(/^use\s+raw\.of\("(.*)"\)$/);
+        if (rawOfMatch) {
+          pendingAttributes = [];
+          currentTemplate.node.bodyRaw = true;
+          currentTemplate.node.body = rawOfMatch[1];
+          currentTemplate.node.bodyLine = lineNumber;
           return;
         }
         currentTemplate.node.bodyInline = pendingAttributes.some((a) => a.name === 'use' && a.args[0] === 'inline');
@@ -302,7 +311,7 @@ export function expandInlineDsl(source: string): string {
 
   for (const rawLine of source.split(/\r?\n/)) {
     const trimmed = rawLine.trim();
-    if (!trimmed || !/^(package|module|scope|extern)\b/.test(trimmed)) {
+    if (!trimmed || !/^(package|module|scope)\b/.test(trimmed)) {
       lines.push(rawLine);
       continue;
     }
@@ -313,11 +322,11 @@ export function expandInlineDsl(source: string): string {
       continue;
     }
 
+    const originalIndent = rawLine.match(/^(\s*)/)?.[1] ?? '';
     for (let index = 0; index < parts.length; index += 1) {
       const part = parts[index];
-      const isSection = /^(package|module|scope|extern)\s+[A-Za-z_][A-Za-z0-9_]*$/.test(part);
-      const indent = '    '.repeat(index);
-      lines.push(`${indent}${part}${isSection ? ':' : ''}`);
+      const isSection = /^(package|module|scope)\s+[A-Za-z_][A-Za-z0-9_]*$/.test(part);
+      lines.push(`${originalIndent}${'    '.repeat(index)}${part}${isSection ? ':' : ''}`);
     }
   }
 
@@ -361,7 +370,7 @@ function parseAttribute(line: string, lineNumber: number): Attribute | undefined
 }
 
 function parseSection(line: string, lineNumber: number): SectionNode | undefined {
-  const match = line.match(/^(package|module|scope|extern)\s+([A-Za-z_][A-Za-z0-9_]*)\s*:\s*$/);
+  const match = line.match(/^(package|module|scope)\s+([A-Za-z_][A-Za-z0-9_]*)\s*:\s*$/);
   if (!match) {
     return undefined;
   }
@@ -461,7 +470,7 @@ function parseTemplate(line: string, lineNumber: number): TemplateNode | undefin
       if (param) { params.push(param); }
     }
   }
-  return { kind: 'template', name: match[1], params, fields: [], body: '', bodyLine: lineNumber, bodyInline: false, attributes: [], line: lineNumber };
+  return { kind: 'template', name: match[1], params, fields: [], body: '', bodyLine: lineNumber, bodyInline: false, bodyRaw: false, attributes: [], line: lineNumber };
 }
 
 function parseStruct(line: string, lineNumber: number): StructNode | undefined {

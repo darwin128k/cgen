@@ -1,5 +1,4 @@
 import { CgenProjectIndex } from './indexer';
-import { knownTemplateBuiltins } from './clib';
 import { makePublicPath } from './parser';
 
 export interface SuggestionRequest {
@@ -14,7 +13,7 @@ export interface SuggestionResult {
   candidateKinds: string[];
 }
 
-type SectionKind = 'root' | 'package' | 'module' | 'scope' | 'extern';
+type SectionKind = 'root' | 'package' | 'module' | 'scope';
 type SymbolKind = 'alias' | 'enum' | 'template' | 'record' | 'struct';
 
 interface DslNode {
@@ -373,7 +372,7 @@ function getCandidates(typed: string, contextPath: string[], currentTemplate: Cu
     return completeTail(typed, getTemplateUseCandidates(typed, contextPath, currentTemplate, index));
   }
 
-  if (/^(package|module|scope|extern)\s+/.test(typed)) {
+  if (/^(package|module|scope|group)\s+/.test(typed)) {
     return completeSectionName(typed, contextPath, index);
   }
 
@@ -415,7 +414,7 @@ function getContextSnippets(contextPath: string[], currentTemplate: CurrentTempl
   const node = findNode(index.root, contextPath);
   const kind = node?.kind ?? 'root';
 
-  if (kind === 'module' || kind === 'scope' || kind === 'extern') {
+  if (kind === 'module' || kind === 'scope') {
     return [
       'alias name -> type',
       'enum name -> type:',
@@ -445,7 +444,7 @@ function getDeclarationSnippetsForContext(contextPath: string[], currentTemplate
   const node = findNode(index.root, contextPath);
   const kind = node?.kind ?? 'root';
 
-  if (kind === 'module' || kind === 'scope' || kind === 'extern') {
+  if (kind === 'module' || kind === 'scope') {
     return ['alias name -> type', 'enum name -> type:', 'struct name:', 'template name:', 'template name():', 'fn name() -> type:', 'scope name:'];
   }
 
@@ -662,8 +661,7 @@ function getAllUsePaths(index: DslIndex, currentTemplate: CurrentTemplate): stri
 
   const all = uniqueInOrder([
     ...result,
-    ...builtinTemplates.map((name) => `${name}()`),
-    ...[...knownTemplateBuiltins].map((name) => `${name}()`)
+    ...builtinTemplates.map((name) => `${name}()`)
   ]);
   const callPrefixes = new Set(all.filter((s) => s.includes('(')).map((s) => s.slice(0, s.indexOf('('))));
   return all.filter((s) => !s.endsWith('.') || !callPrefixes.has(s.slice(0, -1)));
@@ -722,7 +720,7 @@ function findNode(root: DslNode, path: string[]): DslNode | undefined {
 
 function resolveKindForCandidate(candidate: string, index: DslIndex): string {
   if (/^@/.test(candidate)) return 'keyword';
-  if (/^(package|module|scope|extern)\b/.test(candidate)) return 'module';
+  if (/^(package|module|scope|group)\b/.test(candidate)) return 'module';
   if (/^alias\b/.test(candidate)) return 'alias';
   if (/^enum\b/.test(candidate)) return 'enum';
   if (/^struct\b/.test(candidate)) return 'struct';

@@ -348,8 +348,7 @@ function completionIconFor(kind: string): [string, string] {
     case 'keyword': return ['symbol-keyword', 'keyword'];
     case 'package':
     case 'module':
-    case 'scope':
-    case 'extern': return ['symbol-module', 'module'];
+    case 'scope': return ['symbol-module', 'module'];
     case 'alias': return ['symbol-interface', 'interface'];
     case 'enum': return ['symbol-enum', 'enum'];
     case 'case': return ['symbol-enum-member', 'enum'];
