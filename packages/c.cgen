@@ -1,177 +1,177 @@
 scope c:
-    alias char as raw.of("char")
-    alias schar as raw.of("signed char")
-    alias uchar as raw.of("unsigned char")
+    alias char as c.raw("char")
+    alias schar as c.raw("signed char")
+    alias uchar as c.raw("unsigned char")
 
-    alias short as raw.of("short")
-    alias sshort as raw.of("signed short")
-    alias ushort as raw.of("unsigned short")
+    alias short as c.raw("short")
+    alias sshort as c.raw("signed short")
+    alias ushort as c.raw("unsigned short")
 
-    alias int as raw.of("int")
-    alias sint as raw.of("signed int")
-    alias uint as raw.of("unsigned int")
+    alias int as c.raw("int")
+    alias sint as c.raw("signed int")
+    alias uint as c.raw("unsigned int")
 
-    alias long as raw.of("long")
-    alias slong as raw.of("signed long")
-    alias ulong as raw.of("unsigned long")
+    alias long as c.raw("long")
+    alias slong as c.raw("signed long")
+    alias ulong as c.raw("unsigned long")
 
-    alias llong as raw.of("long long")
-    alias sllong as raw.of("signed long long")
-    alias ullong as raw.of("unsigned long long")
+    alias llong as c.raw("long long")
+    alias sllong as c.raw("signed long long")
+    alias ullong as c.raw("unsigned long long")
 
-    alias float as raw.of("float")
-    alias double as raw.of("double")
-    alias bool as raw.of("_Bool")
+    alias float as c.raw("float")
+    alias double as c.raw("double")
+    alias bool as c.raw("_Bool")
 
     @alias(define)
-    alias void as raw.of("void")
+    alias void as c.raw("void")
 
     @header(<stddef.h>)
-    alias size as raw.of("size_t")
+    alias size as c.raw("size_t")
 
     @header(<stddef.h>)
-    alias nullptr as raw.of("NULL")
+    alias nullptr as c.raw("NULL")
 
     @header(<stddef.h>)
-    alias ptrdiff as raw.of("ptrdiff_t")
+    alias ptrdiff as c.raw("ptrdiff_t")
 
     @header(<stddef.h>)
-    alias wchar as raw.of("wchar_t")
+    alias wchar as c.raw("wchar_t")
 
     scope fixed:
         @header(<stdint.h>)
-        alias i8 as raw.of("int8_t")
+        alias i8 as c.raw("int8_t")
         @header(<stdint.h>)
-        alias i16 as raw.of("int16_t")
+        alias i16 as c.raw("int16_t")
         @header(<stdint.h>)
-        alias i32 as raw.of("int32_t")
+        alias i32 as c.raw("int32_t")
         @header(<stdint.h>)
-        alias i64 as raw.of("int64_t")
+        alias i64 as c.raw("int64_t")
         @header(<stdint.h>)
-        alias u8 as raw.of("uint8_t")
+        alias u8 as c.raw("uint8_t")
         @header(<stdint.h>)
-        alias u16 as raw.of("uint16_t")
+        alias u16 as c.raw("uint16_t")
         @header(<stdint.h>)
-        alias u32 as raw.of("uint32_t")
+        alias u32 as c.raw("uint32_t")
         @header(<stdint.h>)
-        alias u64 as raw.of("uint64_t")
+        alias u64 as c.raw("uint64_t")
         @header(<stdint.h>)
-        alias imax as raw.of("intmax_t")
+        alias imax as c.raw("intmax_t")
         @header(<stdint.h>)
-        alias umax as raw.of("uintmax_t")
+        alias umax as c.raw("uintmax_t")
         @header(<stdint.h>)
-        alias iptr as raw.of("intptr_t")
+        alias iptr as c.raw("intptr_t")
         @header(<stdint.h>)
-        alias uptr as raw.of("uintptr_t")
+        alias uptr as c.raw("uintptr_t")
 
     @template(inline)
     template ret(val):
-        use raw.of("${val}")
+        use c.raw("${val}")
 
     @template(inline)
     template cast(type, val):
-        use raw.of("((${type})${val})")
+        use c.raw("((${type})${val})")
 
     @template(inline)
     template call(fn, ... as args):
-        use raw.of("${fn}(${args})")
+        use c.raw("${fn}(${args})")
 
     @template(inline)
     template initializer(... as values):
-        use raw.of("{ ${values} }")
+        use c.raw("{ ${values} }")
 
     @template(inline)
     template sel(cond, a, b):
-        use raw.of("(${cond} ? ${a} : ${b})")
+        use c.raw("(${cond} ? ${a} : ${b})")
 
     @template(inline)
     template eq(a, b):
-        use raw.of("(${a} == ${b})")
+        use c.raw("(${a} == ${b})")
 
     @template(inline)
     template ne(a, b):
-        use raw.of("(${a} != ${b})")
+        use c.raw("(${a} != ${b})")
 
     @template(inline)
     template lt(a, b):
-        use raw.of("(${a} < ${b})")
+        use c.raw("(${a} < ${b})")
 
     @template(inline)
     template le(a, b):
-        use raw.of("(${a} <= ${b})")
+        use c.raw("(${a} <= ${b})")
 
     @template(inline)
     template gt(a, b):
-        use raw.of("(${a} > ${b})")
+        use c.raw("(${a} > ${b})")
 
     @template(inline)
     template ge(a, b):
-        use raw.of("(${a} >= ${b})")
+        use c.raw("(${a} >= ${b})")
 
     scope struct:
         @template(inline)
         template of(type):
-            use raw.of("struct ${type}")
+            use c.raw("struct ${type}")
 
     scope math:
         @template(inline)
         template add(a, b):
-            use raw.of("(${a} + ${b})")
+            use c.raw("(${a} + ${b})")
         @template(inline)
         template sub(a, b):
-            use raw.of("(${a} - ${b})")
+            use c.raw("(${a} - ${b})")
         @template(inline)
         template mul(a, b):
-            use raw.of("(${a} * ${b})")
+            use c.raw("(${a} * ${b})")
         @template(inline)
         template div(a, b):
-            use raw.of("(${a} / ${b})")
+            use c.raw("(${a} / ${b})")
         @template(inline)
         template mod(a, b):
-            use raw.of("(${a} % ${b})")
+            use c.raw("(${a} % ${b})")
         @template(inline)
         template neg(a):
-            use raw.of("(-${a})")
+            use c.raw("(-${a})")
 
         scope bit:
             @template(inline)
             template and(a, b):
-                use raw.of("(${a} & ${b})")
+                use c.raw("(${a} & ${b})")
             @template(inline)
             template or(a, b):
-                use raw.of("(${a} | ${b})")
+                use c.raw("(${a} | ${b})")
             @template(inline)
             template xor(a, b):
-                use raw.of("(${a} ^ ${b})")
+                use c.raw("(${a} ^ ${b})")
             @template(inline)
             template not(a):
-                use raw.of("(~${a})")
+                use c.raw("(~${a})")
             @template(inline)
             template shl(a, b):
-                use raw.of("(${a} << ${b})")
+                use c.raw("(${a} << ${b})")
             @template(inline)
             template shr(a, b):
-                use raw.of("(${a} >> ${b})")
+                use c.raw("(${a} >> ${b})")
             @template(inline)
             template set(a, b):
-                use raw.of("(${a} |= ${b})")
+                use c.raw("(${a} |= ${b})")
 
     @header(<stdlib.h>)
     template malloc(size):
-        use raw.of("malloc(${size})")
+        use c.raw("malloc(${size})")
 
     @header(<stdlib.h>)
     template calloc(count, size):
-        use raw.of("calloc(${count}, ${size})")
+        use c.raw("calloc(${count}, ${size})")
 
     @header(<stdlib.h>)
     template free(ptr):
-        use raw.of("free(${ptr})")
+        use c.raw("free(${ptr})")
 
     @header(<string.h>)
     template memcpy(dest, src, size):
-        use raw.of("memcpy(${dest}, ${src}, ${size})")
+        use c.raw("memcpy(${dest}, ${src}, ${size})")
 
     @header(<string.h>)
     template memset(dest, value, size):
-        use raw.of("memset(${dest}, ${value}, ${size})")
+        use c.raw("memset(${dest}, ${value}, ${size})")

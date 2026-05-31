@@ -538,7 +538,7 @@ function getHeaderArg(attributes: Attribute[]): string | undefined {
 }
 
 function parseRawOf(target: string): string | undefined {
-  const match = target.match(/^raw\.of\("(.*)"\)$/);
+  const match = target.match(/^c\.raw\("(.*)"\)$/);
   return match ? match[1] : undefined;
 }
 
@@ -1183,8 +1183,8 @@ function renderFnBodyLine(
   templateSymbols: Map<string, TemplateSymbol>,
   methodSelfPointer: boolean
 ): string {
-  if (/^use\s+raw\.of\("(.*)"\)$/.test(line)) {
-    return `  ${line.match(/^use\s+raw\.of\("(.*)"\)$/)![1]}`;
+  if (/^use\s+c\.raw\("(.*)"\)$/.test(line)) {
+    return `  ${line.match(/^use\s+c\.raw\("(.*)"\)$/)![1]}`;
   }
 
   if (/^return\s+/.test(line)) {
@@ -1200,7 +1200,7 @@ function renderFnBodyLine(
     return `  ${expanded};`;
   }
 
-  throw new Error(`Line ${fnLine}: function bodies only support \`return expr\` and \`use raw.of("...")\``);
+  throw new Error(`Line ${fnLine}: function bodies only support \`return expr\` and \`use c.raw("...")\``);
 }
 
 function renderFnExpression(expr: string, methodSelfPointer: boolean): string {

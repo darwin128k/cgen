@@ -251,7 +251,7 @@ export function parseDsl(source: string): ParsedDsl {
           diagnostics.push(`Line ${lineNumber}: template "${currentTemplate.node.name}" with fields cannot have a body`);
           return;
         }
-        const rawOfMatch = line.match(/^use\s+raw\.of\("(.*)"\)$/);
+        const rawOfMatch = line.match(/^use\s+c\.raw\("(.*)"\)$/);
         if (rawOfMatch) {
           pendingAttributes = [];
           currentTemplate.node.bodyRaw = true;

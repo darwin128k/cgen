@@ -424,7 +424,7 @@ function getCandidates(typed: string, contextPath: string[], currentTemplate: Cu
 
 function getContextSnippets(contextPath: string[], currentTemplate: CurrentTemplate, index: DslIndex): string[] {
   if (currentTemplate.insideFn) {
-    return ['return ', 'use raw.of("")'];
+    return ['return ', 'use c.raw("")'];
   }
 
   if (currentTemplate.insideStruct) {

@@ -255,7 +255,7 @@ Function bodies support two statement forms:
 | DSL                    | C output         |
 |------------------------|------------------|
 | `return expr`          | `return expr;`   |
-| `use raw.of("...")`    | literal C line   |
+| `use c.raw("...")`     | literal C line   |
 
 `expr` in a `return` statement may be a plain identifier, a field access (`self.field`), or a built-in template call such as `c.cast(type, val)` — it is expanded the same way as a template argument.
 
