@@ -156,7 +156,7 @@ export async function generateDsl(workspaceFolder: vscode.WorkspaceFolder, exten
     await vscode.workspace.fs.writeFile(vscode.Uri.file(headerPath), Buffer.from(text, 'utf8'));
     generated.push(headerPath);
 
-    const sourceText = renderSource(module, symbols, templateSymbols);
+    const sourceText = renderSource(module, symbols, templateSymbols, paramTemplates);
     if (sourceText) {
       const sourcePath = path.join(sourceRoot, ...module.context.pathParts, `${module.section.name}.c`);
       await vscode.workspace.fs.createDirectory(vscode.Uri.file(path.dirname(sourcePath)));
@@ -913,8 +913,13 @@ function resolveModuleDependencies(
             addDep(module, symbol.moduleId);
           }
         }
-        for (const symbol of getTypeExpressionSymbols(fn.returnType, fn.line, symbols)) {
-          addDep(module, symbol.moduleId);
+        const returnTargets = fn.returnType === 'any'
+          ? inferStructMethodReturnTargets(fn, struct, paramTemplates)
+          : [fn.returnType];
+        for (const returnTarget of returnTargets) {
+          for (const symbol of getTypeExpressionSymbols(returnTarget, fn.line, symbols)) {
+            addDep(module, symbol.moduleId);
+          }
         }
       }
     }
@@ -925,6 +930,9 @@ function resolveModuleDependencies(
         for (const symbol of getTypeExpressionSymbols(p.type, p.line, symbols)) {
           addDep(module, symbol.moduleId);
         }
+      }
+      if (fn.returnType === 'any') {
+        throw new Error(`Line ${fn.line}: any return type is only supported for struct methods`);
       }
       for (const symbol of getTypeExpressionSymbols(fn.returnType, fn.line, symbols)) {
         addDep(module, symbol.moduleId);
@@ -1063,7 +1071,7 @@ function makeFnSignature(
 ): string {
   const specifiers = getFnSpecifiers(fn);
   const prefix = specifiers ? `${specifiers} ` : '';
-  const returnC = resolveTypeExpression(fn.returnType, fn.line, symbols);
+  const returnC = resolveFnReturnType(fn, symbols);
   const params = [
     ...leadingParams,
     ...fn.params.map((p) => p.variadic ? '...' : renderFnParam(p, symbols))
@@ -1072,6 +1080,14 @@ function makeFnSignature(
     ? params.join(', ')
     : 'void';
   return `${prefix}${returnC} ${fnCName}(${paramsC})`;
+}
+
+function resolveFnReturnType(fn: FnNode, symbols: Map<string, TypeSymbol>): string {
+  if (fn.returnType !== 'any') {
+    return resolveTypeExpression(fn.returnType, fn.line, symbols);
+  }
+
+  throw new Error(`Line ${fn.line}: any return type is only supported for struct methods`);
 }
 
 function renderFnParam(param: FnParam, symbols: Map<string, TypeSymbol>): string {
@@ -1084,11 +1100,13 @@ function makeStructMethodSignature(
   fn: FnNode,
   fnCName: string,
   symbols: Map<string, TypeSymbol>,
-  selfTypeName: string
+  selfTypeName: string,
+  struct: StructNode,
+  paramTemplates: Map<string, TemplateNode>
 ): string {
   const specifiers = getFnSpecifiers(fn);
   const prefix = specifiers ? `${specifiers} ` : '';
-  const returnC = resolveTypeExpression(fn.returnType, fn.line, symbols);
+  const returnC = resolveStructMethodReturnType(fn, struct, paramTemplates, symbols);
   const params = fn.params.map((p) => {
     if (p.variadic) { return '...'; }
     if (p.name === 'self') {
@@ -1099,6 +1117,65 @@ function makeStructMethodSignature(
   });
   const paramsC = params.length > 0 ? params.join(', ') : 'void';
   return `${prefix}${returnC} ${fnCName}(${paramsC})`;
+}
+
+function resolveStructMethodReturnType(
+  fn: FnNode,
+  struct: StructNode,
+  paramTemplates: Map<string, TemplateNode>,
+  symbols: Map<string, TypeSymbol>
+): string {
+  if (fn.returnType !== 'any') {
+    return resolveTypeExpression(fn.returnType, fn.line, symbols);
+  }
+
+  const fieldName = inferReturnedSelfField(fn);
+  if (!fieldName) {
+    throw new Error(`Line ${fn.line}: cannot infer any return type`);
+  }
+
+  const field = getStructFields(struct, paramTemplates).find((candidate) => candidate.name === fieldName);
+  if (!field) {
+    throw new Error(`Line ${fn.line}: cannot infer any return type, unknown field "self.${fieldName}"`);
+  }
+
+  return resolveTypeExpression(field.target, field.line, symbols);
+}
+
+function inferStructMethodReturnTargets(
+  fn: FnNode,
+  struct: StructNode,
+  paramTemplates: Map<string, TemplateNode>
+): string[] {
+  const fieldName = inferReturnedSelfField(fn);
+  if (!fieldName) {
+    throw new Error(`Line ${fn.line}: cannot infer any return type`);
+  }
+
+  const field = getStructFields(struct, paramTemplates).find((candidate) => candidate.name === fieldName);
+  if (!field) {
+    throw new Error(`Line ${fn.line}: cannot infer any return type, unknown field "self.${fieldName}"`);
+  }
+
+  return [field.target];
+}
+
+function inferReturnedSelfField(fn: FnNode): string | undefined {
+  if (fn.body.length !== 1) { return undefined; }
+  const expression = parseCallExpression(fn.body[0].replace(/^use\s+/, '').trim(), fn.line);
+  if (!expression || expression.callee !== 'c.ret' || expression.args.length !== 1) {
+    return undefined;
+  }
+
+  return expression.args[0].match(/^self\.([A-Za-z_][A-Za-z0-9_]*)$/)?.[1];
+}
+
+function getStructFields(struct: StructNode, paramTemplates: Map<string, TemplateNode>): TemplateField[] {
+  const fields = [...struct.fields];
+  for (const use of (struct.uses ?? [])) {
+    fields.push(...expandStructUse(use.expr, struct.line, paramTemplates));
+  }
+  return fields;
 }
 
 function renderFnBody(fn: FnNode, templateSymbols: Map<string, TemplateSymbol>, methodSelfPointer = false): string[] {
@@ -1269,7 +1346,7 @@ function renderHeader(
       const emit = getFnEmitTarget(fn);
       if (emit === 'source') { continue; }
       const fnCName = makeStructMethodCName(module, symbolParts, struct.name, fn.name);
-      lines.push(`${makeStructMethodSignature(fn, fnCName, symbols, typedefName)};`);
+      lines.push(`${makeStructMethodSignature(fn, fnCName, symbols, typedefName, struct, paramTemplates)};`);
     }
   }
 
@@ -1287,7 +1364,8 @@ function renderHeader(
 function renderSource(
   module: ModuleArtifact,
   symbols: Map<string, TypeSymbol>,
-  templateSymbols: Map<string, TemplateSymbol>
+  templateSymbols: Map<string, TemplateSymbol>,
+  paramTemplates: Map<string, TemplateNode>
 ): string | undefined {
   const lines = [`#include <${module.includePath}>`, ''];
   let hasDefinitions = false;
@@ -1331,7 +1409,7 @@ function renderSource(
       const emit = getFnEmitTarget(fn);
       if (emit !== 'source' && emit !== 'both') { continue; }
       const fnCName = makeStructMethodCName(module, symbolParts, struct.name, fn.name);
-      lines.push(`${makeStructMethodSignature(fn, fnCName, symbols, typedefName)} {`);
+      lines.push(`${makeStructMethodSignature(fn, fnCName, symbols, typedefName, struct, paramTemplates)} {`);
       lines.push(...renderFnBody(fn, templateSymbols, true));
       lines.push('}');
       hasDefinitions = true;
