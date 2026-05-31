@@ -531,7 +531,7 @@ function renderFieldDeclaration(field: TemplateField, typeName: string, template
 function getHeaderArg(attributes: Attribute[]): string | undefined {
   for (const attr of attributes) {
     if (attr.name === 'header' && attr.args.length > 0) {
-      return attr.args[0];
+      return attr.args[0].replace(/^"(.*)"$/, '$1');
     }
   }
   return undefined;
@@ -1230,7 +1230,7 @@ function renderHeader(
   ];
 
   for (const header of [...module.externHeaders].sort()) {
-    lines.push(`#include ${header}`);
+    lines.push(`#include <${header}>`);
   }
 
   for (const includePath of includes) {

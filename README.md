@@ -110,13 +110,13 @@ module char:
 
 Guard: `LH_CHAR_H`. Type name: `lh_uchar_t` (not `lh_char_uchar_t`).
 
-### `@header(<header.h>)`
+### `@header("header.h")`
 
 Attaches to declarations inside an `extern` section. Specifies which C header to `#include` in any generated file that uses the declared name.
 
 ```cgen
 extern c:
-    @header(<stddef.h>)
+    @header("stddef.h")
     alias size as "size_t"
 ```
 
@@ -129,10 +129,10 @@ extern c:
     alias char as "char"
     alias uint as "unsigned int"
 
-    @header(<stddef.h>)
+    @header("stddef.h")
     alias size as "size_t"
 
-    @header(<stdlib.h>)
+    @header("stdlib.h")
     template malloc:
         param size as c.size
 ```

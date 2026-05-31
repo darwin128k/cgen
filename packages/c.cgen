@@ -26,42 +26,42 @@ scope c:
     @alias(define)
     alias void as c.raw("void")
 
-    @header(<stddef.h>)
+    @header("stddef.h")
     alias size as c.raw("size_t")
 
-    @header(<stddef.h>)
+    @header("stddef.h")
     alias nullptr as c.raw("NULL")
 
-    @header(<stddef.h>)
+    @header("stddef.h")
     alias ptrdiff as c.raw("ptrdiff_t")
 
-    @header(<stddef.h>)
+    @header("stddef.h")
     alias wchar as c.raw("wchar_t")
 
     scope fixed:
-        @header(<stdint.h>)
+        @header("stdint.h")
         alias i8 as c.raw("int8_t")
-        @header(<stdint.h>)
+        @header("stdint.h")
         alias i16 as c.raw("int16_t")
-        @header(<stdint.h>)
+        @header("stdint.h")
         alias i32 as c.raw("int32_t")
-        @header(<stdint.h>)
+        @header("stdint.h")
         alias i64 as c.raw("int64_t")
-        @header(<stdint.h>)
+        @header("stdint.h")
         alias u8 as c.raw("uint8_t")
-        @header(<stdint.h>)
+        @header("stdint.h")
         alias u16 as c.raw("uint16_t")
-        @header(<stdint.h>)
+        @header("stdint.h")
         alias u32 as c.raw("uint32_t")
-        @header(<stdint.h>)
+        @header("stdint.h")
         alias u64 as c.raw("uint64_t")
-        @header(<stdint.h>)
+        @header("stdint.h")
         alias imax as c.raw("intmax_t")
-        @header(<stdint.h>)
+        @header("stdint.h")
         alias umax as c.raw("uintmax_t")
-        @header(<stdint.h>)
+        @header("stdint.h")
         alias iptr as c.raw("intptr_t")
-        @header(<stdint.h>)
+        @header("stdint.h")
         alias uptr as c.raw("uintptr_t")
 
 
@@ -153,22 +153,22 @@ scope c:
             template set(a, b):
                 use c.raw("(${a} |= ${b})")
 
-    @header(<stdlib.h>)
+    @header("stdlib.h")
     template malloc(size):
         use c.raw("malloc(${size})")
 
-    @header(<stdlib.h>)
+    @header("stdlib.h")
     template calloc(count, size):
         use c.raw("calloc(${count}, ${size})")
 
-    @header(<stdlib.h>)
+    @header("stdlib.h")
     template free(ptr):
         use c.raw("free(${ptr})")
 
-    @header(<string.h>)
+    @header("string.h")
     template memcpy(dest, src, size):
         use c.raw("memcpy(${dest}, ${src}, ${size})")
 
-    @header(<string.h>)
+    @header("string.h")
     template memset(dest, value, size):
         use c.raw("memset(${dest}, ${value}, ${size})")
