@@ -392,7 +392,7 @@ function getCandidates(typed: string, contextPath: string[], currentTemplate: Cu
   }
 
   if (/^fn\s+[A-Za-z_][A-Za-z0-9_]*\(/.test(typed)) {
-    return getInlineParamCandidates(typed);
+    return getInlineFnParamCandidates(typed, contextPath, index);
   }
 
   if (/^struct\b/.test(typed)) {
@@ -478,6 +478,42 @@ function getInlineParamCandidates(typed: string): string[] {
     .map((s) => `${head}${s}`);
 }
 
+function getInlineFnParamCandidates(typed: string, contextPath: string[], index: DslIndex): string[] {
+  const separatorIdx = Math.max(typed.lastIndexOf('('), typed.lastIndexOf(','));
+  const currentFragment = typed.slice(separatorIdx + 1).trimStart();
+  const head = typed.slice(0, typed.length - currentFragment.length);
+
+  const asMatch = currentFragment.match(/^(?:param\s+)?\S+(?:\s+as\s+|\s+->\s*)(\S*)$/);
+  if (asMatch) {
+    const typeFragment = asMatch[1];
+    const typeHead = typed.slice(0, typed.length - typeFragment.length);
+    return getDottedCandidates(typeFragment, contextPath, index, getTypeCandidatePool(contextPath, index))
+      .filter((candidate) => candidate.startsWith(typeFragment))
+      .map((candidate) => `${typeHead}${candidate}`);
+  }
+
+  return [
+    'name -> type',
+    'param name -> type',
+    '... -> values'
+  ]
+    .filter((s) => s.startsWith(currentFragment))
+    .map((s) => `${head}${s}`);
+}
+
+function getTypeCandidatePool(contextPath: string[], index: DslIndex): string[] {
+  const currentPkg = contextPath[0];
+  const projectTypes = index.typeNames.filter((t) => !t.startsWith('c.'));
+  const builtins = index.typeNames.filter((t) => t.startsWith('c.'));
+  const currentPkgTypes = currentPkg ? projectTypes.filter((t) => t.startsWith(`${currentPkg}.`)) : [];
+  const otherPkgTypes = currentPkg ? projectTypes.filter((t) => !t.startsWith(`${currentPkg}.`)) : projectTypes;
+  return [
+    ...currentPkgTypes,
+    ...otherPkgTypes,
+    ...builtins
+  ];
+}
+
 function getContextObjectCandidates(contextPath: string[], index: DslIndex): string[] {
   const context = findNode(index.root, contextPath) ?? index.root;
   return [
@@ -529,16 +565,7 @@ function completeTail(typed: string, tails: string[]): string[] {
 }
 
 function getTypeCandidates(typed: string, contextPath: string[], index: DslIndex): string[] {
-  const currentPkg = contextPath[0];
-  const projectTypes = index.typeNames.filter((t) => !t.startsWith('c.'));
-  const builtins = index.typeNames.filter((t) => t.startsWith('c.'));
-  const currentPkgTypes = currentPkg ? projectTypes.filter((t) => t.startsWith(`${currentPkg}.`)) : [];
-  const otherPkgTypes = currentPkg ? projectTypes.filter((t) => !t.startsWith(`${currentPkg}.`)) : projectTypes;
-  return getDottedCandidates(getTailToken(typed), contextPath, index, [
-    ...currentPkgTypes,
-    ...otherPkgTypes,
-    ...builtins
-  ]);
+  return getDottedCandidates(getTailToken(typed), contextPath, index, getTypeCandidatePool(contextPath, index));
 }
 
 function getTemplateUseCandidates(
