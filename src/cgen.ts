@@ -156,7 +156,7 @@ export async function generateDsl(workspaceFolder: vscode.WorkspaceFolder, exten
     await vscode.workspace.fs.writeFile(vscode.Uri.file(headerPath), Buffer.from(text, 'utf8'));
     generated.push(headerPath);
 
-    const sourceText = renderSource(module, symbols);
+    const sourceText = renderSource(module, symbols, templateSymbols);
     if (sourceText) {
       const sourcePath = path.join(sourceRoot, ...module.context.pathParts, `${module.section.name}.c`);
       await vscode.workspace.fs.createDirectory(vscode.Uri.file(path.dirname(sourcePath)));
@@ -882,6 +882,17 @@ function resolveModuleDependencies(
           }
         }
       }
+      for (const fn of struct.fns) {
+        for (const p of fn.params) {
+          if (p.variadic) { continue; }
+          for (const symbol of getTypeExpressionSymbols(p.type, p.line, symbols)) {
+            addDep(module, symbol.moduleId);
+          }
+        }
+        for (const symbol of getTypeExpressionSymbols(fn.returnType, fn.line, symbols)) {
+          addDep(module, symbol.moduleId);
+        }
+      }
     }
 
     for (const { fn } of collectScopeFns(module.section, [])) {
@@ -1012,7 +1023,7 @@ function getFnSpecifiers(fn: FnNode): string {
 
 function getFnEmitTarget(fn: FnNode): EmitTarget {
   const emitAttrs = fn.attributes.filter((a) => a.name === 'emit');
-  if (emitAttrs.length === 0) { return 'header'; }
+  if (emitAttrs.length === 0) { return fn.body.length > 0 ? 'both' : 'header'; }
   const last = emitAttrs[emitAttrs.length - 1];
   if (last.args.length !== 1 || !['header', 'source', 'both'].includes(last.args[0])) {
     throw new Error(`Line ${last.line}: @emit only supports @emit(header), @emit(source), and @emit(both)`);
@@ -1020,14 +1031,68 @@ function getFnEmitTarget(fn: FnNode): EmitTarget {
   return last.args[0] as EmitTarget;
 }
 
-function makeFnSignature(fn: FnNode, fnCName: string, symbols: Map<string, TypeSymbol>): string {
+function makeFnSignature(
+  fn: FnNode,
+  fnCName: string,
+  symbols: Map<string, TypeSymbol>,
+  leadingParams: string[] = []
+): string {
   const specifiers = getFnSpecifiers(fn);
   const prefix = specifiers ? `${specifiers} ` : '';
   const returnC = resolveTypeExpression(fn.returnType, fn.line, symbols);
-  const paramsC = fn.params.length > 0
-    ? fn.params.map((p) => p.variadic ? '...' : `${resolveTypeExpression(p.type, p.line, symbols)} ${p.name}`).join(', ')
+  const params = [
+    ...leadingParams,
+    ...fn.params.map((p) => p.variadic ? '...' : `${resolveTypeExpression(p.type, p.line, symbols)} ${p.name}`)
+  ];
+  const paramsC = params.length > 0
+    ? params.join(', ')
     : 'void';
   return `${prefix}${returnC} ${fnCName}(${paramsC})`;
+}
+
+function renderFnBody(fn: FnNode, templateSymbols: Map<string, TemplateSymbol>, methodSelfPointer = false): string[] {
+  return fn.body.map((line) => renderFnBodyLine(line, fn.line, templateSymbols, methodSelfPointer));
+}
+
+function renderFnBodyLine(
+  line: string,
+  fnLine: number,
+  templateSymbols: Map<string, TemplateSymbol>,
+  methodSelfPointer: boolean
+): string {
+  if (/^use\s+raw\.of\("(.*)"\)$/.test(line)) {
+    return `  ${line.match(/^use\s+raw\.of\("(.*)"\)$/)![1]}`;
+  }
+
+  if (/^use\s+/.test(line)) {
+    const expression = parseUseExpression(renderFnExpression(line, methodSelfPointer), fnLine);
+    const args = expression.args.map((arg) => expandTemplateArgument(arg, fnLine, templateSymbols, new Set()));
+    const expanded = applyTemplateSymbol(expression.callee, args, fnLine, templateSymbols);
+    if (expression.callee === 'c.ret') {
+      return `  return ${expanded};`;
+    }
+    return `  ${expanded};`;
+  }
+
+  throw new Error(`Line ${fnLine}: function bodies only support \`use c.ret(...)\` and \`use raw.of("...")\``);
+}
+
+function renderFnExpression(expr: string, methodSelfPointer: boolean): string {
+  if (!methodSelfPointer) { return expr; }
+  return expr.replace(/\bself\./g, 'self->');
+}
+
+function makeFnCName(module: ModuleArtifact, symbolParts: string[], fnName: string): string {
+  const nameParts = [...module.symbolParts, ...symbolParts];
+  if (nameParts[nameParts.length - 1] !== fnName) { nameParts.push(fnName); }
+  return nameParts.join('_');
+}
+
+function makeStructMethodCName(module: ModuleArtifact, symbolParts: string[], structName: string, fnName: string): string {
+  const nameParts = [...module.symbolParts, ...symbolParts];
+  if (nameParts[nameParts.length - 1] !== structName) { nameParts.push(structName); }
+  if (nameParts[nameParts.length - 1] !== fnName) { nameParts.push(fnName); }
+  return nameParts.join('_');
 }
 
 function renderHeader(
@@ -1145,15 +1210,19 @@ function renderHeader(
       lines.push(`  ${tmpl.macroName}(${resolvedArgs.join(', ')});`);
     }
     lines.push(`} ${typedefName};`);
+
+    for (const fn of struct.fns) {
+      const emit = getFnEmitTarget(fn);
+      if (emit === 'source') { continue; }
+      const fnCName = makeStructMethodCName(module, symbolParts, struct.name, fn.name);
+      lines.push(`${makeFnSignature(fn, fnCName, symbols, [`${typedefName} *self`])};`);
+    }
   }
 
   for (const { fn, symbolParts: extraParts } of collectScopeFns(module.section, [])) {
     const emit = getFnEmitTarget(fn);
     if (emit === 'source') { continue; }
-    const allSymbolParts = [...module.symbolParts, ...extraParts];
-    const nameParts = [...allSymbolParts];
-    if (nameParts[nameParts.length - 1] !== fn.name) { nameParts.push(fn.name); }
-    const fnCName = nameParts.join('_');
+    const fnCName = makeFnCName(module, extraParts, fn.name);
     lines.push(`${makeFnSignature(fn, fnCName, symbols)};`);
   }
 
@@ -1161,7 +1230,11 @@ function renderHeader(
   return lines.join('\n');
 }
 
-function renderSource(module: ModuleArtifact, symbols: Map<string, TypeSymbol>): string | undefined {
+function renderSource(
+  module: ModuleArtifact,
+  symbols: Map<string, TypeSymbol>,
+  templateSymbols: Map<string, TemplateSymbol>
+): string | undefined {
   const lines = [`#include <${module.includePath}>`, ''];
   let hasDefinitions = false;
 
@@ -1190,13 +1263,25 @@ function renderSource(module: ModuleArtifact, symbols: Map<string, TypeSymbol>):
   for (const { fn, symbolParts: extraParts } of collectScopeFns(module.section, [])) {
     const emit = getFnEmitTarget(fn);
     if (emit !== 'source' && emit !== 'both') { continue; }
-    const allSymbolParts = [...module.symbolParts, ...extraParts];
-    const nameParts = [...allSymbolParts];
-    if (nameParts[nameParts.length - 1] !== fn.name) { nameParts.push(fn.name); }
-    const fnCName = nameParts.join('_');
+    const fnCName = makeFnCName(module, extraParts, fn.name);
     lines.push(`${makeFnSignature(fn, fnCName, symbols)} {`);
+    lines.push(...renderFnBody(fn, templateSymbols));
     lines.push('}');
     hasDefinitions = true;
+  }
+
+  for (const { struct, symbolParts } of collectScopeStructs(module.section, [])) {
+    const allSymbolParts = [...module.symbolParts, ...symbolParts];
+    const typedefName = makeTypedefName(allSymbolParts, struct.name);
+    for (const fn of struct.fns) {
+      const emit = getFnEmitTarget(fn);
+      if (emit !== 'source' && emit !== 'both') { continue; }
+      const fnCName = makeStructMethodCName(module, symbolParts, struct.name, fn.name);
+      lines.push(`${makeFnSignature(fn, fnCName, symbols, [`${typedefName} *self`])} {`);
+      lines.push(...renderFnBody(fn, templateSymbols, true));
+      lines.push('}');
+      hasDefinitions = true;
+    }
   }
 
   if (!hasDefinitions) {

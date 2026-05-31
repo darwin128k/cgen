@@ -18,6 +18,7 @@ export interface FnNode {
   name: string;
   params: FnParam[];
   returnType: string;
+  body: string[];
   attributes: Attribute[];
   line: number;
 }
@@ -59,6 +60,7 @@ export interface StructNode {
   name: string;
   fields: TemplateField[];
   uses: StructUse[];
+  fns: FnNode[];
   attributes: Attribute[];
   line: number;
 }
@@ -114,6 +116,11 @@ interface StructFrame {
   node: StructNode;
 }
 
+interface FnFrame {
+  indent: number;
+  node: FnNode;
+}
+
 interface EnumFrame {
   indent: number;
   node: EnumNode;
@@ -141,6 +148,7 @@ export function parseDsl(source: string): ParsedDsl {
   let currentEnum: EnumFrame | undefined;
   let currentTemplate: TemplateFrame | undefined;
   let currentStruct: StructFrame | undefined;
+  let currentFn: FnFrame | undefined;
 
   expandInlineDsl(source).split(/\r?\n/).forEach((rawLine, index) => {
     const lineNumber = index + 1;
@@ -152,7 +160,11 @@ export function parseDsl(source: string): ParsedDsl {
     const indent = countIndent(withoutComment, diagnostics, lineNumber);
     const line = withoutComment.trim();
 
-if (currentEnum && indent <= currentEnum.indent) {
+    if (currentFn && indent <= currentFn.indent) {
+      currentFn = undefined;
+    }
+
+    if (currentEnum && indent <= currentEnum.indent) {
       currentEnum = undefined;
     }
 
@@ -173,6 +185,11 @@ if (currentEnum && indent <= currentEnum.indent) {
     const attribute = parseAttribute(line, lineNumber);
     if (attribute) {
       pendingAttributes.push(attribute);
+      return;
+    }
+
+    if (currentFn) {
+      currentFn.node.body.push(line);
       return;
     }
 
@@ -231,6 +248,15 @@ if (currentEnum && indent <= currentEnum.indent) {
     }
 
     if (currentStruct) {
+      const fnNode = parseFn(line, lineNumber);
+      if (fnNode) {
+        fnNode.attributes = [...parentFrame.inheritedAttributes, ...pendingAttributes];
+        pendingAttributes = [];
+        currentStruct.node.fns.push(fnNode);
+        currentFn = { indent, node: fnNode };
+        return;
+      }
+
       const field = parseTemplateField(line, lineNumber);
       if (field) {
         currentStruct.node.fields.push(field);
@@ -293,6 +319,7 @@ if (currentEnum && indent <= currentEnum.indent) {
       fnNode.attributes = [...parentFrame.inheritedAttributes, ...pendingAttributes];
       pendingAttributes = [];
       parent.fns.push(fnNode);
+      currentFn = { indent, node: fnNode };
       return;
     }
 
@@ -431,7 +458,7 @@ function parseFn(line: string, lineNumber: number): FnNode | undefined {
     return undefined;
   }
 
-  return { kind: 'fn', name, params, returnType: returnMatch[1].trim(), attributes: [], line: lineNumber };
+  return { kind: 'fn', name, params, returnType: returnMatch[1].trim(), body: [], attributes: [], line: lineNumber };
 }
 
 function parseFnParam(text: string, lineNumber: number): FnParam | undefined {
@@ -478,7 +505,7 @@ function parseStruct(line: string, lineNumber: number): StructNode | undefined {
   if (!match) {
     return undefined;
   }
-  return { kind: 'struct', name: match[1], fields: [], uses: [], attributes: [], line: lineNumber };
+  return { kind: 'struct', name: match[1], fields: [], uses: [], fns: [], attributes: [], line: lineNumber };
 }
 
 function parseTemplateParam(line: string, lineNumber: number): TemplateParam | undefined {

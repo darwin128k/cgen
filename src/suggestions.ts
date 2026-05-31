@@ -54,7 +54,6 @@ interface CurrentTemplate {
 const builtinTemplates = [
   'c.array',
   'c.const',
-  'c.fn',
   'c.ptr',
   'c.struct',
   'c.union',
@@ -405,7 +404,7 @@ function getCandidates(typed: string, contextPath: string[], currentTemplate: Cu
 
 function getContextSnippets(contextPath: string[], currentTemplate: CurrentTemplate, index: DslIndex): string[] {
   if (currentTemplate.insideStruct) {
-    return ['field name -> type', 'use c.ptr(value)'];
+    return ['field name -> type', 'use c.ptr(value)', 'fn name() -> type:'];
   }
   if (currentTemplate.excludeNames.length > 0) {
     return ['name', 'name -> any', 'name -> template', '... -> values', 'field name -> type', 'use c.ptr(value)'];
@@ -435,7 +434,7 @@ function getContextSnippets(contextPath: string[], currentTemplate: CurrentTempl
 
 function getDeclarationSnippetsForContext(contextPath: string[], currentTemplate: CurrentTemplate, index: DslIndex): string[] {
   if (currentTemplate.insideStruct) {
-    return ['field name -> type'];
+    return ['field name -> type', 'fn name() -> type:'];
   }
   if (currentTemplate.excludeNames.length > 0) {
     return ['name', 'name -> any', 'name -> template', '... -> values', 'field name -> type'];
