@@ -356,8 +356,7 @@ function completionIconFor(kind: string): [string, string] {
     case 'alias': return ['symbol-interface', 'interface'];
     case 'enum': return ['symbol-enum', 'enum'];
     case 'case': return ['symbol-enum-member', 'enum'];
-    case 'struct':
-    case 'record': return ['symbol-struct', 'struct'];
+    case 'struct': return ['symbol-struct', 'struct'];
     case 'template':
     case 'fn': return ['symbol-method', 'method'];
     case 'field': return ['symbol-field', 'variable'];

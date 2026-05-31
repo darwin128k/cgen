@@ -3,7 +3,7 @@ import * as vscode from 'vscode';
 import initSqlJs, { Database, SqlJsStatic } from 'sql.js';
 import { parseDsl, makePublicPath, type SectionKind, type SectionNode } from './parser';
 
-type SymbolKind = 'alias' | 'enum' | 'template' | 'record' | 'struct';
+type SymbolKind = 'alias' | 'enum' | 'template' | 'struct';
 
 export interface IndexedNode {
   kind: SectionKind;
@@ -140,7 +140,7 @@ export class CgenProjectIndex {
       typeNames: sortUnique([
         ...builtinTypes,
         ...symbols
-          .filter((symbol) => symbol.kind === 'alias' || symbol.kind === 'enum' || symbol.kind === 'record' || symbol.kind === 'struct')
+          .filter((symbol) => symbol.kind === 'alias' || symbol.kind === 'enum' || symbol.kind === 'struct')
           .map((symbol) => symbol.path.join('.'))
       ])
     };
@@ -383,9 +383,8 @@ function extractRecords(text: string, sourcePath: string): { sections: SectionRe
     }
 
     for (const template of node.templates) {
-      const isRecord = template.fields.length > 0 && template.params.length === 0;
       symbols.push({
-        kind: isRecord ? 'record' : 'template',
+        kind: 'template',
         name: template.name,
         path: makePublicPath([...pathParts, template.name]).join('.'),
         parentPath: symbolParentPath,
