@@ -505,6 +505,29 @@ function hasAttribute(node: SectionNode | AliasNode | EnumNode, name: string, ar
   });
 }
 
+function hasAttr(attributes: Attribute[], name: string, arg?: string): boolean {
+  return attributes.some((attribute) => {
+    if (attribute.name !== name) {
+      return false;
+    }
+
+    return arg === undefined || attribute.args.includes(arg);
+  });
+}
+
+function isTemplateMutable(template: TemplateNode): boolean {
+  return hasAttr(template.attributes, 'template', 'mutable');
+}
+
+function isFieldMutable(field: TemplateField, template?: TemplateNode): boolean {
+  return hasAttr(field.attributes, 'field', 'mutable') || (template ? isTemplateMutable(template) : false);
+}
+
+function renderFieldDeclaration(field: TemplateField, typeName: string, template?: TemplateNode): string {
+  const prefix = isFieldMutable(field, template) ? '' : 'const ';
+  return `${prefix}${typeName} ${field.name}`;
+}
+
 function getHeaderArg(attributes: Attribute[]): string | undefined {
   for (const attr of attributes) {
     if (attr.name === 'header' && attr.args.length > 0) {
@@ -748,6 +771,7 @@ function expandStructUse(
   return template.fields.map((field) => ({
     name: field.name,
     target: paramMap.get(field.target) ?? field.target,
+    attributes: field.attributes,
     line: field.line
   }));
 }
@@ -1042,11 +1066,38 @@ function makeFnSignature(
   const returnC = resolveTypeExpression(fn.returnType, fn.line, symbols);
   const params = [
     ...leadingParams,
-    ...fn.params.map((p) => p.variadic ? '...' : `${resolveTypeExpression(p.type, p.line, symbols)} ${p.name}`)
+    ...fn.params.map((p) => p.variadic ? '...' : renderFnParam(p, symbols))
   ];
   const paramsC = params.length > 0
     ? params.join(', ')
     : 'void';
+  return `${prefix}${returnC} ${fnCName}(${paramsC})`;
+}
+
+function renderFnParam(param: FnParam, symbols: Map<string, TypeSymbol>): string {
+  const typeName = resolveTypeExpression(param.type, param.line, symbols);
+  const prefix = param.mutable ? '' : 'const ';
+  return `${prefix}${typeName} ${param.name}`;
+}
+
+function makeStructMethodSignature(
+  fn: FnNode,
+  fnCName: string,
+  symbols: Map<string, TypeSymbol>,
+  selfTypeName: string
+): string {
+  const specifiers = getFnSpecifiers(fn);
+  const prefix = specifiers ? `${specifiers} ` : '';
+  const returnC = resolveTypeExpression(fn.returnType, fn.line, symbols);
+  const params = fn.params.map((p) => {
+    if (p.variadic) { return '...'; }
+    if (p.name === 'self') {
+      const prefix = p.mutable ? '' : 'const ';
+      return `${prefix}${selfTypeName} *self`;
+    }
+    return renderFnParam(p, symbols);
+  });
+  const paramsC = params.length > 0 ? params.join(', ') : 'void';
   return `${prefix}${returnC} ${fnCName}(${paramsC})`;
 }
 
@@ -1160,7 +1211,7 @@ function renderHeader(
           ? field.target
           : resolveTypeExpression(field.target, field.line, symbols);
         const semi = index < template.fields.length - 1 ? ';' : '';
-        return `${typeName} ${field.name}${semi}`;
+        return `${renderFieldDeclaration(field, typeName, template)}${semi}`;
       }).join(' ');
       lines.push(`#define ${makeMacroName(allSymbolParts, template.name)}(${paramList}) ${fieldDefs}`);
       continue;
@@ -1170,7 +1221,8 @@ function renderHeader(
       const cName = makeTypedefName(allSymbolParts, template.name);
       lines.push(`typedef struct ${cName} {`);
       for (const field of template.fields) {
-        lines.push(`  ${resolveTypeExpression(field.target, field.line, symbols)} ${field.name};`);
+        const typeName = resolveTypeExpression(field.target, field.line, symbols);
+        lines.push(`  ${renderFieldDeclaration(field, typeName, template)};`);
       }
       lines.push(`} ${cName};`);
       continue;
@@ -1193,12 +1245,14 @@ function renderHeader(
     const typedefName = makeTypedefName(allSymbolParts, struct.name);
     lines.push(`typedef struct ${tagName} {`);
     for (const field of struct.fields) {
-      lines.push(`  ${resolveTypeExpression(field.target, field.line, symbols)} ${field.name};`);
+      const typeName = resolveTypeExpression(field.target, field.line, symbols);
+      lines.push(`  ${renderFieldDeclaration(field, typeName)};`);
     }
     for (const use of (struct.uses ?? [])) {
       if (use.inline) {
         for (const field of expandStructUse(use.expr, struct.line, paramTemplates)) {
-          lines.push(`  ${resolveTypeExpression(field.target, field.line, symbols)} ${field.name};`);
+          const typeName = resolveTypeExpression(field.target, field.line, symbols);
+          lines.push(`  ${renderFieldDeclaration(field, typeName)};`);
         }
         continue;
       }
@@ -1215,7 +1269,7 @@ function renderHeader(
       const emit = getFnEmitTarget(fn);
       if (emit === 'source') { continue; }
       const fnCName = makeStructMethodCName(module, symbolParts, struct.name, fn.name);
-      lines.push(`${makeFnSignature(fn, fnCName, symbols, [`${typedefName} *self`])};`);
+      lines.push(`${makeStructMethodSignature(fn, fnCName, symbols, typedefName)};`);
     }
   }
 
@@ -1277,7 +1331,7 @@ function renderSource(
       const emit = getFnEmitTarget(fn);
       if (emit !== 'source' && emit !== 'both') { continue; }
       const fnCName = makeStructMethodCName(module, symbolParts, struct.name, fn.name);
-      lines.push(`${makeFnSignature(fn, fnCName, symbols, [`${typedefName} *self`])} {`);
+      lines.push(`${makeStructMethodSignature(fn, fnCName, symbols, typedefName)} {`);
       lines.push(...renderFnBody(fn, templateSymbols, true));
       lines.push('}');
       hasDefinitions = true;

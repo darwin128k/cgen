@@ -10,6 +10,8 @@ export interface FnParam {
   name: string;
   type: string;
   variadic: boolean;
+  mutable: boolean;
+  attributes: Attribute[];
   line: number;
 }
 
@@ -33,6 +35,7 @@ export interface TemplateParam {
 export interface TemplateField {
   name: string;
   target: string;
+  attributes: Attribute[];
   line: number;
 }
 
@@ -189,6 +192,24 @@ export function parseDsl(source: string): ParsedDsl {
     }
 
     if (currentFn) {
+      if (/^(?:mutable|const)\s+(?:param\s+)?[A-Za-z_][A-Za-z0-9_]*\b/.test(line)) {
+        diagnostics.push(`Line ${lineNumber}: use @param(${line.split(/\s+/, 1)[0]}) before the parameter instead`);
+        pendingAttributes = [];
+        return;
+      }
+      if (pendingAttributes.some((a) => a.name === 'mutable' || a.name === 'const')) {
+        diagnostics.push(`Line ${pendingAttributes[0].line}: use @param(mutable) or @param(const) for function parameters`);
+        pendingAttributes = [];
+        return;
+      }
+
+      const param = parseFnParam(line, lineNumber, pendingAttributes);
+      if (param) {
+        pendingAttributes = [];
+        currentFn.node.params.push(param);
+        return;
+      }
+
       currentFn.node.body.push(line);
       return;
     }
@@ -219,6 +240,8 @@ export function parseDsl(source: string): ParsedDsl {
           diagnostics.push(`Line ${lineNumber}: template "${currentTemplate.node.name}" with a body cannot have fields`);
           return;
         }
+        field.attributes = [...pendingAttributes];
+        pendingAttributes = [];
         currentTemplate.node.fields.push(field);
         return;
       }
@@ -259,6 +282,8 @@ export function parseDsl(source: string): ParsedDsl {
 
       const field = parseTemplateField(line, lineNumber);
       if (field) {
+        field.attributes = [...pendingAttributes];
+        pendingAttributes = [];
         currentStruct.node.fields.push(field);
         return;
       }
@@ -461,14 +486,27 @@ function parseFn(line: string, lineNumber: number): FnNode | undefined {
   return { kind: 'fn', name, params, returnType: returnMatch[1].trim(), body: [], attributes: [], line: lineNumber };
 }
 
-function parseFnParam(text: string, lineNumber: number): FnParam | undefined {
-  const variadicMatch = text.match(/^(?:param\s+)?\.\.\.(?:\s+as\s+|\s+->\s*)([A-Za-z_][A-Za-z0-9_]*)$/);
+function parseFnParam(text: string, lineNumber: number, attributes: Attribute[] = []): FnParam | undefined {
+  const trimmed = text.trim();
+  const mutable = attributes.some(
+    (attribute) => attribute.name === 'param' && attribute.args.includes('mutable')
+  );
+
+  const variadicMatch = trimmed.match(/^(?:param\s+)?\.\.\.(?:\s+as\s+|\s+->\s*)([A-Za-z_][A-Za-z0-9_]*)$/);
   if (variadicMatch) {
-    return { name: variadicMatch[1], type: '...', variadic: true, line: lineNumber };
+    return { name: variadicMatch[1], type: '...', variadic: true, mutable: true, attributes, line: lineNumber };
   }
-  const normalMatch = text.match(/^(?:param\s+)?([A-Za-z_][A-Za-z0-9_]*)(?:\s+as\s+|\s+->\s*)(.+)$/);
+
+  const normalMatch = trimmed.match(/^(?:param\s+)?([A-Za-z_][A-Za-z0-9_]*)(?:\s+as\s+|\s+->\s*)(.+)$/);
   if (normalMatch) {
-    return { name: normalMatch[1], type: normalMatch[2].trim(), variadic: false, line: lineNumber };
+    return {
+      name: normalMatch[1],
+      type: normalMatch[2].trim(),
+      variadic: false,
+      mutable,
+      attributes,
+      line: lineNumber
+    };
   }
   return undefined;
 }
@@ -525,5 +563,5 @@ function parseTemplateField(line: string, lineNumber: number): TemplateField | u
   if (!match) {
     return undefined;
   }
-  return { name: match[1], target: match[2].trim(), line: lineNumber };
+  return { name: match[1], target: match[2].trim(), attributes: [], line: lineNumber };
 }
