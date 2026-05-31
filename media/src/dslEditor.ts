@@ -1,4 +1,5 @@
 import { SnippetEngine } from './snippetEngine';
+import keywords from '../../src/keywords.json';
 
 declare function acquireVsCodeApi(): { postMessage(data: unknown): void };
 declare global {
@@ -86,7 +87,7 @@ function highlightToken(token: string): string {
     return `<span class="attr">${escapeHtml(token)}</span>`;
   }
 
-  if (/^(package|module|scope|alias|enum|case|as|fn|template|struct|param|field|use)$/.test(token) || token === '->') {
+  if (keywords.includes(token as typeof keywords[number]) || token === '->') {
     return `<span class="kw">${escapeHtml(token)}</span>`;
   }
 
@@ -102,7 +103,7 @@ function highlightLine(line: string): string {
   const rawCode = commentIndex === -1 ? line : line.slice(0, commentIndex);
   const comment = commentIndex === -1 ? '' : line.slice(commentIndex);
   const highlightedCode = escapeHtml(rawCode).replace(
-    /(@[A-Za-z_][A-Za-z0-9_]*|\bc\.[A-Za-z_][A-Za-z0-9_.]*\b|->|\bpackage\b|\bmodule\b|\bscope\b|\balias\b|\benum\b|\bcase\b|\bas\b|\bfn\b|\btemplate\b|\bstruct\b|\bparam\b|\bfield\b|\buse\b)/g,
+    new RegExp(`(@[A-Za-z_][A-Za-z0-9_]*|\\bc\\.[A-Za-z_][A-Za-z0-9_.]*\\b|->|${keywords.map((k) => `\\b${k}\\b`).join('|')})`, 'g'),
     highlightToken
   );
   return `${highlightedCode}${comment ? highlightToken(comment) : ''}`;

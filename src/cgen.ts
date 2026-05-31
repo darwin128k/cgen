@@ -1162,12 +1162,7 @@ function inferStructMethodReturnTargets(
 
 function inferReturnedSelfField(fn: FnNode): string | undefined {
   if (fn.body.length !== 1) { return undefined; }
-  const expression = parseCallExpression(fn.body[0].replace(/^use\s+/, '').trim(), fn.line);
-  if (!expression || expression.callee !== 'c.ret' || expression.args.length !== 1) {
-    return undefined;
-  }
-
-  return expression.args[0].match(/^self\.([A-Za-z_][A-Za-z0-9_]*)$/)?.[1];
+  return fn.body[0].match(/^return\s+self\.([A-Za-z_][A-Za-z0-9_]*)$/)?.[1];
 }
 
 function getStructFields(struct: StructNode, paramTemplates: Map<string, TemplateNode>): TemplateField[] {
@@ -1192,17 +1187,20 @@ function renderFnBodyLine(
     return `  ${line.match(/^use\s+raw\.of\("(.*)"\)$/)![1]}`;
   }
 
+  if (/^return\s+/.test(line)) {
+    const expr = renderFnExpression(line.slice('return '.length).trim(), methodSelfPointer);
+    const expanded = expandTemplateArgument(expr, fnLine, templateSymbols, new Set());
+    return `  return ${expanded};`;
+  }
+
   if (/^use\s+/.test(line)) {
     const expression = parseUseExpression(renderFnExpression(line, methodSelfPointer), fnLine);
     const args = expression.args.map((arg) => expandTemplateArgument(arg, fnLine, templateSymbols, new Set()));
     const expanded = applyTemplateSymbol(expression.callee, args, fnLine, templateSymbols);
-    if (expression.callee === 'c.ret') {
-      return `  return ${expanded};`;
-    }
     return `  ${expanded};`;
   }
 
-  throw new Error(`Line ${fnLine}: function bodies only support \`use c.ret(...)\` and \`use raw.of("...")\``);
+  throw new Error(`Line ${fnLine}: function bodies only support \`return expr\` and \`use raw.of("...")\``);
 }
 
 function renderFnExpression(expr: string, methodSelfPointer: boolean): string {

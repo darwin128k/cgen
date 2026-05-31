@@ -114,7 +114,7 @@
     }
   },
   "scripts": {
-    "compile": "tsc -p ./ && npm run build:webview",
+    "compile": "node scripts/generate-grammar.js && tsc -p ./ && npm run build:webview",
     "build:webview": "esbuild media/src/dslEditor.ts --bundle --outfile=media/dslEditor.js --format=iife --target=es2020",
     "package": "vsce package --allow-missing-repository --out releases/cgen-vscode-${npm_package_version}.vsix",
     "watch": "tsc -watch -p ./",

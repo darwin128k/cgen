@@ -237,6 +237,38 @@ const lh_bool_t lh_bool_false = 0;
 const lh_bool_t lh_bool_true  = 1;
 ```
 
+## Functions
+
+`fn` declarations generate C functions. They are placed inside a `struct` to act as methods, or at module level as standalone functions.
+
+```cgen
+struct point:
+    field x as c.int
+    field y as c.int
+
+    fn get_x(self as my.point) -> any:
+        return self.x
+```
+
+Function bodies support two statement forms:
+
+| DSL                    | C output         |
+|------------------------|------------------|
+| `return expr`          | `return expr;`   |
+| `use raw.of("...")`    | literal C line   |
+
+`expr` in a `return` statement may be a plain identifier, a field access (`self.field`), or a built-in template call such as `c.cast(type, val)` — it is expanded the same way as a template argument.
+
+When a struct method has `-> any` as its return type and a single `return self.field` body, the type is inferred from the field's declared type.
+
+### Emit targets
+
+| Attribute       | Effect |
+|-----------------|--------|
+| `@emit(header)` | Declaration only (default when no body) |
+| `@emit(source)` | Definition only |
+| `@emit(both)`   | Both header declaration and source definition (default when body present) |
+
 ## Templates
 
 Templates generate function-like macros (`#define`). The body must be a single
@@ -323,7 +355,6 @@ Operands that are themselves macro calls are passed through without extra wrappi
 
 | DSL                         | C output              |
 |-----------------------------|-----------------------|
-| `use c.ret(expr)`           | `expr`                |
 | `use c.cast(type, expr)`    | `((type)expr)`        |
 | `use c.call(fn, arg, ...)`  | `fn(arg, ...)`        |
 | `use c.struct.of(type)`     | `struct type`         |
