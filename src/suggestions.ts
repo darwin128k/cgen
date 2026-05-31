@@ -49,6 +49,7 @@ interface CurrentTemplate {
   excludeNames: string[];
   insideStruct: boolean;
   insideTemplate: boolean;
+  insideFn: boolean;
 }
 
 const builtinTemplates = [
@@ -188,6 +189,7 @@ function findCurrentTemplate(textBeforeLine: string, currentIndent?: number): Cu
   const sectionStack: Array<{ indent: number; path: string[] }> = [{ indent: -1, path: [] }];
   let currentTemplate: { indent: number; name: string; path: string[]; params: string[]; callableParams: string[] } | undefined;
   let currentStruct: { indent: number } | undefined;
+  let currentFn: { indent: number } | undefined;
 
   for (const rawLine of expandInlineDsl(textBeforeLine).split(/\r?\n/)) {
     const withoutComment = rawLine.replace(/#.*$/, '').trimEnd();
@@ -203,6 +205,9 @@ function findCurrentTemplate(textBeforeLine: string, currentIndent?: number): Cu
     if (currentStruct && indent <= currentStruct.indent) {
       currentStruct = undefined;
     }
+    if (currentFn && indent <= currentFn.indent) {
+      currentFn = undefined;
+    }
 
     while (sectionStack.length > 1 && indent <= sectionStack[sectionStack.length - 1].indent) {
       sectionStack.pop();
@@ -217,6 +222,11 @@ function findCurrentTemplate(textBeforeLine: string, currentIndent?: number): Cu
 
     if (/^struct\s+[A-Za-z_][A-Za-z0-9_]*\s*:\s*$/.test(line)) {
       currentStruct = { indent };
+      continue;
+    }
+
+    if (/^fn\s+[A-Za-z_][A-Za-z0-9_]*\([^)]*\)\s*(?:as\s+|->\s*).+:\s*$/.test(line)) {
+      currentFn = { indent };
       continue;
     }
 
@@ -262,9 +272,10 @@ function findCurrentTemplate(textBeforeLine: string, currentIndent?: number): Cu
   }
 
   const insideStruct = !!currentStruct && (currentIndent === undefined || currentIndent > currentStruct.indent);
+  const insideFn = !!currentFn && (currentIndent === undefined || currentIndent > currentFn.indent);
 
   if (!currentTemplate || (currentIndent !== undefined && currentIndent <= currentTemplate.indent)) {
-    return { params: [], callableParams: [], excludeNames: [], insideStruct, insideTemplate: false };
+    return { params: [], callableParams: [], excludeNames: [], insideStruct, insideTemplate: false, insideFn };
   }
 
   return {
@@ -272,7 +283,8 @@ function findCurrentTemplate(textBeforeLine: string, currentIndent?: number): Cu
     callableParams: currentTemplate.callableParams,
     excludeNames: [currentTemplate.name, makePublicPath(currentTemplate.path).join('.')],
     insideStruct,
-    insideTemplate: true
+    insideTemplate: true,
+    insideFn
   };
 }
 
@@ -363,6 +375,10 @@ function getCandidates(typed: string, contextPath: string[], currentTemplate: Cu
     return completeTail(typed, getTypeCandidates(typed, contextPath, index));
   }
 
+  if (/^return\s+/.test(typed)) {
+    return completeTail(typed, getTemplateUseCandidates(typed, contextPath, currentTemplate, index));
+  }
+
   if (/^use\s+/.test(typed)) {
     if (isCompleteUseExpression(typed)) {
       return [];
@@ -407,6 +423,10 @@ function getCandidates(typed: string, contextPath: string[], currentTemplate: Cu
 }
 
 function getContextSnippets(contextPath: string[], currentTemplate: CurrentTemplate, index: DslIndex): string[] {
+  if (currentTemplate.insideFn) {
+    return ['return ', 'use raw.of("")'];
+  }
+
   if (currentTemplate.insideStruct) {
     return ['field name -> type', 'use c.ptr(value)', 'fn name() -> type:'];
   }
