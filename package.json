@@ -4,6 +4,7 @@
   "description": "Small DSL editor and C header/source generator for VS Code.",
   "version": "0.0.76",
   "publisher": "local",
+  "license": "MIT",
   "engines": {
     "vscode": "^1.81.0"
   },
