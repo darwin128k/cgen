@@ -550,10 +550,11 @@ function selectCompletionItem(index: number): void {
     const itemBottom = activeItem.offsetTop + activeItem.offsetHeight + pad;
     const scrollTop = completionList.scrollTop;
     const scrollBottom = scrollTop + completionList.clientHeight;
+    const maxScrollTop = completionList.scrollHeight - completionList.clientHeight;
     if (itemTop < scrollTop) {
       completionList.scrollTop = Math.max(0, itemTop);
     } else if (itemBottom > scrollBottom) {
-      completionList.scrollTop = itemBottom - completionList.clientHeight;
+      completionList.scrollTop = Math.min(maxScrollTop, itemBottom - completionList.clientHeight);
     }
   }
   paintHighlight();
