@@ -274,6 +274,7 @@ button:hover {
 }
 
 #lineNumbers {
+  z-index: 4;
   width: var(--cgen-gutter-width);
   padding: var(--cgen-editor-top) 8px var(--cgen-editor-bottom) 0;
   overflow: hidden;
@@ -286,11 +287,13 @@ button:hover {
 }
 
 #highlight {
+  z-index: 2;
   padding: var(--cgen-editor-top) var(--cgen-editor-right) var(--cgen-editor-bottom) var(--cgen-editor-left);
   pointer-events: none;
 }
 
 #suggestion {
+  z-index: 3;
   padding: var(--cgen-editor-top) var(--cgen-editor-right) var(--cgen-editor-bottom) var(--cgen-editor-left);
   color: transparent;
   pointer-events: none;
@@ -460,6 +463,7 @@ body.vscode-high-contrast-light .ci-method {
 }
 
 #source {
+  z-index: 5;
   padding: var(--cgen-editor-top) var(--cgen-editor-right) var(--cgen-editor-bottom) var(--cgen-editor-left);
   resize: none;
   color: transparent;
@@ -467,11 +471,21 @@ body.vscode-high-contrast-light .ci-method {
   caret-color: var(--vscode-editorCursor-foreground);
 }
 
+.editor.has-selection #highlight,
+.editor.has-selection #suggestion {
+  visibility: hidden;
+}
+
+.editor.has-selection #source {
+  color: var(--vscode-editor-foreground);
+}
+
 .editor.has-nav-hover #source {
   cursor: pointer;
 }
 
 #source::selection {
+  color: var(--vscode-editor-foreground);
   background: var(--vscode-editor-selectionBackground);
 }
 
