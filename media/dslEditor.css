@@ -60,6 +60,25 @@ body.vscode-high-contrast-light {
   --cgen-comment: var(--vscode-descriptionForeground, #6a9955);
 }
 
+body.vscode-light {
+  --cgen-stripe-odd: color-mix(in srgb, var(--vscode-editor-background) 97%, #000 3%);
+  --cgen-stripe-even: color-mix(in srgb, var(--vscode-editor-background) 99%, #000 1%);
+  --cgen-active-line: color-mix(in srgb, var(--vscode-editor-background) 88%, var(--vscode-focusBorder, var(--vscode-editorCursor-foreground, #007acc)) 12%);
+}
+
+body.vscode-dark,
+body.vscode-high-contrast {
+  --cgen-stripe-odd: color-mix(in srgb, var(--vscode-editor-background) 97%, #fff 3%);
+  --cgen-stripe-even: color-mix(in srgb, var(--vscode-editor-background) 99%, #fff 1%);
+  --cgen-active-line: color-mix(in srgb, var(--vscode-editor-background) 84%, var(--vscode-focusBorder, var(--vscode-editorCursor-foreground, #007acc)) 16%);
+}
+
+body.vscode-high-contrast-light {
+  --cgen-stripe-odd: color-mix(in srgb, var(--vscode-editor-background) 98%, #000 2%);
+  --cgen-stripe-even: color-mix(in srgb, var(--vscode-editor-background) 99%, #000 1%);
+  --cgen-active-line: color-mix(in srgb, var(--vscode-editor-background) 90%, var(--vscode-focusBorder, var(--vscode-editorCursor-foreground, #007acc)) 10%);
+}
+
 body.expanded .shell {
   inset: 0;
   border: none;
@@ -245,11 +264,11 @@ button:hover {
 }
 
 .stripe-line:nth-child(odd) {
-  background: color-mix(in srgb, var(--vscode-editor-background) 94%, var(--vscode-editor-foreground) 6%);
+  background: var(--cgen-stripe-odd, color-mix(in srgb, var(--vscode-editor-background) 97%, var(--vscode-editor-foreground) 3%));
 }
 
 .stripe-line:nth-child(even) {
-  background: color-mix(in srgb, var(--vscode-editor-background) 98%, var(--vscode-editor-foreground) 2%);
+  background: var(--cgen-stripe-even, color-mix(in srgb, var(--vscode-editor-background) 99%, var(--vscode-editor-foreground) 1%));
 }
 
 #activeLine {
@@ -288,7 +307,7 @@ button:hover {
 
 .stripe-line.is-active::after {
   border-left: 3px solid var(--vscode-focusBorder, var(--vscode-editorCursor-foreground));
-  background: color-mix(in srgb, var(--vscode-editorLineHighlightBackground, var(--vscode-list-activeSelectionBackground, var(--vscode-focusBorder, #007acc))) 26%, transparent);
+  background: var(--cgen-active-line, var(--vscode-editorLineHighlightBackground));
 }
 
 .stripe-line.has-error::before {
