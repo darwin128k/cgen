@@ -36,6 +36,28 @@ body {
   background: transparent;
   color: var(--vscode-editor-foreground);
   font-family: var(--vscode-font-family);
+  --cgen-keyword: #af00db;
+  --cgen-attribute: #795e26;
+  --cgen-builtin: #267f99;
+  --cgen-bracket: #0000ff;
+  --cgen-comment: #008000;
+}
+
+body.vscode-dark {
+  --cgen-keyword: #c586c0;
+  --cgen-attribute: #dcdcaa;
+  --cgen-builtin: #4ec9b0;
+  --cgen-bracket: #ffd700;
+  --cgen-comment: #6a9955;
+}
+
+body.vscode-high-contrast,
+body.vscode-high-contrast-light {
+  --cgen-keyword: var(--vscode-symbolIcon-keywordForeground, #b180d7);
+  --cgen-attribute: var(--vscode-symbolIcon-propertyForeground, #dcdcaa);
+  --cgen-builtin: var(--vscode-symbolIcon-structForeground, #4ec9b0);
+  --cgen-bracket: var(--vscode-editorBracketHighlight-foreground1, #ffd700);
+  --cgen-comment: var(--vscode-descriptionForeground, #6a9955);
 }
 
 body.expanded .shell {
@@ -506,21 +528,21 @@ body.vscode-high-contrast-light .ci-method {
 }
 
 .kw {
-  color: var(--vscode-symbolIcon-keywordForeground);
+  color: var(--cgen-keyword);
 }
 
 .attr {
-  color: var(--vscode-symbolIcon-propertyForeground, var(--vscode-symbolIcon-variableForeground));
+  color: var(--cgen-attribute);
 }
 
 .builtin {
-  color: var(--vscode-symbolIcon-structForeground, var(--vscode-symbolIcon-classForeground));
+  color: var(--cgen-builtin);
 }
 
 .bracket {
-  color: var(--vscode-editorBracketHighlight-foreground1, var(--vscode-symbolIcon-operatorForeground, #d16969));
+  color: var(--vscode-editorBracketHighlight-foreground1, var(--cgen-bracket));
 }
 
 .comment {
-  color: var(--vscode-editorLineNumber-foreground);
+  color: var(--cgen-comment);
 }
