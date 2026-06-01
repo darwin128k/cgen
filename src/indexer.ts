@@ -1,6 +1,7 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
 import initSqlJs, { Database, SqlJsStatic } from 'sql.js';
+import { formatCgen } from './formatter';
 import { parseDsl, makePublicPath, type SectionKind, type SectionNode } from './parser';
 
 type SymbolKind = 'alias' | 'enum' | 'template' | 'struct' | 'fn';
@@ -338,7 +339,7 @@ function extractRecords(text: string, sourcePath: string): { sections: SectionRe
   const sections: SectionRecord[] = [];
   const symbols: SymbolRecord[] = [];
 
-  const { root } = parseDsl(text);
+  const { root } = parseDsl(formatCgen(text));
 
   function walkSection(node: SectionNode, pathParts: string[]): void {
     if (node.kind !== 'root') {

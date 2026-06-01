@@ -1,5 +1,6 @@
 import { SnippetEngine } from './snippetEngine';
 import { LineAttachmentController } from './lineAttachments';
+import { formatCgenWithCursor } from '../../src/formatter';
 import keywords from '../../src/keywords.json';
 
 declare function acquireVsCodeApi(): { postMessage(data: unknown): void };
@@ -36,6 +37,10 @@ let completionCandidates: string[] = [];
 let completionInsertTexts: string[] = [];
 let completionCandidateKinds: string[] = [];
 let completionIndex = 0;
+let formatPolicy = {
+  formatOnSave: false,
+  formatOnPaste: false
+};
 
 const completionList = document.createElement('div');
 completionList.id = 'completionList';
@@ -58,6 +63,8 @@ const localSuggestionCandidates = [
   '@enum(static)',
   '@enum(define)',
   '@enum(extern)',
+  '@template(inline)',
+  '@template(inline, define)',
   '@template(mutable)',
   'package name:',
   'module name:',
@@ -100,6 +107,10 @@ function highlightToken(token: string): string {
     return `<span class="kw">${escapeHtml(token)}</span>`;
   }
 
+  if (/^[()[\]{}]$/.test(token)) {
+    return `<span class="bracket">${escapeHtml(token)}</span>`;
+  }
+
   if (/^c\./.test(token)) {
     return `<span class="builtin">${escapeHtml(token)}</span>`;
   }
@@ -112,7 +123,7 @@ function highlightLine(line: string): string {
   const rawCode = commentIndex === -1 ? line : line.slice(0, commentIndex);
   const comment = commentIndex === -1 ? '' : line.slice(commentIndex);
   const highlightedCode = escapeHtml(rawCode).replace(
-    new RegExp(`(@[A-Za-z_][A-Za-z0-9_]*|\\bc\\.[A-Za-z_][A-Za-z0-9_.]*\\b|->|${keywords.map((k) => `\\b${k}\\b`).join('|')})`, 'g'),
+    new RegExp(`(@[A-Za-z_][A-Za-z0-9_]*|\\bc\\.[A-Za-z_][A-Za-z0-9_.]*\\b|->|[()[\\]{}]|${keywords.map((k) => `\\b${k}\\b`).join('|')})`, 'g'),
     highlightToken
   );
   return `${highlightedCode}${comment ? highlightToken(comment) : ''}`;
@@ -261,6 +272,19 @@ function renderStripeMarkers(): void {
 function generateNow(): void {
   clearDiagnosticLines();
   vscode.postMessage({ type: 'generate', text: source.value });
+}
+
+function applyFormattedSource(text = source.value): void {
+  const edit = formatCgenWithCursor(text, source.selectionStart);
+  if (edit.text === source.value) {
+    return;
+  }
+  source.value = edit.text;
+  source.selectionStart = edit.cursor;
+  source.selectionEnd = edit.cursor;
+  clearSuggestion();
+  paint();
+  queueChangeMessage();
 }
 
 function queueChangeMessage(): void {
@@ -792,6 +816,12 @@ source.addEventListener('input', () => {
   requestSuggestion();
   queueChangeMessage();
 });
+source.addEventListener('paste', () => {
+  if (!formatPolicy.formatOnPaste) {
+    return;
+  }
+  setTimeout(() => applyFormattedSource(), 0);
+});
 source.addEventListener('click', (event) => {
   if ((event.ctrlKey || event.metaKey) && goToDeclaration()) {
     return;
@@ -931,7 +961,12 @@ window.addEventListener('keyup', (event) => {
 });
 window.addEventListener('blur', clearNavigationHover);
 generate.addEventListener('click', generateNow);
-save.addEventListener('click', () => vscode.postMessage({ type: 'save', text: source.value }));
+save.addEventListener('click', () => {
+  if (formatPolicy.formatOnSave) {
+    applyFormattedSource();
+  }
+  vscode.postMessage({ type: 'save', text: source.value });
+});
 load.addEventListener('click', () => vscode.postMessage({ type: 'load' }));
 const filename = document.getElementById('filename')!;
 const breadcrumb = document.getElementById('breadcrumb')!;
@@ -943,6 +978,15 @@ window.addEventListener('message', (event: MessageEvent) => {
     paint();
     source.focus();
     requestSuggestion();
+  }
+  if (event.data.type === 'format') {
+    applyFormattedSource(event.data.text || source.value);
+  }
+  if (event.data.type === 'formatPolicy') {
+    formatPolicy = {
+      formatOnSave: !!event.data.policy?.formatOnSave,
+      formatOnPaste: !!event.data.policy?.formatOnPaste
+    };
   }
   if (event.data.type === 'title') {
     filename.textContent = ` — ${event.data.text}`;

@@ -1,11 +1,17 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { generateDsl } from './cgen';
+import { formatCgen } from './formatter';
 import { CgenProjectIndex } from './indexer';
 import { createDslSuggestion } from './suggestions';
 
 let saveEditorFn: (() => Promise<void>) | undefined;
 let projectIndexPromise: Promise<CgenProjectIndex | undefined> | undefined;
+
+interface FormatPolicy {
+  formatOnSave: boolean;
+  formatOnPaste: boolean;
+}
 
 export function activate(context: vscode.ExtensionContext) {
   projectIndexPromise = initializeProjectIndex(context);
@@ -13,7 +19,13 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('cgen.openDslEditor', () => openDslEditor(context)),
     vscode.commands.registerCommand('cgen.saveEditor', () => saveEditorFn?.()),
     vscode.commands.registerCommand('cgen.openScratchFile', openScratchFile),
-    vscode.commands.registerCommand('cgen.generateFromFile', () => generateFromCurrentFile(context))
+    vscode.commands.registerCommand('cgen.generateFromFile', () => generateFromCurrentFile(context)),
+    vscode.languages.registerDocumentFormattingEditProvider('cgen', {
+      provideDocumentFormattingEdits(document) {
+        const formatted = formatCgen(document.getText());
+        return [vscode.TextEdit.replace(fullDocumentRange(document), formatted)];
+      }
+    })
   );
 }
 
@@ -81,9 +93,18 @@ async function openDslEditor(context: vscode.ExtensionContext) {
 
   let currentContent = initialValue;
 
+  async function postFormatPolicy() {
+    await panel.webview.postMessage({ type: 'formatPolicy', policy: getFormatPolicy(currentFileUri() ?? scratchUri) });
+  }
+
+  function currentFileUri(): vscode.Uri | undefined {
+    return currentFilePath ? vscode.Uri.file(currentFilePath) : undefined;
+  }
+
   async function saveToFile() {
+    let targetUri = currentFileUri();
     if (currentFilePath) {
-      await vscode.workspace.fs.writeFile(vscode.Uri.file(currentFilePath), Buffer.from(currentContent, 'utf8'));
+      targetUri = vscode.Uri.file(currentFilePath);
     } else {
       const uri = await vscode.window.showSaveDialog({
         filters: { 'CGen DSL': ['cgen'] },
@@ -91,13 +112,24 @@ async function openDslEditor(context: vscode.ExtensionContext) {
       });
       if (uri) {
         currentFilePath = uri.fsPath;
-        await vscode.workspace.fs.writeFile(uri, Buffer.from(currentContent, 'utf8'));
+        targetUri = uri;
         const name = path.basename(uri.fsPath);
         panel.title = `CGen — ${name}`;
         await panel.webview.postMessage({ type: 'title', text: name });
+        await postFormatPolicy();
         await saveSession(0, 0);
       }
     }
+
+    if (!targetUri) {
+      return;
+    }
+
+    if (getFormatPolicy(targetUri).formatOnSave) {
+      currentContent = formatCgen(currentContent);
+      await panel.webview.postMessage({ type: 'format', text: currentContent });
+    }
+    await vscode.workspace.fs.writeFile(targetUri, Buffer.from(currentContent, 'utf8'));
   }
 
   async function saveSession(cursor: number, scrollTop: number) {
@@ -109,7 +141,16 @@ async function openDslEditor(context: vscode.ExtensionContext) {
   }
 
   saveEditorFn = saveToFile;
-  panel.onDidDispose(() => { saveEditorFn = undefined; });
+  const configDisposable = vscode.workspace.onDidChangeConfiguration((event) => {
+    if (event.affectsConfiguration('editor.formatOnSave') || event.affectsConfiguration('editor.formatOnPaste')) {
+      postFormatPolicy().catch(() => undefined);
+    }
+  });
+  panel.onDidDispose(() => {
+    saveEditorFn = undefined;
+    configDisposable.dispose();
+  });
+  await postFormatPolicy();
 
   panel.webview.onDidReceiveMessage(async (message: { type: string; text?: string; cursor?: number; scrollTop?: number; id?: number; line?: number; action?: string; data?: unknown }) => {
     if (message.type === 'expand') {
@@ -165,6 +206,7 @@ async function openDslEditor(context: vscode.ExtensionContext) {
         panel.title = `CGen — ${name}`;
         await panel.webview.postMessage({ type: 'load', text: currentContent });
         await panel.webview.postMessage({ type: 'title', text: name });
+        await postFormatPolicy();
         await saveSession(0, 0);
       }
       return;
@@ -181,6 +223,7 @@ async function openDslEditor(context: vscode.ExtensionContext) {
     }
 
     try {
+      currentContent = message.text;
       const files = await generateDsl(workspaceFolder, context.extensionUri, message.text);
       await panel.webview.postMessage({ type: 'error', lines: [] });
       vscode.window.showInformationMessage(`CGen generated ${files.length} file(s).`);
@@ -220,6 +263,18 @@ async function generateFromCurrentFile(context: vscode.ExtensionContext) {
 
 function isCgenDocument(document: vscode.TextDocument): boolean {
   return document.languageId === 'cgen' && document.uri.fsPath.toLowerCase().endsWith('.cgen');
+}
+
+function fullDocumentRange(document: vscode.TextDocument): vscode.Range {
+  return new vscode.Range(document.positionAt(0), document.positionAt(document.getText().length));
+}
+
+function getFormatPolicy(uri: vscode.Uri): FormatPolicy {
+  const config = vscode.workspace.getConfiguration('editor', { uri, languageId: 'cgen' });
+  return {
+    formatOnSave: config.get<boolean>('formatOnSave', false),
+    formatOnPaste: config.get<boolean>('formatOnPaste', false)
+  };
 }
 
 async function openScratchFile() {

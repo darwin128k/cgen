@@ -20,6 +20,7 @@ import {
   expandInlineDsl,
   createSection,
 } from './parser';
+import { formatCgen } from './formatter';
 
 const execFile = util.promisify(cp.execFile);
 
@@ -171,8 +172,9 @@ export async function generateDsl(workspaceFolder: vscode.WorkspaceFolder, exten
 }
 
 async function collectAllDslSources(workspaceFolder: vscode.WorkspaceFolder, extensionUri: vscode.Uri, primarySource: string): Promise<string[]> {
-  const sources: string[] = [primarySource];
-  const seen = new Set<string>([primarySource]);
+  const primaryFormatted = formatCgen(primarySource);
+  const sources: string[] = [primaryFormatted];
+  const seen = new Set<string>([primaryFormatted]);
 
   const packagesUri = vscode.Uri.joinPath(extensionUri, 'packages');
   try {
@@ -182,7 +184,7 @@ async function collectAllDslSources(workspaceFolder: vscode.WorkspaceFolder, ext
         continue;
       }
       const bytes = await vscode.workspace.fs.readFile(vscode.Uri.joinPath(packagesUri, name));
-      const builtinSource = Buffer.from(bytes).toString('utf8');
+      const builtinSource = formatCgen(Buffer.from(bytes).toString('utf8'));
       if (!seen.has(builtinSource)) {
         seen.add(builtinSource);
         sources.push(builtinSource);
@@ -205,7 +207,7 @@ async function collectAllDslSources(workspaceFolder: vscode.WorkspaceFolder, ext
     }
 
     const bytes = await vscode.workspace.fs.readFile(uri);
-    const fileSource = Buffer.from(bytes).toString('utf8');
+    const fileSource = formatCgen(Buffer.from(bytes).toString('utf8'));
     if (!seen.has(fileSource)) {
       seen.add(fileSource);
       sources.push(fileSource);

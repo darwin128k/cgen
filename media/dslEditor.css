@@ -487,6 +487,10 @@ body.vscode-high-contrast-light .ci-method {
   color: var(--vscode-symbolIcon-structForeground, var(--vscode-symbolIcon-classForeground));
 }
 
+.bracket {
+  color: var(--vscode-editorBracketHighlight-foreground1, var(--vscode-symbolIcon-operatorForeground, #d16969));
+}
+
 .comment {
   color: var(--vscode-editorLineNumber-foreground);
 }

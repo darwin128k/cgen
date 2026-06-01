@@ -226,7 +226,7 @@ function findCurrentTemplate(textBeforeLine: string, currentIndent?: number): Cu
       continue;
     }
 
-    if (/^fn\s+[A-Za-z_][A-Za-z0-9_]*\([^)]*\)\s*(?:as\s+|->\s*).+:\s*$/.test(line)) {
+    if (/^(?:mut\s+)?fn\s+[A-Za-z_][A-Za-z0-9_]*\([^)]*\)\s*(?:as\s+|->\s*).+:\s*$/.test(line)) {
       currentFn = { indent };
       continue;
     }
@@ -404,11 +404,11 @@ function getCandidates(typed: string, contextPath: string[], currentTemplate: Cu
     return getInlineParamCandidates(typed);
   }
 
-  if (/^fn\s+[A-Za-z_][A-Za-z0-9_]*\([^)]*\)\s*(?:as\s+|->\s*)/.test(typed)) {
+  if (/^(?:mut\s+)?fn\s+[A-Za-z_][A-Za-z0-9_]*\([^)]*\)\s*(?:as\s+|->\s*)/.test(typed)) {
     return completeTail(typed, getTypeCandidates(typed, contextPath, index));
   }
 
-  if (/^fn\s+[A-Za-z_][A-Za-z0-9_]*\(/.test(typed)) {
+  if (/^(?:mut\s+)?fn\s+[A-Za-z_][A-Za-z0-9_]*\(/.test(typed)) {
     return getInlineFnParamCandidates(typed, contextPath, index);
   }
 
