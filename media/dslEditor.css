@@ -552,8 +552,8 @@ button:hover {
 }
 
 .completion-item.active .completion-icon-col {
-  color: var(--vscode-editorSuggestWidget-selectedBackground, var(--vscode-list-activeSelectionBackground));
-  background: var(--completion-icon-active-color);
+  color: var(--vscode-editor-background, #1e1e1e);
+  background: var(--completion-icon-color);
 }
 
 body.vscode-high-contrast-light .completion-list {

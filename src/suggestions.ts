@@ -233,7 +233,7 @@ function findCurrentTemplate(textBeforeLine: string, currentIndent?: number): Cu
       continue;
     }
 
-    if (/^(?:mut\s+)?fn\s+[A-Za-z_][A-Za-z0-9_]*\([^)]*\)\s*(?:as\s+|->\s*).+:\s*$/.test(line)) {
+    if (/^(?:mut\s+)?fn\s+[A-Za-z_][A-Za-z0-9_]*\([^)]*\)\s*(?:(?:as\s+|->\s*).+)?\s*:\s*$/.test(line)) {
       currentFn = { indent };
       continue;
     }
@@ -420,6 +420,10 @@ function getCandidates(typed: string, contextPath: string[], currentTemplate: Cu
     return attrSnippets;
   }
 
+  if (currentTemplate.insideFn && /^(alias|enum|struct|template|(?:mut\s+)?fn|(?:mut\s+)?field|param|case)\b/.test(typed)) {
+    return [];
+  }
+
   if (/^alias\s+\S+(?:\s+as\s+|\s+->\s*)/.test(typed)) {
     return completeTail(typed, getTypeCandidates(typed, contextPath, index));
   }
@@ -515,6 +519,10 @@ function getContextSnippets(contextPath: string[], currentTemplate: CurrentTempl
 }
 
 function getDeclarationSnippetsForContext(contextPath: string[], currentTemplate: CurrentTemplate, index: DslIndex): string[] {
+  if (currentTemplate.insideFn) {
+    return ['return ', 'use c.expr("")'];
+  }
+
   if (currentTemplate.insideStruct) {
     return ['field name -> type', 'mut field name -> type', 'fn name() -> type:', 'mut fn name() -> type:'];
   }
@@ -887,8 +895,8 @@ function resolveKindForCandidate(candidate: string, index: DslIndex): string {
   if (/^enum\b/.test(candidate)) return 'enum';
   if (/^struct\b/.test(candidate)) return 'struct';
   if (/^template\b/.test(candidate)) return 'template';
-  if (/^fn\b/.test(candidate)) return 'fn';
-  if (/^field\b/.test(candidate)) return 'field';
+  if (/^(?:mut\s+)?fn\b/.test(candidate)) return 'fn';
+  if (/^(?:mut\s+)?field\b/.test(candidate)) return 'field';
   if (/^param\b/.test(candidate)) return 'param';
   if (/^(use|case|name|\.\.\.)/.test(candidate)) return 'keyword';
 
