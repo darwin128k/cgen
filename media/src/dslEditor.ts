@@ -26,14 +26,20 @@ const generate = document.getElementById('generate')!;
 const save = document.getElementById('save')!;
 const load = document.getElementById('load')!;
 const expand = document.getElementById('expand')!;
+const progressBar = document.getElementById('progressBar')!;
 let autoSaveTimer: ReturnType<typeof setTimeout> | undefined;
 let suggestTimer: ReturnType<typeof setTimeout> | undefined;
 let suggestRequestId = 0;
 let suggestionInsertText = '';
 let suggestionReplaceLeft = 0;
 let popupAllowed = false;
+let isDeletingKey = false;
 const snippetEngine = new SnippetEngine();
 let navHoverRange: { start: number; end: number } | undefined;
+let stripeActiveLineIndex = -1;
+let stripeHasSelection = false;
+let stripeErrorCount = -1;
+let scheduledPaintId: number | undefined;
 let completionCandidates: string[] = [];
 let completionInsertTexts: string[] = [];
 let completionCandidateKinds: string[] = [];
@@ -61,6 +67,13 @@ let characterWidth: number | undefined;
 let diagnosticLines: number[] = [];
 let activeLineIndex = 0;
 const indentText = '    ';
+const highlightRegex = new RegExp(
+  `(@[A-Za-z_][A-Za-z0-9_]*|\\bc\\.[A-Za-z_][A-Za-z0-9_.]*\\b|->|[()[\\]{}]|${keywords.map((k) => `\\b${k}\\b`).join('|')})`,
+  'g'
+);
+let lineSpans: HTMLSpanElement[] = [];
+let cachedLineHTMLs: string[] = [];
+let cachedRawLines: string[] = [];
 let stripeCount = 0;
 
 function escapeHtml(value: string): string {
@@ -98,10 +111,8 @@ function highlightLine(line: string): string {
   const commentIndex = line.indexOf('#');
   const rawCode = commentIndex === -1 ? line : line.slice(0, commentIndex);
   const comment = commentIndex === -1 ? '' : line.slice(commentIndex);
-  const highlightedCode = escapeHtml(rawCode).replace(
-    new RegExp(`(@[A-Za-z_][A-Za-z0-9_]*|\\bc\\.[A-Za-z_][A-Za-z0-9_.]*\\b|->|[()[\\]{}]|${keywords.map((k) => `\\b${k}\\b`).join('|')})`, 'g'),
-    highlightToken
-  );
+  highlightRegex.lastIndex = 0;
+  const highlightedCode = escapeHtml(rawCode).replace(highlightRegex, highlightToken);
   return `${highlightedCode}${comment ? highlightToken(comment) : ''}`;
 }
 
@@ -201,6 +212,15 @@ function paint(): void {
   requestAnimationFrame(syncScroll);
 }
 
+function schedulePaint(): void {
+  if (scheduledPaintId === undefined) {
+    scheduledPaintId = requestAnimationFrame(() => {
+      scheduledPaintId = undefined;
+      paint();
+    });
+  }
+}
+
 function renderLineNumbers(lineCount: number): string {
   return Array.from({ length: lineCount }, (_, index) => {
     const active = index === activeLineIndex ? ' active' : '';
@@ -269,13 +289,20 @@ function renderErrorLines(): void {
 }
 
 function renderStripeMarkers(): void {
+  const hasSelection = source.selectionStart !== source.selectionEnd;
+  if (activeLineIndex === stripeActiveLineIndex && hasSelection === stripeHasSelection && diagnosticLines.length === stripeErrorCount) {
+    return;
+  }
+  stripeActiveLineIndex = activeLineIndex;
+  stripeHasSelection = hasSelection;
+  stripeErrorCount = diagnosticLines.length;
+
   const stripeLines = document.getElementById('stripeContent')?.children;
   if (!stripeLines) {
     return;
   }
 
   const errorLineIndexes = new Set(diagnosticLines.map((line) => line - 1));
-  const hasSelection = source.selectionStart !== source.selectionEnd;
   Array.from(stripeLines).forEach((line, index) => {
     line.classList.toggle('is-active', !hasSelection && index === activeLineIndex);
     line.classList.toggle('has-error', errorLineIndexes.has(index));
@@ -386,7 +413,7 @@ function clearSuggestion(): void {
   completionContextKey = '';
   completionPrefix = '';
   completionList.hidden = true;
-  if (hadSuggestion) {
+  if (hadSuggestion && scheduledPaintId === undefined) {
     paintHighlight();
   }
 }
@@ -514,17 +541,107 @@ function selectCompletionItem(index: number): void {
 function paintHighlight(): void {
   const lines = source.value.split('\n');
   const hasSelection = source.selectionStart !== source.selectionEnd;
-  const hasGhost = suggestionInsertText && source.selectionStart === source.selectionEnd;
+  const hasGhost = !!(suggestionInsertText && source.selectionStart === source.selectionEnd);
+
+  if (!hasSelection && !navHoverRange && !hasGhost && !snippetEngine.active) {
+    applyIncrementalHighlight(lines);
+    return;
+  }
+
   const highlighted = hasSelection
     ? highlightLinesWithSelection(lines)
     : navHoverRange
     ? highlightNavigationRange(lines)
     : hasGhost
       ? highlightLinesWithGhost(lines)
-      : snippetEngine.active
-        ? snippetEngine.highlightTabStops(lines, source.selectionEnd, source.value, highlightLine, escapeHtml)
-        : lines.map(highlightLine).join('\n');
+      : snippetEngine.highlightTabStops(lines, source.selectionEnd, source.value, highlightLine, escapeHtml);
   highlight.innerHTML = `${highlighted || ' '}${scrollTail()}`;
+  lineSpans = [];
+  cachedLineHTMLs = [];
+  cachedRawLines = [];
+}
+
+function applyIncrementalHighlight(lines: string[]): void {
+  if (lineSpans.length === 0) {
+    fullRebuildHighlight(lines);
+    return;
+  }
+
+  const newCount = lines.length;
+  const oldCount = lineSpans.length;
+
+  let lo = 0;
+  const minLen = Math.min(newCount, oldCount);
+  while (lo < minLen && lines[lo] === cachedRawLines[lo]) { lo++; }
+
+  if (lo === newCount && lo === oldCount) { return; }
+
+  const delta = newCount - oldCount;
+
+  if (Math.abs(delta) <= 8) {
+    let hiNew = newCount;
+    let hiOld = oldCount;
+    while (hiNew > lo && hiOld > lo && lines[hiNew - 1] === cachedRawLines[hiOld - 1]) {
+      hiNew--;
+      hiOld--;
+    }
+
+    for (let i = hiOld - 1; i >= lo; i--) { lineSpans[i].remove(); }
+    lineSpans.splice(lo, hiOld - lo);
+    cachedRawLines.splice(lo, hiOld - lo);
+    cachedLineHTMLs.splice(lo, hiOld - lo);
+
+    const anchor = lineSpans[lo] ?? highlight.lastChild!;
+    const newSpans: HTMLSpanElement[] = [];
+    const newRaws: string[] = [];
+    const newHTMLs: string[] = [];
+    for (let i = lo; i < hiNew; i++) {
+      const html = highlightLine(lines[i]);
+      const span = document.createElement('span');
+      span.className = 'hl-line';
+      span.innerHTML = html;
+      highlight.insertBefore(span, anchor);
+      newSpans.push(span);
+      newRaws.push(lines[i]);
+      newHTMLs.push(html);
+    }
+    lineSpans.splice(lo, 0, ...newSpans);
+    cachedRawLines.splice(lo, 0, ...newRaws);
+    cachedLineHTMLs.splice(lo, 0, ...newHTMLs);
+    return;
+  }
+
+  fullRebuildHighlight(lines);
+}
+
+function fullRebuildHighlight(lines: string[]): void {
+  highlight.innerHTML = '';
+  lineSpans = [];
+  cachedRawLines = [];
+  cachedLineHTMLs = [];
+  const fragment = document.createDocumentFragment();
+  for (const line of lines) {
+    const html = highlightLine(line);
+    const span = document.createElement('span');
+    span.className = 'hl-line';
+    span.innerHTML = html;
+    lineSpans.push(span);
+    cachedRawLines.push(line);
+    cachedLineHTMLs.push(html);
+    fragment.appendChild(span);
+  }
+  const tail = document.createElement('span');
+  tail.className = 'scroll-tail';
+  tail.setAttribute('aria-hidden', 'true');
+  fragment.appendChild(tail);
+  highlight.appendChild(fragment);
+}
+
+function createScrollTailNode(): HTMLSpanElement {
+  const tail = document.createElement('span');
+  tail.className = 'scroll-tail';
+  tail.setAttribute('aria-hidden', 'true');
+  return tail;
 }
 
 function renderSuggestion(): void {
@@ -545,7 +662,7 @@ function requestSuggestion(): void {
     return;
   }
 
-  suggestionInsertText = popupAllowed ? getLocalSuggestion() : '';
+  suggestionInsertText = (!isDeletingKey && popupAllowed) ? getLocalSuggestion() : '';
   renderSuggestion();
 
   suggestTimer = setTimeout(() => {
@@ -634,7 +751,7 @@ function replaceSelection(text: string, cursorOffset?: number, selection?: { sta
   source.selectionStart = start + (selection?.start ?? cursor - start);
   source.selectionEnd = start + (selection?.end ?? cursor - start);
   clearSuggestion();
-  paint();
+  schedulePaint();
   updateSelectionMode();
   queueChangeMessage();
 }
@@ -676,7 +793,7 @@ function indentSelection(): void {
   source.value = `${before}${indented}${after}`;
   source.selectionStart = selectionStart + indentText.length;
   source.selectionEnd = selectionEnd + (indented.length - selected.length);
-  paint();
+  schedulePaint();
   queueChangeMessage();
 }
 
@@ -703,7 +820,7 @@ function outdentSelection(): void {
   source.value = `${before}${outdented}${after}`;
   source.selectionStart = Math.max(range.start, selectionStart - removedBeforeSelection);
   source.selectionEnd = Math.max(source.selectionStart, selectionEnd - removedTotal);
-  paint();
+  schedulePaint();
   queueChangeMessage();
 }
 
@@ -884,7 +1001,7 @@ function smartBackspace(): boolean {
   source.value = `${source.value.slice(0, lineStart + targetIndent)}${source.value.slice(cursor)}`;
   source.selectionStart = lineStart + targetIndent;
   source.selectionEnd = lineStart + targetIndent;
-  paint();
+  schedulePaint();
   queueChangeMessage();
   return true;
 }
@@ -892,7 +1009,7 @@ function smartBackspace(): boolean {
 source.addEventListener('input', () => {
   clearDiagnosticLines();
   clearSuggestion();
-  paint();
+  schedulePaint();
   popupAllowed = true;
   requestSuggestion();
   queueChangeMessage();
@@ -931,6 +1048,9 @@ source.addEventListener('keyup', (event) => {
   if (!completionList.hidden && (event.key === 'ArrowDown' || event.key === 'ArrowUp')) {
     return;
   }
+  if (event.key === 'Backspace' || event.key === 'Delete') {
+    isDeletingKey = false;
+  }
   requestSuggestion();
 });
 source.addEventListener('select', () => {
@@ -943,11 +1063,14 @@ document.addEventListener('selectionchange', () => {
   if (document.activeElement === source) {
     updateSelectionMode();
     updateActiveLine();
-    renderStripeMarkers();
   }
 });
 source.addEventListener('scroll', syncScroll);
 source.addEventListener('keydown', (event) => {
+  if (event.key === 'Backspace' || event.key === 'Delete') {
+    isDeletingKey = true;
+  }
+
   if ((event.ctrlKey || event.metaKey) && (event.key === 'Enter' || event.code === 'NumpadEnter')) {
     event.preventDefault();
     generateNow();
@@ -1073,6 +1196,9 @@ window.addEventListener('message', (event: MessageEvent) => {
   }
   if (event.data.type === 'title') {
     filename.textContent = ` — ${event.data.text}`;
+  }
+  if (event.data.type === 'progress') {
+    progressBar.classList.toggle('active', !!event.data.active);
   }
   if (event.data.type === 'lineAttachments') {
     lineAttachments.set(event.data.attachments);

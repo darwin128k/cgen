@@ -82,6 +82,16 @@ export class CgenProjectIndex {
   private watcher: vscode.FileSystemWatcher | undefined;
   private saveTimer: NodeJS.Timeout | undefined;
   private readonly dbUri: vscode.Uri;
+  private busyCount = 0;
+  onBusyChange?: (active: boolean) => void;
+
+  private beginWork(): void {
+    if (++this.busyCount === 1) { this.onBusyChange?.(true); }
+  }
+
+  private endWork(): void {
+    if (--this.busyCount === 0) { this.onBusyChange?.(false); }
+  }
 
   private constructor(
     private readonly sql: SqlJsStatic,
@@ -197,21 +207,26 @@ export class CgenProjectIndex {
       return;
     }
 
-    const dir = vscode.Uri.joinPath(this.workspaceFolder.uri, '.cgen');
-    await vscode.workspace.fs.createDirectory(dir);
+    this.beginWork();
     try {
-      await vscode.workspace.fs.delete(this.dbUri);
-    } catch {
-      // Fresh projects do not have an index yet.
-    }
+      const dir = vscode.Uri.joinPath(this.workspaceFolder.uri, '.cgen');
+      await vscode.workspace.fs.createDirectory(dir);
+      try {
+        await vscode.workspace.fs.delete(this.dbUri);
+      } catch {
+        // Fresh projects do not have an index yet.
+      }
 
-    this.db = new this.sql.Database();
-    this.createSchema();
-    this.addHistory('startup_reindex', 'clean');
-    await this.indexBuiltinPackages();
-    await this.indexWorkspaceFiles();
-    await this.save();
-    this.startWatcher();
+      this.db = new this.sql.Database();
+      this.createSchema();
+      this.addHistory('startup_reindex', 'clean');
+      await this.indexBuiltinPackages();
+      await this.indexWorkspaceFiles();
+      await this.save();
+      this.startWatcher();
+    } finally {
+      this.endWork();
+    }
   }
 
   private async indexBuiltinPackages(): Promise<void> {
@@ -263,10 +278,15 @@ export class CgenProjectIndex {
       return;
     }
 
-    const bytes = await vscode.workspace.fs.readFile(uri);
-    this.replaceSource(this.relativePath(uri), Buffer.from(bytes).toString('utf8'));
-    this.addHistory('index_file', this.relativePath(uri));
-    this.queueSave();
+    this.beginWork();
+    try {
+      const bytes = await vscode.workspace.fs.readFile(uri);
+      this.replaceSource(this.relativePath(uri), Buffer.from(bytes).toString('utf8'));
+      this.addHistory('index_file', this.relativePath(uri));
+      this.queueSave();
+    } finally {
+      this.endWork();
+    }
   }
 
   private replaceSource(sourcePath: string, text: string): void {

@@ -7,6 +7,7 @@ import { createDslSuggestion } from './suggestions';
 
 let saveEditorFn: (() => Promise<void>) | undefined;
 let projectIndexPromise: Promise<CgenProjectIndex | undefined> | undefined;
+let postProgressMessage: ((active: boolean) => void) | undefined;
 
 interface FormatPolicy {
   formatOnSave: boolean;
@@ -102,34 +103,39 @@ async function openDslEditor(context: vscode.ExtensionContext) {
   }
 
   async function saveToFile() {
-    let targetUri = currentFileUri();
-    if (currentFilePath) {
-      targetUri = vscode.Uri.file(currentFilePath);
-    } else {
-      const uri = await vscode.window.showSaveDialog({
-        filters: { 'CGen DSL': ['cgen'] },
-        defaultUri: vscode.Uri.joinPath(workspaceFolder!.uri, 'main.cgen')
-      });
-      if (uri) {
-        currentFilePath = uri.fsPath;
-        targetUri = uri;
-        const name = path.basename(uri.fsPath);
-        panel.title = `CGen — ${name}`;
-        await panel.webview.postMessage({ type: 'title', text: name });
-        await postFormatPolicy();
-        await saveSession(0, 0);
+    postProgressMessage?.(true);
+    try {
+      let targetUri = currentFileUri();
+      if (currentFilePath) {
+        targetUri = vscode.Uri.file(currentFilePath);
+      } else {
+        const uri = await vscode.window.showSaveDialog({
+          filters: { 'CGen DSL': ['cgen'] },
+          defaultUri: vscode.Uri.joinPath(workspaceFolder!.uri, 'main.cgen')
+        });
+        if (uri) {
+          currentFilePath = uri.fsPath;
+          targetUri = uri;
+          const name = path.basename(uri.fsPath);
+          panel.title = `CGen — ${name}`;
+          await panel.webview.postMessage({ type: 'title', text: name });
+          await postFormatPolicy();
+          await saveSession(0, 0);
+        }
       }
-    }
 
-    if (!targetUri) {
-      return;
-    }
+      if (!targetUri) {
+        return;
+      }
 
-    if (getFormatPolicy(targetUri).formatOnSave) {
-      currentContent = formatCgen(currentContent);
-      await panel.webview.postMessage({ type: 'format', text: currentContent });
+      if (getFormatPolicy(targetUri).formatOnSave) {
+        currentContent = formatCgen(currentContent);
+        await panel.webview.postMessage({ type: 'format', text: currentContent });
+      }
+      await vscode.workspace.fs.writeFile(targetUri, Buffer.from(currentContent, 'utf8'));
+    } finally {
+      postProgressMessage?.(false);
     }
-    await vscode.workspace.fs.writeFile(targetUri, Buffer.from(currentContent, 'utf8'));
   }
 
   async function saveSession(cursor: number, scrollTop: number) {
@@ -141,6 +147,12 @@ async function openDslEditor(context: vscode.ExtensionContext) {
   }
 
   saveEditorFn = saveToFile;
+  postProgressMessage = (active) => {
+    void panel.webview.postMessage({ type: 'progress', active });
+  };
+  projectIndexPromise?.then((index) => {
+    if (index) { index.onBusyChange = postProgressMessage; }
+  });
   const configDisposable = vscode.workspace.onDidChangeConfiguration((event) => {
     if (event.affectsConfiguration('editor.formatOnSave') || event.affectsConfiguration('editor.formatOnPaste')) {
       postFormatPolicy().catch(() => undefined);
@@ -148,6 +160,10 @@ async function openDslEditor(context: vscode.ExtensionContext) {
   });
   panel.onDidDispose(() => {
     saveEditorFn = undefined;
+    postProgressMessage = undefined;
+    projectIndexPromise?.then((index) => {
+      if (index) { index.onBusyChange = undefined; }
+    });
     configDisposable.dispose();
   });
   await postFormatPolicy();
@@ -207,20 +223,25 @@ async function openDslEditor(context: vscode.ExtensionContext) {
     }
 
     if (message.type === 'load') {
-      const uris = await vscode.window.showOpenDialog({
-        filters: { 'CGen DSL': ['cgen'] },
-        canSelectMany: false
-      });
-      if (uris && uris.length > 0) {
-        const bytes = await vscode.workspace.fs.readFile(uris[0]);
-        currentFilePath = uris[0].fsPath;
-        currentContent = Buffer.from(bytes).toString('utf8');
-        const name = path.basename(uris[0].fsPath);
-        panel.title = `CGen — ${name}`;
-        await panel.webview.postMessage({ type: 'load', text: currentContent });
-        await panel.webview.postMessage({ type: 'title', text: name });
-        await postFormatPolicy();
-        await saveSession(0, 0);
+      postProgressMessage?.(true);
+      try {
+        const uris = await vscode.window.showOpenDialog({
+          filters: { 'CGen DSL': ['cgen'] },
+          canSelectMany: false
+        });
+        if (uris && uris.length > 0) {
+          const bytes = await vscode.workspace.fs.readFile(uris[0]);
+          currentFilePath = uris[0].fsPath;
+          currentContent = Buffer.from(bytes).toString('utf8');
+          const name = path.basename(uris[0].fsPath);
+          panel.title = `CGen — ${name}`;
+          await panel.webview.postMessage({ type: 'load', text: currentContent });
+          await panel.webview.postMessage({ type: 'title', text: name });
+          await postFormatPolicy();
+          await saveSession(0, 0);
+        }
+      } finally {
+        postProgressMessage?.(false);
       }
       return;
     }
@@ -374,6 +395,7 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri, value
         <span id="expandIcon" aria-hidden="true">⛶</span>
       </button>
     </div>
+    <div id="progressBar" aria-hidden="true"></div>
     <div class="editor" aria-label="CGen DSL editor">
       <div id="stripes" aria-hidden="true"></div>
       <div id="errorLines" aria-hidden="true"></div>

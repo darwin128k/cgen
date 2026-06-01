@@ -105,7 +105,7 @@ button:hover {
   position: absolute;
   inset: 20px;
   display: grid;
-  grid-template-rows: 36px minmax(0, 1fr) 36px;
+  grid-template-rows: 36px 2px minmax(0, 1fr) 36px;
   border: 1px solid var(--vscode-panel-border);
   border-radius: 10px;
   background: var(--vscode-editor-background);
@@ -195,6 +195,33 @@ button:hover {
 #filename {
   font-weight: 400;
   opacity: 0.6;
+}
+
+@keyframes cgen-progress-slide {
+  0%   { left: -45%; }
+  100% { left: 110%; }
+}
+
+#progressBar {
+  position: relative;
+  overflow: hidden;
+}
+
+#progressBar.active::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -45%;
+  width: 45%;
+  height: 100%;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    var(--vscode-progressBar-background, #0e70c0) 30%,
+    var(--vscode-progressBar-background, #0e70c0) 70%,
+    transparent 100%
+  );
+  animation: cgen-progress-slide 1.5s ease-in-out infinite;
 }
 
 .editor {
@@ -344,6 +371,12 @@ button:hover {
   z-index: 2;
   padding: var(--cgen-editor-top) var(--cgen-editor-right) var(--cgen-editor-bottom) var(--cgen-editor-left);
   pointer-events: none;
+}
+
+#highlight span.hl-line {
+  display: block;
+  line-height: var(--cgen-line-height);
+  min-height: var(--cgen-line-height);
 }
 
 #suggestion {
