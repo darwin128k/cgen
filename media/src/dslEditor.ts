@@ -541,7 +541,21 @@ function selectCompletionItem(index: number): void {
   completionIndex = Math.max(0, Math.min(index, completionCandidates.length - 1));
   suggestionInsertText = completionInsertTexts[completionIndex] ?? '';
   renderCompletionList();
-  completionList.querySelectorAll('.completion-item')[completionIndex]?.scrollIntoView({ block: 'nearest' });
+  const activeItem = completionList.querySelectorAll('.completion-item')[completionIndex] as HTMLElement | undefined;
+  if (activeItem) {
+    const prev = activeItem.previousElementSibling as HTMLElement | null;
+    const topEl = prev?.classList.contains('completion-group') ? prev : activeItem;
+    const pad = 4;
+    const itemTop = topEl.offsetTop - pad;
+    const itemBottom = activeItem.offsetTop + activeItem.offsetHeight + pad;
+    const scrollTop = completionList.scrollTop;
+    const scrollBottom = scrollTop + completionList.clientHeight;
+    if (itemTop < scrollTop) {
+      completionList.scrollTop = Math.max(0, itemTop);
+    } else if (itemBottom > scrollBottom) {
+      completionList.scrollTop = itemBottom - completionList.clientHeight;
+    }
+  }
   paintHighlight();
 }
 
