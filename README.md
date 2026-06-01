@@ -73,7 +73,7 @@ package lh:
             use c.math.add(a, b)
 ```
 
-Inline nesting is supported for `package`, `module`, `scope`, and `extern`:
+Inline nesting is supported for `package`, `module`, and `scope`:
 
 ```cgen
 package lh: module char:
@@ -91,7 +91,6 @@ Before generating, CGen merges the current DSL with all `.cgen` files found in t
 | `package` | Creates a directory level and a path/guard/symbol prefix |
 | `module`  | Creates a `.h` file (and optionally a `.c` file) |
 | `scope`   | Virtual namespace — adds to guard and path, not to symbol names |
-| `extern`  | Declares external C types and macros available for use in DSL expressions |
 
 ## Attributes
 
@@ -112,29 +111,29 @@ Guard: `LH_CHAR_H`. Type name: `lh_uchar_t` (not `lh_char_uchar_t`).
 
 ### `@header("header.h")`
 
-Attaches to declarations inside an `extern` section. Specifies which C header to `#include` in any generated file that uses the declared name.
+Attaches to aliases and templates that depend on external C declarations. Specifies which C header to `#include` in any generated file that uses the declared name.
 
 ```cgen
-extern c:
+scope c:
     @header("stddef.h")
-    alias size as "size_t"
+    alias size as c.raw("size_t")
 ```
 
-## extern
+## External C Symbols
 
-The `extern` section brings external C types and macros into the CGen type system.
+External C types, macros, and functions are represented with ordinary `alias` and `template` declarations, usually under a `scope c:` namespace. Use `c.raw("...")` for raw C spelling and `@header("...")` when generated files must include a C header.
 
 ```cgen
-extern c:
-    alias char as "char"
-    alias uint as "unsigned int"
+scope c:
+    alias char as c.raw("char")
+    alias uint as c.raw("unsigned int")
 
     @header("stddef.h")
-    alias size as "size_t"
+    alias size as c.raw("size_t")
 
     @header("stdlib.h")
-    template malloc:
-        param size as c.size
+    template malloc(size):
+        use c.raw("malloc(${size})")
 ```
 
 Alias declarations map a DSL name to a raw C type string. Template declarations map a DSL name to a C macro or function — they produce no output themselves but can be called from template `use` bodies or used as field types.
@@ -249,12 +248,21 @@ struct point:
     fn get_x() -> any:
         return self.x
 
-    @self(mutable)
-    fn set_x(value as c.int):
+    mut fn set_x(value as c.int) -> c.void:
         use c.raw("self->x = value")
 ```
 
-Inside a struct, `self` is the implicit first parameter — a const pointer to the struct type by default. Use `@self(mutable)` on the method to get a non-const pointer.
+Inside a struct, `self` is the implicit first parameter — a const pointer to the struct type by default. Prefix a method with `mut` to get a non-const `self` pointer.
+
+Function parameters are const by default. Put `mut` before the parameter name when the generated C parameter should not be const:
+
+```cgen
+fn get(value as c.int) -> c.int:
+    return value
+
+fn set(mut value as c.int) -> c.void:
+    use c.raw("(void)value")
+```
 
 Function bodies support two statement forms:
 

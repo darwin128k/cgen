@@ -193,13 +193,9 @@ export function parseDsl(source: string): ParsedDsl {
     }
 
     if (currentFn) {
-      if (/^(?:mutable|const)\s+(?:param\s+)?[A-Za-z_][A-Za-z0-9_]*\b/.test(line)) {
-        diagnostics.push(`Line ${lineNumber}: use @param(${line.split(/\s+/, 1)[0]}) before the parameter instead`);
-        pendingAttributes = [];
-        return;
-      }
-      if (pendingAttributes.some((a) => a.name === 'mutable' || a.name === 'const')) {
-        diagnostics.push(`Line ${pendingAttributes[0].line}: use @param(mutable) or @param(const) for function parameters`);
+      const paramAttribute = pendingAttributes.find((a) => a.name === 'param');
+      if (paramAttribute) {
+        diagnostics.push(`Line ${paramAttribute.line}: use \`mut name -> type\` or \`const name -> type\` for function parameters`);
         pendingAttributes = [];
         return;
       }
@@ -343,7 +339,6 @@ export function parseDsl(source: string): ParsedDsl {
     const fnNode = parseFn(line, lineNumber);
     if (fnNode) {
       fnNode.attributes = [...parentFrame.inheritedAttributes, ...pendingAttributes];
-      fnNode.selfMutable = pendingAttributes.some((a) => a.name === 'self' && a.args[0] === 'mutable');
       pendingAttributes = [];
       parent.fns.push(fnNode);
       currentFn = { indent, node: fnNode };
@@ -456,12 +451,13 @@ function parseEnumMember(line: string, lineNumber: number): EnumMemberNode | und
 }
 
 function parseFn(line: string, lineNumber: number): FnNode | undefined {
-  const startMatch = line.match(/^fn\s+([A-Za-z_][A-Za-z0-9_]*)\s*(\()?/);
+  const startMatch = line.match(/^(mut\s+)?fn\s+([A-Za-z_][A-Za-z0-9_]*)\s*(\()?/);
   if (!startMatch) {
     return undefined;
   }
 
-  const name = startMatch[1];
+  const selfMutable = !!startMatch[1];
+  const name = startMatch[2];
   let rest = line.slice(startMatch[0].length);
   const params: FnParam[] = [];
 
@@ -485,21 +481,22 @@ function parseFn(line: string, lineNumber: number): FnNode | undefined {
     return undefined;
   }
 
-  return { kind: 'fn', name, params, returnType: returnMatch[1].trim(), body: [], attributes: [], selfMutable: false, line: lineNumber };
+  return { kind: 'fn', name, params, returnType: returnMatch[1].trim(), body: [], attributes: [], selfMutable, line: lineNumber };
 }
 
 function parseFnParam(text: string, lineNumber: number, attributes: Attribute[] = []): FnParam | undefined {
   const trimmed = text.trim();
-  const mutable = attributes.some(
-    (attribute) => attribute.name === 'param' && attribute.args.includes('mutable')
-  );
+  const modifierMatch = trimmed.match(/^(mut|const)\s+(.+)$/);
+  const modifier = modifierMatch?.[1];
+  const body = modifierMatch ? modifierMatch[2].trim() : trimmed;
+  const mutable = modifier === 'mut';
 
-  const variadicMatch = trimmed.match(/^(?:param\s+)?\.\.\.(?:\s+as\s+|\s+->\s*)([A-Za-z_][A-Za-z0-9_]*)$/);
+  const variadicMatch = body.match(/^(?:param\s+)?\.\.\.(?:\s+as\s+|\s+->\s*)([A-Za-z_][A-Za-z0-9_]*)$/);
   if (variadicMatch) {
     return { name: variadicMatch[1], type: '...', variadic: true, mutable: true, attributes, line: lineNumber };
   }
 
-  const normalMatch = trimmed.match(/^(?:param\s+)?([A-Za-z_][A-Za-z0-9_]*)(?:\s+as\s+|\s+->\s*)(.+)$/);
+  const normalMatch = body.match(/^(?:param\s+)?([A-Za-z_][A-Za-z0-9_]*)(?:\s+as\s+|\s+->\s*)(.+)$/);
   if (normalMatch) {
     return {
       name: normalMatch[1],

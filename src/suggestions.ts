@@ -72,8 +72,6 @@ const snippets = [
   '@fn(extern)',
   '@fn(inline)',
   '@fn(static, inline)',
-  '@param(mutable)',
-  '@param(const)',
   '@field(mutable)',
   '@template(mutable)',
   'package name:',
@@ -86,6 +84,7 @@ const snippets = [
   'template name:',
   'template name():',
   'fn name() -> type:',
+  'mut fn name() -> type:',
   'name',
   '... -> values',
   'field name -> type',
@@ -428,7 +427,7 @@ function getContextSnippets(contextPath: string[], currentTemplate: CurrentTempl
   }
 
   if (currentTemplate.insideStruct) {
-    return ['field name -> type', 'use c.ptr(value)', 'fn name() -> type:'];
+    return ['field name -> type', 'use c.ptr(value)', 'fn name() -> type:', 'mut fn name() -> type:'];
   }
   if (currentTemplate.excludeNames.length > 0) {
     return ['name', 'name -> any', 'name -> template', '... -> values', 'field name -> type', 'use c.ptr(value)'];
@@ -458,7 +457,7 @@ function getContextSnippets(contextPath: string[], currentTemplate: CurrentTempl
 
 function getDeclarationSnippetsForContext(contextPath: string[], currentTemplate: CurrentTemplate, index: DslIndex): string[] {
   if (currentTemplate.insideStruct) {
-    return ['field name -> type', 'fn name() -> type:'];
+    return ['field name -> type', 'fn name() -> type:', 'mut fn name() -> type:'];
   }
   if (currentTemplate.excludeNames.length > 0) {
     return ['name', 'name -> any', 'name -> template', '... -> values', 'field name -> type'];
@@ -479,7 +478,7 @@ function getInlineParamCandidates(typed: string): string[] {
   const currentFragment = typed.slice(separatorIdx + 1).trimStart();
   const head = typed.slice(0, typed.length - currentFragment.length);
 
-  const asMatch = currentFragment.match(/^(?:param\s+)?\S+(?:\s+as\s+|\s+->\s*)(\S*)$/);
+  const asMatch = currentFragment.match(/^(?:(?:mut|const)\s+)?(?:param\s+)?\S+(?:\s+as\s+|\s+->\s*)(\S*)$/);
   if (asMatch) {
     const typeFragment = asMatch[1];
     const typeHead = typed.slice(0, typed.length - typeFragment.length);
@@ -514,7 +513,8 @@ function getInlineFnParamCandidates(typed: string, contextPath: string[], index:
 
   return [
     'name -> type',
-    'param name -> type',
+    'mut name -> type',
+    'const name -> type',
     '... -> values'
   ]
     .filter((s) => s.startsWith(currentFragment))
