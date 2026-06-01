@@ -170,6 +170,10 @@ button:hover {
   --cgen-line-height: 20px;
 }
 
+.editor.has-line-attachments {
+  --cgen-editor-right: 220px;
+}
+
 #highlight,
 #suggestion,
 #lineNumbers,
@@ -290,6 +294,57 @@ button:hover {
   padding: var(--cgen-editor-top) var(--cgen-editor-right) var(--cgen-editor-bottom) var(--cgen-editor-left);
   color: transparent;
   pointer-events: none;
+}
+
+#lineAttachments {
+  position: absolute;
+  inset: 0 8px 0 auto;
+  z-index: 8;
+  width: 196px;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.line-attachment {
+  position: absolute;
+  right: 0;
+  display: inline-flex;
+  align-items: center;
+  max-width: 196px;
+  box-sizing: border-box;
+  padding: 0 7px;
+  border: 1px solid var(--vscode-editorWidget-border, var(--vscode-panel-border));
+  border-radius: 4px;
+  color: var(--vscode-descriptionForeground, var(--vscode-editor-foreground));
+  background: color-mix(in srgb, var(--vscode-editor-background) 82%, var(--vscode-editor-foreground) 18%);
+  font-family: var(--vscode-editor-font-family, var(--vscode-font-family));
+  font-size: calc(var(--vscode-editor-font-size, 13px) - 2px);
+  font-weight: var(--vscode-editor-font-weight, normal);
+  line-height: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  pointer-events: auto;
+}
+
+.line-attachment-button {
+  height: auto;
+  color: var(--vscode-textLink-foreground, var(--vscode-editor-foreground));
+  background: color-mix(in srgb, var(--vscode-textLink-foreground, var(--vscode-editor-foreground)) 10%, transparent);
+  cursor: pointer;
+}
+
+.line-attachment-button:hover {
+  color: var(--vscode-textLink-activeForeground, var(--vscode-textLink-foreground));
+  background: var(--vscode-toolbar-hoverBackground);
+}
+
+.line-attachment-text {
+  color: var(--vscode-descriptionForeground, var(--vscode-editor-foreground));
+}
+
+.line-attachment-object {
+  color: var(--vscode-symbolIcon-objectForeground, var(--vscode-editor-foreground));
 }
 
 .ghost-text {

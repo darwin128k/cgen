@@ -3,7 +3,7 @@ import * as vscode from 'vscode';
 import initSqlJs, { Database, SqlJsStatic } from 'sql.js';
 import { parseDsl, makePublicPath, type SectionKind, type SectionNode } from './parser';
 
-type SymbolKind = 'alias' | 'enum' | 'template' | 'struct';
+type SymbolKind = 'alias' | 'enum' | 'template' | 'struct' | 'fn';
 
 export interface IndexedNode {
   kind: SectionKind;
@@ -395,14 +395,39 @@ function extractRecords(text: string, sourcePath: string): { sections: SectionRe
     }
 
     for (const struct of node.structs) {
+      const structPath = makePublicPath([...pathParts, struct.name]);
       symbols.push({
         kind: 'struct',
         name: struct.name,
-        path: makePublicPath([...pathParts, struct.name]).join('.'),
+        path: structPath.join('.'),
         parentPath: symbolParentPath,
         sourcePath,
         line: struct.line,
         params: ''
+      });
+
+      for (const fn of struct.fns) {
+        symbols.push({
+          kind: 'fn',
+          name: fn.name,
+          path: [...structPath, fn.name].join('.'),
+          parentPath: structPath.join('.'),
+          sourcePath,
+          line: fn.line,
+          params: fn.params.map((p) => p.name).join(',')
+        });
+      }
+    }
+
+    for (const fn of node.fns) {
+      symbols.push({
+        kind: 'fn',
+        name: fn.name,
+        path: makePublicPath([...pathParts, fn.name]).join('.'),
+        parentPath: symbolParentPath,
+        sourcePath,
+        line: fn.line,
+        params: fn.params.map((p) => p.name).join(',')
       });
     }
 

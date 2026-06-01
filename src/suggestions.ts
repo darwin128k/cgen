@@ -14,7 +14,7 @@ export interface SuggestionResult {
 }
 
 type SectionKind = 'root' | 'package' | 'module' | 'scope';
-type SymbolKind = 'alias' | 'enum' | 'template' | 'struct';
+type SymbolKind = 'alias' | 'enum' | 'template' | 'struct' | 'fn';
 
 interface DslNode {
   kind: SectionKind;
@@ -376,7 +376,7 @@ function getCandidates(typed: string, contextPath: string[], currentTemplate: Cu
   }
 
   if (/^return\s+/.test(typed)) {
-    return completeTail(typed, getTemplateUseCandidates(typed, contextPath, currentTemplate, index));
+    return completeTail(typed, getExpressionCandidates(typed, contextPath, currentTemplate, index));
   }
 
   if (/^use\s+/.test(typed)) {
@@ -602,6 +602,26 @@ function getTemplateUseCandidates(
   return getRootUseNamespaces(contextPath, index);
 }
 
+function getExpressionCandidates(
+  typed: string,
+  contextPath: string[],
+  currentTemplate: CurrentTemplate,
+  index: DslIndex
+): string[] {
+  const token = getTailToken(typed);
+  if (token.includes('.')) {
+    return uniqueInOrder([
+      ...getDottedTemplateUseCandidates(token, index, currentTemplate),
+      ...getDottedFnUseCandidates(token, index)
+    ]);
+  }
+
+  return uniqueInOrder([
+    ...getRootUseNamespaces(contextPath, index),
+    ...getFnUseCandidates(index)
+  ]);
+}
+
 function getUseArgumentCandidates(
   typed: string,
   contextPath: string[],
@@ -639,6 +659,25 @@ function getDottedTemplateUseCandidates(token: string, index: DslIndex, currentT
   return uniqueInOrder([
     ...getNodeTemplateUseMembers(node, `${parentPath.join('.')}.`, currentTemplate),
     ...builtinMatches
+  ]);
+}
+
+function getDottedFnUseCandidates(token: string, index: DslIndex): string[] {
+  const parentPath = token.split('.').slice(0, -1).filter(Boolean);
+  const parentPrefix = parentPath.join('.');
+  const directFunctions = getFnUseCandidates(index).filter((name) => name.startsWith(token));
+  const node = findNode(index.root, parentPath);
+
+  if (!node) {
+    return directFunctions;
+  }
+
+  return uniqueInOrder([
+    ...node.symbols
+      .filter((symbol) => symbol.kind === 'fn')
+      .map((symbol) => formatFnUseCandidate(symbol))
+      .filter((name) => name.startsWith(`${parentPrefix}.`)),
+    ...directFunctions
   ]);
 }
 
@@ -717,6 +756,17 @@ function getAllUsePaths(index: DslIndex, currentTemplate: CurrentTemplate): stri
   return all.filter((s) => !s.endsWith('.') || !callPrefixes.has(s.slice(0, -1)));
 }
 
+function getFnUseCandidates(index: DslIndex): string[] {
+  return index.symbols
+    .filter((symbol) => symbol.kind === 'fn')
+    .map(formatFnUseCandidate);
+}
+
+function formatFnUseCandidate(symbol: DslSymbol): string {
+  const args = symbol.params.length > 0 ? symbol.params.join(', ') : '';
+  return `${makePublicSymbolPath(symbol).join('.')}(${args})`;
+}
+
 function getDottedCandidates(token: string, contextPath: string[], index: DslIndex, fallback: string[]): string[] {
   if (token.includes('.')) {
     const parentPath = token.split('.').slice(0, -1).filter(Boolean);
@@ -726,7 +776,9 @@ function getDottedCandidates(token: string, contextPath: string[], index: DslInd
       const childCandidates = sortUnique(node.children.map((child) => child.name))
         .map((name) => `${parentPrefix}.${name}`);
       const symbolCandidates = sortUnique(
-        node.symbols.filter((s) => s.kind !== 'template').map((s) => s.path.join('.'))
+        node.symbols
+          .filter((s) => s.kind !== 'template')
+          .map((s) => s.kind === 'fn' ? formatFnUseCandidate(s) : s.path.join('.'))
       );
       const typeNames = sortUnique([...childCandidates, ...symbolCandidates]);
       const fallbackMatches = fallback.filter((f) => f.startsWith(token));
@@ -779,13 +831,15 @@ function resolveKindForCandidate(candidate: string, index: DslIndex): string {
   if (/^field\b/.test(candidate)) return 'field';
   if (/^param\b/.test(candidate)) return 'param';
   if (/^(use|case|name|\.\.\.)/.test(candidate)) return 'keyword';
-  if (candidate.includes('(')) return 'template';
 
   const pathStr = candidate.endsWith('.') ? candidate.slice(0, -1) : candidate;
+  const callablePath = pathStr.includes('(') ? pathStr.slice(0, pathStr.indexOf('(')) : pathStr;
   const pathParts = pathStr.split('.').filter(Boolean);
 
-  const symbol = index.symbols.find((s) => s.path.join('.') === pathStr);
+  const symbol = index.symbols.find((s) => s.path.join('.') === callablePath || s.path.join('.') === pathStr);
   if (symbol) return symbol.kind;
+
+  if (candidate.includes('(')) return 'template';
 
   const node = findNode(index.root, pathParts);
   if (node) return node.kind;

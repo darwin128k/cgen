@@ -1,4 +1,5 @@
 import { SnippetEngine } from './snippetEngine';
+import { LineAttachmentController } from './lineAttachments';
 import keywords from '../../src/keywords.json';
 
 declare function acquireVsCodeApi(): { postMessage(data: unknown): void };
@@ -15,6 +16,7 @@ const source = document.getElementById('source') as HTMLTextAreaElement;
 const highlight = document.getElementById('highlight')!;
 const suggestion = document.getElementById('suggestion')!;
 const lineNumbers = document.getElementById('lineNumbers')!;
+const lineAttachmentsLayer = document.getElementById('lineAttachments')!;
 const stripes = document.getElementById('stripes')!;
 const errorLines = document.getElementById('errorLines')!;
 const activeLine = document.getElementById('activeLine')!;
@@ -39,6 +41,12 @@ const completionList = document.createElement('div');
 completionList.id = 'completionList';
 completionList.className = 'completion-list';
 completionList.hidden = true;
+const lineAttachments = new LineAttachmentController({
+  source,
+  layer: lineAttachmentsLayer,
+  getEditorPaddingTop,
+  onAction: (action) => vscode.postMessage({ type: 'lineAttachmentAction', ...action })
+});
 let characterWidth: number | undefined;
 let diagnosticLines: number[] = [];
 let activeLineIndex = 0;
@@ -171,6 +179,7 @@ function paint(): void {
   updateSelectionMode();
   updateActiveLine();
   updateBreadcrumb();
+  lineAttachments.render();
   syncScroll();
   requestAnimationFrame(syncScroll);
 }
@@ -277,6 +286,7 @@ function syncScroll(): void {
     stripeContent.style.transform = `translateY(${-source.scrollTop}px)`;
   }
   updateActiveLine();
+  lineAttachments.render();
 }
 
 function updateBreadcrumb(): void {
@@ -935,6 +945,9 @@ window.addEventListener('message', (event: MessageEvent) => {
   }
   if (event.data.type === 'title') {
     filename.textContent = ` — ${event.data.text}`;
+  }
+  if (event.data.type === 'lineAttachments') {
+    lineAttachments.set(event.data.attachments);
   }
   if (event.data.type === 'suggestion' && event.data.id === suggestRequestId) {
     const serverInsertText: string = event.data.insertText || '';

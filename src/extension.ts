@@ -111,7 +111,7 @@ async function openDslEditor(context: vscode.ExtensionContext) {
   saveEditorFn = saveToFile;
   panel.onDidDispose(() => { saveEditorFn = undefined; });
 
-  panel.webview.onDidReceiveMessage(async (message: { type: string; text?: string; cursor?: number; scrollTop?: number; id?: number }) => {
+  panel.webview.onDidReceiveMessage(async (message: { type: string; text?: string; cursor?: number; scrollTop?: number; id?: number; line?: number; action?: string; data?: unknown }) => {
     if (message.type === 'expand') {
       await vscode.commands.executeCommand('workbench.action.toggleMaximizeEditorGroup');
       return;
@@ -167,6 +167,12 @@ async function openDslEditor(context: vscode.ExtensionContext) {
         await panel.webview.postMessage({ type: 'title', text: name });
         await saveSession(0, 0);
       }
+      return;
+    }
+
+    if (message.type === 'lineAttachmentAction') {
+      const label = message.action || message.id || 'line attachment';
+      vscode.window.showInformationMessage(`CGen ${label} on line ${message.line ?? '?'}`);
       return;
     }
 
@@ -307,6 +313,7 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri, value
       <pre id="lineNumbers" aria-hidden="true"></pre>
       <pre id="highlight" aria-hidden="true"></pre>
       <pre id="suggestion" aria-hidden="true"></pre>
+      <div id="lineAttachments" aria-hidden="false"></div>
       <textarea id="source" wrap="off" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="off">${escapeHtml(value)}</textarea>
     </div>
     <div class="footer">
