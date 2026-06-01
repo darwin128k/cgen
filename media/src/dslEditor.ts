@@ -299,8 +299,9 @@ function renderStripeMarkers(): void {
   }
 
   const errorLineIndexes = new Set(diagnosticLines.map((line) => line - 1));
+  const hasSelection = source.selectionStart !== source.selectionEnd;
   Array.from(stripeLines).forEach((line, index) => {
-    line.classList.toggle('is-active', index === activeLineIndex);
+    line.classList.toggle('is-active', !hasSelection && index === activeLineIndex);
     line.classList.toggle('has-error', errorLineIndexes.has(index));
   });
 }
@@ -905,6 +906,8 @@ source.addEventListener('select', () => {
 document.addEventListener('selectionchange', () => {
   if (document.activeElement === source) {
     updateSelectionMode();
+    updateActiveLine();
+    renderStripeMarkers();
   }
 });
 source.addEventListener('scroll', syncScroll);
