@@ -71,7 +71,6 @@ const highlightRegex = new RegExp(
   `(@[A-Za-z_][A-Za-z0-9_]*|\\bc\\.[A-Za-z_][A-Za-z0-9_.]*\\b|->|[()[\\]{}]|${keywords.map((k) => `\\b${k}\\b`).join('|')})`,
   'g'
 );
-let lineSpans: HTMLSpanElement[] = [];
 let cachedLineHTMLs: string[] = [];
 let cachedRawLines: string[] = [];
 let stripeCount = 0;
@@ -543,10 +542,7 @@ function paintHighlight(): void {
   const hasSelection = source.selectionStart !== source.selectionEnd;
   const hasGhost = !!(suggestionInsertText && source.selectionStart === source.selectionEnd);
 
-  if (!hasSelection && !navHoverRange && !hasGhost && !snippetEngine.active) {
-    applyIncrementalHighlight(lines);
-    return;
-  }
+  syncLineCache(lines);
 
   const highlighted = hasSelection
     ? highlightLinesWithSelection(lines)
@@ -554,94 +550,28 @@ function paintHighlight(): void {
     ? highlightNavigationRange(lines)
     : hasGhost
       ? highlightLinesWithGhost(lines)
-      : snippetEngine.highlightTabStops(lines, source.selectionEnd, source.value, highlightLine, escapeHtml);
+      : snippetEngine.active
+        ? snippetEngine.highlightTabStops(lines, source.selectionEnd, source.value, highlightLine, escapeHtml)
+        : cachedLineHTMLs.join('\n');
   highlight.innerHTML = `${highlighted || ' '}${scrollTail()}`;
-  lineSpans = [];
-  cachedLineHTMLs = [];
-  cachedRawLines = [];
 }
 
-function applyIncrementalHighlight(lines: string[]): void {
-  if (lineSpans.length === 0) {
-    fullRebuildHighlight(lines);
-    return;
-  }
-
+function syncLineCache(lines: string[]): void {
   const newCount = lines.length;
-  const oldCount = lineSpans.length;
+  const oldCount = cachedRawLines.length;
 
-  let lo = 0;
-  const minLen = Math.min(newCount, oldCount);
-  while (lo < minLen && lines[lo] === cachedRawLines[lo]) { lo++; }
-
-  if (lo === newCount && lo === oldCount) { return; }
-
-  const delta = newCount - oldCount;
-
-  if (Math.abs(delta) <= 8) {
-    let hiNew = newCount;
-    let hiOld = oldCount;
-    while (hiNew > lo && hiOld > lo && lines[hiNew - 1] === cachedRawLines[hiOld - 1]) {
-      hiNew--;
-      hiOld--;
-    }
-
-    for (let i = hiOld - 1; i >= lo; i--) { lineSpans[i].remove(); }
-    lineSpans.splice(lo, hiOld - lo);
-    cachedRawLines.splice(lo, hiOld - lo);
-    cachedLineHTMLs.splice(lo, hiOld - lo);
-
-    const anchor = lineSpans[lo] ?? highlight.lastChild!;
-    const newSpans: HTMLSpanElement[] = [];
-    const newRaws: string[] = [];
-    const newHTMLs: string[] = [];
-    for (let i = lo; i < hiNew; i++) {
-      const html = highlightLine(lines[i]);
-      const span = document.createElement('span');
-      span.className = 'hl-line';
-      span.innerHTML = html;
-      highlight.insertBefore(span, anchor);
-      newSpans.push(span);
-      newRaws.push(lines[i]);
-      newHTMLs.push(html);
-    }
-    lineSpans.splice(lo, 0, ...newSpans);
-    cachedRawLines.splice(lo, 0, ...newRaws);
-    cachedLineHTMLs.splice(lo, 0, ...newHTMLs);
+  if (newCount !== oldCount) {
+    cachedRawLines = lines.slice();
+    cachedLineHTMLs = lines.map(highlightLine);
     return;
   }
 
-  fullRebuildHighlight(lines);
-}
-
-function fullRebuildHighlight(lines: string[]): void {
-  highlight.innerHTML = '';
-  lineSpans = [];
-  cachedRawLines = [];
-  cachedLineHTMLs = [];
-  const fragment = document.createDocumentFragment();
-  for (const line of lines) {
-    const html = highlightLine(line);
-    const span = document.createElement('span');
-    span.className = 'hl-line';
-    span.innerHTML = html;
-    lineSpans.push(span);
-    cachedRawLines.push(line);
-    cachedLineHTMLs.push(html);
-    fragment.appendChild(span);
+  for (let i = 0; i < newCount; i++) {
+    if (lines[i] !== cachedRawLines[i]) {
+      cachedRawLines[i] = lines[i];
+      cachedLineHTMLs[i] = highlightLine(lines[i]);
+    }
   }
-  const tail = document.createElement('span');
-  tail.className = 'scroll-tail';
-  tail.setAttribute('aria-hidden', 'true');
-  fragment.appendChild(tail);
-  highlight.appendChild(fragment);
-}
-
-function createScrollTailNode(): HTMLSpanElement {
-  const tail = document.createElement('span');
-  tail.className = 'scroll-tail';
-  tail.setAttribute('aria-hidden', 'true');
-  return tail;
 }
 
 function renderSuggestion(): void {

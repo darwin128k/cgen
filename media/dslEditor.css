@@ -373,12 +373,6 @@ button:hover {
   pointer-events: none;
 }
 
-#highlight span.hl-line {
-  display: block;
-  line-height: var(--cgen-line-height);
-  min-height: var(--cgen-line-height);
-}
-
 #suggestion {
   z-index: 3;
   padding: var(--cgen-editor-top) var(--cgen-editor-right) var(--cgen-editor-bottom) var(--cgen-editor-left);
