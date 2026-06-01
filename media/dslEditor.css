@@ -457,6 +457,23 @@ button:hover {
   overflow-y: auto;
 }
 
+.completion-group {
+  margin: 5px 8px 3px;
+  padding-top: 5px;
+  border-top: 1px solid color-mix(in srgb, var(--vscode-editorSuggestWidget-foreground, var(--vscode-editor-foreground)) 14%, transparent);
+  color: color-mix(in srgb, var(--vscode-editorSuggestWidget-foreground, var(--vscode-editor-foreground)) 58%, transparent);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.2;
+  text-transform: uppercase;
+}
+
+.completion-group:first-child {
+  margin-top: 1px;
+  padding-top: 0;
+  border-top: 0;
+}
+
 .completion-item {
   display: flex;
   align-items: stretch;
@@ -473,8 +490,8 @@ button:hover {
   display: flex;
   align-items: center;
   justify-content: center;
-  color: var(--completion-icon-color);
-  background: color-mix(in srgb, var(--completion-icon-color) 10%, transparent);
+  color: var(--vscode-editor-background, #1e1e1e);
+  background: var(--completion-icon-color);
   font-size: 13px;
   flex-shrink: 0;
   border-radius: 3px 0 0 3px;
@@ -497,8 +514,36 @@ button:hover {
 .ci-keyword,
 .ci-struct,
 .ci-method {
-  color: var(--completion-icon-color);
-  background: color-mix(in srgb, var(--completion-icon-color) 10%, transparent);
+  color: var(--vscode-editor-background, #1e1e1e);
+  background: var(--completion-icon-color);
+}
+
+.ci-keyword {
+  --completion-icon-color: #c586c0;
+}
+
+.ci-module {
+  --completion-icon-color: #4ec9b0;
+}
+
+.ci-interface {
+  --completion-icon-color: #b8d7a3;
+}
+
+.ci-enum {
+  --completion-icon-color: #dcdcaa;
+}
+
+.ci-struct {
+  --completion-icon-color: #9cdcfe;
+}
+
+.ci-method {
+  --completion-icon-color: #dcdcaa;
+}
+
+.ci-variable {
+  --completion-icon-color: #75beff;
 }
 
 .completion-item.active {
@@ -507,8 +552,8 @@ button:hover {
 }
 
 .completion-item.active .completion-icon-col {
-  color: var(--completion-icon-active-color);
-  background: transparent;
+  color: var(--vscode-editorSuggestWidget-selectedBackground, var(--vscode-list-activeSelectionBackground));
+  background: var(--completion-icon-active-color);
 }
 
 body.vscode-high-contrast-light .completion-list {

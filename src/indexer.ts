@@ -27,6 +27,14 @@ export interface IndexedDsl {
   typeNames: string[];
 }
 
+export interface SuggestionUsageRecord {
+  label: string;
+  kind: string;
+  acceptedCount: number;
+  shownCount: number;
+  lastAcceptedAt: string;
+}
+
 interface SectionRecord {
   kind: SectionKind;
   name: string;
@@ -145,6 +153,38 @@ export class CgenProjectIndex {
           .map((symbol) => symbol.path.join('.'))
       ])
     };
+  }
+
+  getSuggestionUsage(contextKey: string, prefix: string): SuggestionUsageRecord[] {
+    const db = this.ensureDb();
+    return queryRows(
+      db,
+      `SELECT label, kind, accepted_count, shown_count, last_accepted_at
+       FROM suggestion_usage
+       WHERE context_key = ? AND (prefix = ? OR prefix = '')
+       ORDER BY accepted_count DESC, last_accepted_at DESC
+       LIMIT 80`,
+      [contextKey, prefix]
+    ).map((row) => ({
+      label: String(row.label),
+      kind: String(row.kind),
+      acceptedCount: Number(row.accepted_count || 0),
+      shownCount: Number(row.shown_count || 0),
+      lastAcceptedAt: String(row.last_accepted_at || '')
+    }));
+  }
+
+  recordSuggestionAccepted(contextKey: string, prefix: string, label: string, kind: string): void {
+    const db = this.ensureDb();
+    db.run(
+      `INSERT INTO suggestion_usage(label, kind, context_key, prefix, accepted_count, shown_count, last_accepted_at)
+       VALUES (?, ?, ?, ?, 1, 0, ?)
+       ON CONFLICT(label, kind, context_key, prefix) DO UPDATE SET
+         accepted_count = accepted_count + 1,
+         last_accepted_at = excluded.last_accepted_at`,
+      [label, kind, contextKey, prefix, new Date().toISOString()]
+    );
+    this.queueSave();
   }
 
   private async initialize(): Promise<void> {
@@ -290,10 +330,21 @@ export class CgenProjectIndex {
         detail TEXT NOT NULL,
         created_at TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS suggestion_usage (
+        label TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        context_key TEXT NOT NULL,
+        prefix TEXT NOT NULL DEFAULT '',
+        accepted_count INTEGER NOT NULL DEFAULT 0,
+        shown_count INTEGER NOT NULL DEFAULT 0,
+        last_accepted_at TEXT NOT NULL DEFAULT '',
+        PRIMARY KEY(label, kind, context_key, prefix)
+      );
       CREATE INDEX IF NOT EXISTS idx_sections_path ON sections(path);
       CREATE INDEX IF NOT EXISTS idx_sections_parent ON sections(parent_path);
       CREATE INDEX IF NOT EXISTS idx_symbols_path ON symbols(path);
       CREATE INDEX IF NOT EXISTS idx_symbols_parent ON symbols(parent_path);
+      CREATE INDEX IF NOT EXISTS idx_suggestion_usage_context ON suggestion_usage(context_key, prefix);
     `);
   }
 
@@ -466,7 +517,21 @@ function findOrCreateChild(parent: IndexedNode, kind: SectionKind, name: string,
   return child;
 }
 
-function queryRows(db: Database, sql: string): Record<string, unknown>[] {
+function queryRows(db: Database, sql: string, params: unknown[] = []): Record<string, unknown>[] {
+  if (params.length > 0) {
+    const stmt = db.prepare(sql);
+    try {
+      stmt.bind(params);
+      const rows: Record<string, unknown>[] = [];
+      while (stmt.step()) {
+        rows.push(stmt.getAsObject());
+      }
+      return rows;
+    } finally {
+      stmt.free();
+    }
+  }
+
   const result = db.exec(sql)[0];
   if (!result) {
     return [];

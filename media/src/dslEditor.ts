@@ -37,6 +37,8 @@ let completionCandidates: string[] = [];
 let completionInsertTexts: string[] = [];
 let completionCandidateKinds: string[] = [];
 let completionIndex = 0;
+let completionContextKey = '';
+let completionPrefix = '';
 let formatPolicy = {
   formatOnSave: false,
   formatOnPaste: false
@@ -407,6 +409,8 @@ function clearSuggestion(): void {
   completionInsertTexts = [];
   completionCandidateKinds = [];
   completionIndex = 0;
+  completionContextKey = '';
+  completionPrefix = '';
   completionList.hidden = true;
   if (hadSuggestion) {
     paintHighlight();
@@ -420,7 +424,7 @@ function getCursorPixelPos(): { x: number; y: number } {
   const row = lines.length - 1;
   const col = lines[row].length;
   const lineHeight = parseFloat(getComputedStyle(source).lineHeight) || 20;
-  const x = col * (characterWidth || 7.2) + getEditorPaddingLeft() - source.scrollLeft;
+  const x = col * getCharacterWidth() + getEditorPaddingLeft() - source.scrollLeft;
   const y = (row + 1) * lineHeight + getEditorPaddingTop() - source.scrollTop;
   return { x, y };
 }
@@ -443,10 +447,38 @@ function completionIconFor(kind: string): [string, string] {
   }
 }
 
+function completionGroupFor(kind: string): string {
+  switch (kind) {
+    case 'keyword':
+    case 'param':
+    case 'field':
+      return 'Keywords';
+    case 'alias':
+    case 'enum':
+    case 'struct':
+      return 'Types';
+    case 'package':
+    case 'module':
+    case 'scope':
+      return 'Sections';
+    case 'template':
+    case 'fn':
+      return 'Callables';
+    default:
+      return 'Symbols';
+  }
+}
+
 function renderCompletionList(): void {
+  let previousGroup = '';
   completionList.innerHTML = completionCandidates.map((label, i) => {
     const [iconClass, colorClass] = completionIconFor(completionCandidateKinds[i] ?? '');
-    return `<div class="completion-item${i === completionIndex ? ' active' : ''}" data-index="${i}">` +
+    const group = completionGroupFor(completionCandidateKinds[i] ?? '');
+    const header = group !== previousGroup
+      ? `<div class="completion-group" aria-hidden="true">${group}</div>`
+      : '';
+    previousGroup = group;
+    return `${header}<div class="completion-item${i === completionIndex ? ' active' : ''}" data-index="${i}">` +
       `<span class="completion-icon-col ci-${colorClass}">` +
       `<i class="codicon codicon-${iconClass}" aria-hidden="true"></i>` +
       `</span>` +
@@ -455,7 +487,30 @@ function renderCompletionList(): void {
   }).join('');
 }
 
-function showCompletionList(candidates: string[], insertTexts: string[], kinds: string[]): void {
+function positionCompletionList(): void {
+  if (completionList.hidden) {
+    return;
+  }
+
+  const pos = getCursorPixelPos();
+  const editorEl = source.closest('.editor')!;
+  const editorHeight = (editorEl as HTMLElement).clientHeight;
+  const lineHeight = parseFloat(getComputedStyle(source).lineHeight) || 20;
+  const listHeight = completionList.offsetHeight;
+  const gap = 6;
+  const lineTop = pos.y - lineHeight;
+  const lineBottom = pos.y;
+  const spaceBelow = editorHeight - lineBottom - gap;
+  const spaceAbove = lineTop - gap;
+
+  const top = spaceBelow >= listHeight
+    ? lineBottom + gap
+    : Math.max(gap, lineTop - gap - Math.min(listHeight, Math.max(spaceAbove, 0)));
+  completionList.style.top = `${top}px`;
+  completionList.style.left = `${pos.x}px`;
+}
+
+function showCompletionList(candidates: string[], insertTexts: string[], kinds: string[], contextKey: string, prefix: string): void {
   if (!candidates.length) {
     completionList.hidden = true;
     return;
@@ -464,22 +519,14 @@ function showCompletionList(candidates: string[], insertTexts: string[], kinds: 
   completionInsertTexts = insertTexts;
   completionCandidateKinds = kinds;
   completionIndex = 0;
+  completionContextKey = contextKey;
+  completionPrefix = prefix;
   renderCompletionList();
 
   completionList.style.top = '-9999px';
   completionList.style.left = '-9999px';
   completionList.hidden = false;
-
-  const pos = getCursorPixelPos();
-  const editorEl = source.closest('.editor')!;
-  const editorHeight = (editorEl as HTMLElement).clientHeight;
-  const lineHeight = parseFloat(getComputedStyle(source).lineHeight) || 20;
-  const listHeight = completionList.offsetHeight;
-  const spaceBelow = editorHeight - pos.y;
-
-  const top = spaceBelow >= listHeight + 4 ? pos.y : pos.y - lineHeight - listHeight;
-  completionList.style.top = `${top}px`;
-  completionList.style.left = `${pos.x}px`;
+  positionCompletionList();
 }
 
 function selectCompletionItem(index: number): void {
@@ -560,6 +607,11 @@ function acceptSuggestion(): boolean {
     return false;
   }
 
+  const acceptedIndex = completionList.hidden ? Math.max(0, completionIndex) : completionIndex;
+  const acceptedLabel = completionCandidates[acceptedIndex] ?? '';
+  const acceptedKind = completionCandidateKinds[acceptedIndex] ?? '';
+  const acceptedContextKey = completionContextKey;
+  const acceptedPrefix = completionPrefix;
   let insertText = suggestionInsertText;
   if (insertText.endsWith(':') && source.value[source.selectionEnd] === ':') {
     insertText = insertText.slice(0, -1);
@@ -578,6 +630,15 @@ function acceptSuggestion(): boolean {
   }
   const edit = snippetEngine.getSuggestionEdit(insertText);
   replaceSelection(edit.text, undefined, edit.selection);
+  if (acceptedLabel && acceptedContextKey) {
+    vscode.postMessage({
+      type: 'suggestionAccepted',
+      contextKey: acceptedContextKey,
+      prefix: acceptedPrefix,
+      label: acceptedLabel,
+      kind: acceptedKind
+    });
+  }
   clearSuggestion();
   const wasActive = snippetEngine.active;
   if (edit.tabStops && edit.tabStops.length > 0) {
@@ -1046,13 +1107,15 @@ window.addEventListener('message', (event: MessageEvent) => {
     const serverReplaceLeft: number = event.data.replaceLeft || 0;
     const candidates: string[] = event.data.candidates || [];
     const candidateKinds: string[] = event.data.candidateKinds || [];
+    const contextKey: string = event.data.contextKey || '';
+    const prefix: string = event.data.prefix || '';
     if (popupAllowed && candidates.length > 0 && serverInsertText && !source.value.startsWith(serverInsertText, source.selectionEnd)) {
       suggestionInsertText = serverInsertText;
       suggestionReplaceLeft = serverReplaceLeft;
       if (/\w/.test(serverInsertText)) {
         const tailLen = Math.max(0, candidates[0].length - serverInsertText.length);
         const insertTexts = candidates.map((c) => c.slice(tailLen));
-        showCompletionList(candidates, insertTexts, candidateKinds);
+        showCompletionList(candidates, insertTexts, candidateKinds, contextKey, prefix);
       } else {
         completionList.hidden = true;
       }
@@ -1096,6 +1159,15 @@ function syncMetrics(syncCursor: boolean): void {
   }
 }
 
+function handleViewportResize(): void {
+  syncMetrics(true);
+  renderSuggestion();
+  requestAnimationFrame(() => {
+    syncScroll();
+    positionCompletionList();
+  });
+}
+
 source.closest('.editor')!.appendChild(completionList);
 
 completionList.addEventListener('mousedown', (event) => {
@@ -1108,10 +1180,8 @@ completionList.addEventListener('mousedown', (event) => {
 });
 
 syncMetrics(true);
-window.addEventListener('resize', () => {
-  syncMetrics(true);
-});
-window.visualViewport?.addEventListener('resize', () => syncMetrics(true));
+window.addEventListener('resize', handleViewportResize);
+window.visualViewport?.addEventListener('resize', handleViewportResize);
 
 if (window.__cgenCursor > 0) {
   const pos = Math.min(window.__cgenCursor, source.value.length);

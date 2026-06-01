@@ -1,4 +1,4 @@
-import { CgenProjectIndex } from './indexer';
+import { CgenProjectIndex, type SuggestionUsageRecord } from './indexer';
 import { makePublicPath } from './parser';
 
 export interface SuggestionRequest {
@@ -11,6 +11,8 @@ export interface SuggestionResult {
   replaceLeft: number;
   candidates: string[];
   candidateKinds: string[];
+  contextKey: string;
+  prefix: string;
 }
 
 type SectionKind = 'root' | 'package' | 'module' | 'scope';
@@ -128,7 +130,10 @@ export async function createDslSuggestion(
   const currentIndent = lineRange.before.match(/^\s*/)?.[0].length ?? 0;
   const context = findCurrentContext(request.text.slice(0, lineRange.lineStart), currentIndent);
   const currentTemplate = findCurrentTemplate(request.text.slice(0, lineRange.lineStart), currentIndent);
-  const matches = pickSuggestions(linePrefix, context, currentTemplate, index);
+  const contextKey = getSuggestionContextKey(context, currentTemplate, linePrefix, index);
+  const prefix = getSuggestionPrefix(linePrefix);
+  const usage = projectIndex.getSuggestionUsage(contextKey, prefix);
+  const matches = pickSuggestions(linePrefix, context, currentTemplate, index, usage);
   if (!matches.length) {
     return undefined;
   }
@@ -143,7 +148,9 @@ export async function createDslSuggestion(
     insertText: trimDot(matches[0].slice(sliceFrom)),
     replaceLeft: divergeAtDot ? 1 : 0,
     candidates: resolvedCandidates,
-    candidateKinds: resolvedCandidates.map((c) => resolveKindForCandidate(c, index))
+    candidateKinds: resolvedCandidates.map((c) => resolveKindForCandidate(c, index)),
+    contextKey,
+    prefix
   };
 }
 
@@ -336,10 +343,20 @@ function uniqueInOrder(values: string[]): string[] {
   return [...new Set(values)];
 }
 
-function pickSuggestions(linePrefix: string, contextPath: string[], currentTemplate: CurrentTemplate, index: DslIndex): string[] {
+function pickSuggestions(
+  linePrefix: string,
+  contextPath: string[],
+  currentTemplate: CurrentTemplate,
+  index: DslIndex,
+  usage: SuggestionUsageRecord[]
+): string[] {
   const indent = linePrefix.match(/^\s*/)?.[0] ?? '';
   const typed = linePrefix.trimStart();
-  const candidates = getCandidates(typed, contextPath, currentTemplate, index);
+  const candidates = rankCandidates(
+    getCandidates(typed, contextPath, currentTemplate, index),
+    typed,
+    usage
+  );
   return candidates
     .filter((candidate) => {
       if (candidate.startsWith(typed) && candidate.length > typed.length) { return true; }
@@ -352,6 +369,46 @@ function pickSuggestions(linePrefix: string, contextPath: string[], currentTempl
     })
     .slice(0, 24)
     .map((candidate) => `${indent}${candidate}`);
+}
+
+function rankCandidates(candidates: string[], typed: string, usage: SuggestionUsageRecord[]): string[] {
+  const usageByLabel = new Map(usage.map((record) => [record.label, record]));
+  return candidates
+    .map((candidate, index) => {
+      const usageRecord = usageByLabel.get(candidate);
+      const exactPrefixBoost = candidate.startsWith(typed) ? 80 : 0;
+      const usageBoost = usageRecord ? Math.min(60, usageRecord.acceptedCount * 8) : 0;
+      const recencyBoost = usageRecord?.lastAcceptedAt ? Math.max(0, 12 - Math.floor((Date.now() - Date.parse(usageRecord.lastAcceptedAt)) / 86_400_000)) : 0;
+      return { candidate, score: exactPrefixBoost + usageBoost + recencyBoost - index };
+    })
+    .sort((left, right) => right.score - left.score)
+    .map((item) => item.candidate);
+}
+
+function getSuggestionPrefix(linePrefix: string): string {
+  return linePrefix.trimStart().match(/@?[A-Za-z_][A-Za-z0-9_.]*$/)?.[0] ?? '';
+}
+
+function getSuggestionContextKey(
+  contextPath: string[],
+  currentTemplate: CurrentTemplate,
+  linePrefix: string,
+  index: DslIndex
+): string {
+  const typed = linePrefix.trimStart();
+  if (/^@/.test(typed)) return 'attribute';
+  if (/(?:\s+as\s+|\s+->\s*)[A-Za-z_][A-Za-z0-9_.]*$/.test(typed)) return 'type';
+  if (/^use\s+/.test(typed)) return isUseArgumentPosition(typed) ? 'use.argument' : 'use.template';
+  if (/^return\s+/.test(typed)) return 'return.expression';
+  if (/^(package|module|scope|group)\s+/.test(typed)) return 'section.name';
+  if (/^template\s+[A-Za-z_][A-Za-z0-9_]*\(/.test(typed)) return 'template.param';
+  if (/^(?:mut\s+)?fn\s+[A-Za-z_][A-Za-z0-9_]*\(/.test(typed)) return 'fn.param';
+  if (currentTemplate.insideFn) return 'fn.body';
+  if (currentTemplate.insideStruct) return 'struct.body';
+  if (currentTemplate.insideTemplate) return 'template.body';
+
+  const node = findNode(index.root, contextPath);
+  return `declaration.${node?.kind ?? 'root'}`;
 }
 
 function getCandidates(typed: string, contextPath: string[], currentTemplate: CurrentTemplate, index: DslIndex): string[] {
@@ -824,7 +881,8 @@ function findNode(root: DslNode, path: string[]): DslNode | undefined {
 
 function resolveKindForCandidate(candidate: string, index: DslIndex): string {
   if (/^@/.test(candidate)) return 'keyword';
-  if (/^(package|module|scope|group)\b/.test(candidate)) return 'module';
+  const sectionKind = candidate.match(/^(package|module|scope|group)\b/)?.[1];
+  if (sectionKind) return sectionKind === 'group' ? 'module' : sectionKind;
   if (/^alias\b/.test(candidate)) return 'alias';
   if (/^enum\b/.test(candidate)) return 'enum';
   if (/^struct\b/.test(candidate)) return 'struct';

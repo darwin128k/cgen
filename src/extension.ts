@@ -152,7 +152,7 @@ async function openDslEditor(context: vscode.ExtensionContext) {
   });
   await postFormatPolicy();
 
-  panel.webview.onDidReceiveMessage(async (message: { type: string; text?: string; cursor?: number; scrollTop?: number; id?: number; line?: number; action?: string; data?: unknown }) => {
+  panel.webview.onDidReceiveMessage(async (message: { type: string; text?: string; cursor?: number; scrollTop?: number; id?: number; line?: number; action?: string; data?: unknown; contextKey?: string; prefix?: string; label?: string; kind?: string }) => {
     if (message.type === 'expand') {
       await vscode.commands.executeCommand('workbench.action.toggleMaximizeEditorGroup');
       return;
@@ -182,8 +182,21 @@ async function openDslEditor(context: vscode.ExtensionContext) {
         insertText: suggestion?.insertText ?? '',
         replaceLeft: suggestion?.replaceLeft ?? 0,
         candidates: suggestion?.candidates ?? [],
-        candidateKinds: suggestion?.candidateKinds ?? []
+        candidateKinds: suggestion?.candidateKinds ?? [],
+        contextKey: suggestion?.contextKey ?? '',
+        prefix: suggestion?.prefix ?? ''
       });
+      return;
+    }
+
+    if (message.type === 'suggestionAccepted' && typeof message.contextKey === 'string' && typeof message.label === 'string') {
+      const projectIndex = await getProjectIndex(context, workspaceFolder);
+      projectIndex?.recordSuggestionAccepted(
+        message.contextKey,
+        message.prefix ?? '',
+        message.label,
+        message.kind ?? ''
+      );
       return;
     }
 
