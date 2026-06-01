@@ -283,6 +283,14 @@ function clearDiagnosticLines(): void {
   renderErrorLines();
 }
 
+function shiftDiagnosticLines(fromLine: number, delta: number): void {
+  if (diagnosticLines.length === 0 || delta === 0) { return; }
+  const maxLine = source.value.split('\n').length;
+  diagnosticLines = diagnosticLines
+    .map((line) => line >= fromLine ? line + delta : line)
+    .filter((line) => line >= 1 && line <= maxLine);
+}
+
 function renderErrorLines(): void {
   renderStripeMarkers();
 }
@@ -676,10 +684,13 @@ function acceptSuggestion(): boolean {
 function replaceSelection(text: string, cursorOffset?: number, selection?: { start: number; end: number }): void {
   const start = source.selectionStart;
   const end = source.selectionEnd;
+  const fromLine = source.value.slice(0, start).split('\n').length + 1;
+  const oldLineCount = source.value.split('\n').length;
   source.value = `${source.value.slice(0, start)}${text}${source.value.slice(end)}`;
   const cursor = start + (cursorOffset ?? text.length);
   source.selectionStart = start + (selection?.start ?? cursor - start);
   source.selectionEnd = start + (selection?.end ?? cursor - start);
+  shiftDiagnosticLines(fromLine, source.value.split('\n').length - oldLineCount);
   clearSuggestion();
   schedulePaint();
   updateSelectionMode();
@@ -936,8 +947,14 @@ function smartBackspace(): boolean {
   return true;
 }
 
+let priorLineCount = 1;
+let priorCursorLine = 1;
+source.addEventListener('beforeinput', () => {
+  priorLineCount = source.value.split('\n').length;
+  priorCursorLine = source.value.slice(0, source.selectionStart).split('\n').length + 1;
+});
 source.addEventListener('input', () => {
-  clearDiagnosticLines();
+  shiftDiagnosticLines(priorCursorLine, source.value.split('\n').length - priorLineCount);
   clearSuggestion();
   schedulePaint();
   popupAllowed = true;
