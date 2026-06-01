@@ -3,6 +3,11 @@ scope c:
     template type(name):
         use c.expr(name)
 
+    scope ptr:
+        @template(inline, define)
+        template of(type):
+            use c.expr("${type} *")
+
     alias char as c.type(char)
     alias schar as c.type(signed char)
     alias uchar as c.type(unsigned char)

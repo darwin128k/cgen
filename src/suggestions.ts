@@ -72,6 +72,8 @@ const snippets = [
   '@fn(extern)',
   '@fn(inline)',
   '@fn(static, inline)',
+  '@template(inline)',
+  '@template(inline, define)',
   '@template(mutable)',
   'package name:',
   'module name:',

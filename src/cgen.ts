@@ -71,6 +71,7 @@ interface TemplateSymbol {
   moduleId: string;
   includePath: string;
   inlineOnly: boolean;
+  defineOnly: boolean;
   rawBody?: string;
   rawParams?: string[];
 }
@@ -801,7 +802,8 @@ function buildTemplateSymbols(modules: ModuleArtifact[]): Map<string, TemplateSy
         macroName,
         moduleId: module.id,
         includePath: module.includePath,
-        inlineOnly: template.attributes.some((a) => a.name === 'template' && a.args[0] === 'inline'),
+        inlineOnly: template.attributes.some((a) => a.name === 'template' && a.args.includes('inline')),
+        defineOnly: template.attributes.some((a) => a.name === 'template' && a.args.includes('define')),
         ...(template.bodyRaw && template.body ? { rawBody: template.body, rawParams: template.params.map((p) => p.name) } : {})
       });
     }
@@ -1463,6 +1465,31 @@ function renderEnumCaseForHeader(
   return `static const ${cName} ${memberName} = ${rawValue};`;
 }
 
+function isTypeTemplateParam(paramName: string | undefined): boolean {
+  return paramName === 'type';
+}
+
+function expandTypeTemplateExpression(
+  expression: UseExpression,
+  template: TemplateSymbol,
+  line: number,
+  symbols: Map<string, TypeSymbol>,
+  templateSymbols: Map<string, TemplateSymbol>
+): string {
+  const args = expression.args.map((arg, index) => {
+    const paramName = template.rawParams?.[index];
+    return isTypeTemplateParam(paramName)
+      ? resolveTypeExpression(arg, line, symbols, templateSymbols)
+      : arg;
+  });
+  for (const [index, paramName] of (template.rawParams ?? []).entries()) {
+    if (isTypeTemplateParam(paramName) && expression.args[index] === undefined) {
+      throw new Error(`Line ${line}: type template "${expression.callee}" expects argument "${paramName}"`);
+    }
+  }
+  return applyRawBody(template.rawBody!, template.rawParams ?? [], args);
+}
+
 function resolveTypeExpression(
   target: string,
   line: number,
@@ -1474,19 +1501,12 @@ function resolveTypeExpression(
 
   const expression = parseCallExpression(target, line);
   if (expression) {
-    if (expression.callee === 'c.ptr.of' && expression.args.length === 1) {
-      return `${resolveTypeExpression(expression.args[0], line, symbols, templateSymbols)} *`;
-    }
-
     const template = templateSymbols.get(expression.callee);
     if (template?.rawBody !== undefined) {
-      return applyRawBody(template.rawBody, template.rawParams ?? [], expression.args);
+      return expandTypeTemplateExpression(expression, template, line, symbols, templateSymbols);
     }
 
-    if (expression.callee !== 'c.ptr.of') {
-      throw new Error(`Line ${line}: unknown type builtin "${expression.callee}"`);
-    }
-    throw new Error(`Line ${line}: c.ptr.of expects exactly one argument`);
+    throw new Error(`Line ${line}: unknown type template "${expression.callee}"`);
   }
 
   const symbol = symbols.get(target);
@@ -1507,15 +1527,18 @@ function getTypeExpressionSymbols(
 
   const expression = parseCallExpression(target, line);
   if (expression) {
-    if (templateSymbols.get(expression.callee)?.rawBody !== undefined) {
-      return [];
+    const template = templateSymbols.get(expression.callee);
+    if (template?.rawBody !== undefined) {
+      const result: TypeSymbol[] = [];
+      for (let index = 0; index < expression.args.length; index += 1) {
+        if (isTypeTemplateParam(template.rawParams?.[index])) {
+          result.push(...getTypeExpressionSymbols(expression.args[index], line, symbols, templateSymbols));
+        }
+      }
+      return result;
     }
 
-    if (expression.callee !== 'c.ptr.of' || expression.args.length !== 1) {
-      throw new Error(`Line ${line}: unknown type builtin "${expression.callee}"`);
-    }
-
-    return getTypeExpressionSymbols(expression.args[0], line, symbols, templateSymbols);
+    throw new Error(`Line ${line}: unknown type template "${expression.callee}"`);
   }
 
   const symbol = symbols.get(target);
@@ -1566,15 +1589,12 @@ function isDefineOnlyTypeExpression(
 
   const expression = parseCallExpression(target, line);
   if (expression) {
-    if (templateSymbols.get(expression.callee)?.rawBody !== undefined) {
-      return false;
+    const template = templateSymbols.get(expression.callee);
+    if (template?.rawBody !== undefined) {
+      return template.defineOnly;
     }
 
-    if (expression.callee !== 'c.ptr.of' || expression.args.length !== 1) {
-      throw new Error(`Line ${line}: unknown type builtin "${expression.callee}"`);
-    }
-
-    return true;
+    throw new Error(`Line ${line}: unknown type template "${expression.callee}"`);
   }
 
   const symbol = symbols.get(target);

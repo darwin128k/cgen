@@ -154,7 +154,7 @@ typedef lh_uchar_t lh_byte_t;
 
 If the target type lives in another generated module, CGen adds the needed `#include` automatically.
 
-**Special cases — `c.void` and `c.ptr.of(...)`:** because `typedef void foo_t` is an incomplete type, and pointer aliases are intended to behave as pure C spelling aliases, these targets generate `#define` declarations instead:
+**Special cases — `c.void` and define-only type templates:** because `typedef void foo_t` is an incomplete type, and pointer aliases are intended to behave as pure C spelling aliases, these targets generate `#define` declarations instead. The bundled `c.ptr.of(...)` template is declared in `packages/c.cgen` as a define-only inline type template.
 
 ```cgen
 alias void as c.void
