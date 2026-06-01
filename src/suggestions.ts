@@ -1,5 +1,6 @@
 import { CgenProjectIndex, type SuggestionUsageRecord } from './indexer';
 import { makePublicPath } from './parser';
+import { contextCandidates } from './completionRules';
 
 export interface SuggestionRequest {
   text: string;
@@ -63,51 +64,6 @@ const builtinTemplates = [
   'c.volatile'
 ];
 
-const snippets = [
-  '@emit(header)',
-  '@emit(source)',
-  '@emit(both)',
-  '@enum(static)',
-  '@enum(define)',
-  '@enum(extern)',
-  '@fn(static)',
-  '@fn(extern)',
-  '@fn(inline)',
-  '@fn(static, inline)',
-  '@template(inline)',
-  '@template(inline, define)',
-  '@template(mutable)',
-  'package name:',
-  'module name:',
-  'scope name:',
-  'alias name -> type',
-  'enum name -> type:',
-  'struct name:',
-  'case name',
-  'template name:',
-  'template name():',
-  'fn name() -> type:',
-  'mut fn name() -> type:',
-  'name',
-  '... -> values',
-  'field name -> type',
-  'mut field name -> type',
-  'use c.ptr(value)'
-];
-
-const declarationSnippets = [
-  'alias name -> type',
-  'enum name -> type:',
-  'struct name:',
-  'template name:',
-  'template name():',
-  'fn name() -> type:',
-  'name',
-  'name -> any',
-  'name -> template',
-  '... -> values',
-  'field name -> type'
-];
 
 export async function createDslSuggestion(
   projectIndex: CgenProjectIndex,
@@ -413,7 +369,7 @@ function getSuggestionContextKey(
 
 function getCandidates(typed: string, contextPath: string[], currentTemplate: CurrentTemplate, index: DslIndex): string[] {
   if (/^@/.test(typed)) {
-    const attrSnippets = snippets.filter((snippet) => snippet.startsWith('@'));
+    const attrSnippets = [...contextCandidates['attribute']];
     if (currentTemplate.insideStruct || currentTemplate.insideTemplate) {
       return [...attrSnippets, '@use(inline)'];
     }
@@ -458,7 +414,7 @@ function getCandidates(typed: string, contextPath: string[], currentTemplate: Cu
   }
 
   if (/^case\s+/.test(typed)) {
-    return snippets.filter((snippet) => snippet.startsWith('case '));
+    return ['case name'];
   }
 
   if (/^template\s+[A-Za-z_][A-Za-z0-9_]*\(/.test(typed)) {
@@ -484,60 +440,20 @@ function getCandidates(typed: string, contextPath: string[], currentTemplate: Cu
   return getContextSnippets(contextPath, currentTemplate, index);
 }
 
-function getContextSnippets(contextPath: string[], currentTemplate: CurrentTemplate, index: DslIndex): string[] {
-  if (currentTemplate.insideFn) {
-    return ['return ', 'use c.expr("")'];
-  }
-
-  if (currentTemplate.insideStruct) {
-    return ['field name -> type', 'mut field name -> type', 'use c.ptr(value)', 'fn name() -> type:', 'mut fn name() -> type:'];
-  }
-  if (currentTemplate.excludeNames.length > 0) {
-    return ['name', 'name -> any', 'name -> template', '... -> values', 'field name -> type', 'mut field name -> type', 'use c.ptr(value)'];
-  }
-
+function getStaticContextKey(contextPath: string[], currentTemplate: CurrentTemplate, index: DslIndex): string {
+  if (currentTemplate.insideFn) { return 'fn.body'; }
+  if (currentTemplate.insideStruct) { return 'struct.body'; }
+  if (currentTemplate.insideTemplate) { return 'template.body'; }
   const node = findNode(index.root, contextPath);
-  const kind = node?.kind ?? 'root';
+  return `declaration.${node?.kind ?? 'root'}`;
+}
 
-  if (kind === 'module' || kind === 'scope') {
-    return [
-      'alias name -> type',
-      'enum name -> type:',
-      'struct name:',
-      'template name:',
-      'template name():',
-      'fn name() -> type:',
-      'scope name:',
-    ];
-  }
-
-  return [
-    'package name:',
-    'module name:',
-    'scope name:',
-  ];
+function getContextSnippets(contextPath: string[], currentTemplate: CurrentTemplate, index: DslIndex): string[] {
+  return [...(contextCandidates[getStaticContextKey(contextPath, currentTemplate, index)] ?? [])];
 }
 
 function getDeclarationSnippetsForContext(contextPath: string[], currentTemplate: CurrentTemplate, index: DslIndex): string[] {
-  if (currentTemplate.insideFn) {
-    return ['return ', 'use c.expr("")'];
-  }
-
-  if (currentTemplate.insideStruct) {
-    return ['field name -> type', 'mut field name -> type', 'fn name() -> type:', 'mut fn name() -> type:'];
-  }
-  if (currentTemplate.excludeNames.length > 0) {
-    return ['name', 'name -> any', 'name -> template', '... -> values', 'field name -> type', 'mut field name -> type'];
-  }
-
-  const node = findNode(index.root, contextPath);
-  const kind = node?.kind ?? 'root';
-
-  if (kind === 'module' || kind === 'scope') {
-    return ['alias name -> type', 'enum name -> type:', 'struct name:', 'template name:', 'template name():', 'fn name() -> type:', 'scope name:'];
-  }
-
-  return ['package name:', 'module name:', 'scope name:'];
+  return getContextSnippets(contextPath, currentTemplate, index);
 }
 
 function getInlineParamCandidates(typed: string): string[] {

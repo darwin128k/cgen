@@ -2,6 +2,7 @@ import { SnippetEngine } from './snippetEngine';
 import { LineAttachmentController } from './lineAttachments';
 import { formatCgenWithCursor } from '../../src/formatter';
 import keywords from '../../src/keywords.json';
+import { contextCandidates } from '../../src/completionRules';
 
 declare function acquireVsCodeApi(): { postMessage(data: unknown): void };
 declare global {
@@ -39,6 +40,8 @@ let completionCandidateKinds: string[] = [];
 let completionIndex = 0;
 let completionContextKey = '';
 let completionPrefix = '';
+let lastContextCandidates: string[] = [];
+let lastContextKey = '';
 let formatPolicy = {
   formatOnSave: false,
   formatOnPaste: false
@@ -58,35 +61,6 @@ let characterWidth: number | undefined;
 let diagnosticLines: number[] = [];
 let activeLineIndex = 0;
 const indentText = '    ';
-const localSuggestionCandidates = [
-  '@emit(header)',
-  '@emit(source)',
-  '@emit(both)',
-  '@enum(static)',
-  '@enum(define)',
-  '@enum(extern)',
-  '@template(inline)',
-  '@template(inline, define)',
-  '@template(mutable)',
-  'package name:',
-  'module name:',
-  'scope name:',
-  'alias name -> type',
-  'enum name -> type:',
-  'struct name:',
-  'alias ptr -> c.ptr.of()',
-  'case name',
-  'template name:',
-  'fn name() -> type:',
-  'mut fn name() -> type:',
-  'param name',
-  'mut name -> type',
-  'const name -> type',
-  'param ... -> values',
-  'field name -> type',
-  'mut field name -> type',
-  'use c.ptr(value)'
-];
 let stripeCount = 0;
 
 function escapeHtml(value: string): string {
@@ -596,7 +570,8 @@ function getLocalSuggestion(): string {
   }
 
   const typed = beforeCursor.trimStart();
-  const candidate = localSuggestionCandidates.find((value) => value.startsWith(typed));
+  const pool = (contextCandidates[lastContextKey] as string[] | undefined) ?? lastContextCandidates;
+  const candidate = pool.find((value) => value.startsWith(typed));
   if (!candidate) { return ''; }
   const insert = candidate.slice(typed.length);
   return source.value.startsWith(insert, cursor) ? '' : insert;
@@ -1109,6 +1084,10 @@ window.addEventListener('message', (event: MessageEvent) => {
     const candidateKinds: string[] = event.data.candidateKinds || [];
     const contextKey: string = event.data.contextKey || '';
     const prefix: string = event.data.prefix || '';
+    lastContextKey = contextKey;
+    if (candidates.length > 0) {
+      lastContextCandidates = candidates;
+    }
     if (popupAllowed && candidates.length > 0 && serverInsertText && !source.value.startsWith(serverInsertText, source.selectionEnd)) {
       suggestionInsertText = serverInsertText;
       suggestionReplaceLeft = serverReplaceLeft;
@@ -1120,6 +1099,8 @@ window.addEventListener('message', (event: MessageEvent) => {
         completionList.hidden = true;
       }
     } else {
+      suggestionInsertText = '';
+      suggestionReplaceLeft = 0;
       completionList.hidden = true;
     }
     renderSuggestionNow();
