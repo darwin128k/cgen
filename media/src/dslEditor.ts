@@ -179,6 +179,35 @@ function highlightLinesWithGhost(lines: string[]): string {
   }).join('\n');
 }
 
+function highlightLinesWithSelection(lines: string[]): string {
+  const selectionStart = Math.min(source.selectionStart, source.selectionEnd);
+  const selectionEnd = Math.max(source.selectionStart, source.selectionEnd);
+  let offset = 0;
+
+  return lines.map((line) => {
+    const lineStart = offset;
+    const lineEnd = lineStart + line.length;
+    offset = lineEnd + 1;
+
+    if (selectionEnd <= lineStart || selectionStart > lineEnd) {
+      return highlightLine(line);
+    }
+
+    const start = Math.max(0, selectionStart - lineStart);
+    const end = Math.min(line.length, selectionEnd - lineStart);
+    const selectsLineBreak = selectionEnd > lineEnd && selectionStart <= lineEnd;
+    const selectedText = line.slice(start, end);
+    const lineBreakBlock = selectsLineBreak ? '<span class="selected-text selected-gap">&nbsp;</span>' : '';
+
+    return [
+      highlightLine(line.slice(0, start)),
+      selectedText ? `<span class="selected-text">${highlightLine(selectedText)}</span>` : '',
+      lineBreakBlock,
+      highlightLine(line.slice(end))
+    ].join('');
+  }).join('\n');
+}
+
 function paint(): void {
   syncMetrics(false);
   paintHighlight();
@@ -353,6 +382,7 @@ function updateSelectionMode(): void {
   if (source.selectionStart !== source.selectionEnd) {
     clearSuggestion();
   }
+  paintHighlight();
 }
 
 function clearSuggestion(): void {
@@ -450,8 +480,11 @@ function selectCompletionItem(index: number): void {
 
 function paintHighlight(): void {
   const lines = source.value.split('\n');
+  const hasSelection = source.selectionStart !== source.selectionEnd;
   const hasGhost = suggestionInsertText && source.selectionStart === source.selectionEnd;
-  const highlighted = navHoverRange
+  const highlighted = hasSelection
+    ? highlightLinesWithSelection(lines)
+    : navHoverRange
     ? highlightNavigationRange(lines)
     : hasGhost
       ? highlightLinesWithGhost(lines)

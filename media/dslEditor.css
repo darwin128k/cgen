@@ -361,6 +361,18 @@ button:hover {
   text-underline-offset: 2px;
 }
 
+.selected-text {
+  display: inline-block;
+  height: var(--cgen-line-height);
+  background: var(--vscode-editor-selectionBackground);
+  line-height: var(--cgen-line-height);
+  vertical-align: top;
+}
+
+.selected-gap {
+  min-width: 0.75ch;
+}
+
 .tab-stop {
   outline: 1px solid var(--vscode-editor-foreground, #ccc);
   border-radius: 2px;
@@ -471,22 +483,13 @@ body.vscode-high-contrast-light .ci-method {
   caret-color: var(--vscode-editorCursor-foreground);
 }
 
-.editor.has-selection #highlight,
-.editor.has-selection #suggestion {
-  visibility: hidden;
-}
-
-.editor.has-selection #source {
-  color: var(--vscode-editor-foreground);
-}
-
 .editor.has-nav-hover #source {
   cursor: pointer;
 }
 
 #source::selection {
-  color: var(--vscode-editor-foreground);
-  background: var(--vscode-editor-selectionBackground);
+  color: transparent;
+  background: transparent;
 }
 
 .kw {
