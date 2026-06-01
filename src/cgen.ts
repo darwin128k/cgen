@@ -520,7 +520,7 @@ function isTemplateMutable(template: TemplateNode): boolean {
 }
 
 function isFieldMutable(field: TemplateField, template?: TemplateNode): boolean {
-  return hasAttr(field.attributes, 'field', 'mutable') || (template ? isTemplateMutable(template) : false);
+  return field.mutable || (template ? isTemplateMutable(template) : false);
 }
 
 function renderFieldDeclaration(field: TemplateField, typeName: string, template?: TemplateNode): string {
@@ -771,6 +771,7 @@ function expandStructUse(
   return template.fields.map((field) => ({
     name: field.name,
     target: paramMap.get(field.target) ?? field.target,
+    mutable: field.mutable,
     attributes: field.attributes,
     line: field.line
   }));

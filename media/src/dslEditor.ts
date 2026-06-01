@@ -58,7 +58,6 @@ const localSuggestionCandidates = [
   '@enum(static)',
   '@enum(define)',
   '@enum(extern)',
-  '@field(mutable)',
   '@template(mutable)',
   'package name:',
   'module name:',
@@ -76,6 +75,7 @@ const localSuggestionCandidates = [
   'const name -> type',
   'param ... -> values',
   'field name -> type',
+  'mut field name -> type',
   'use c.ptr(value)'
 ];
 let stripeCount = 0;

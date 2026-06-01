@@ -36,6 +36,7 @@ export interface TemplateParam {
 export interface TemplateField {
   name: string;
   target: string;
+  mutable: boolean;
   attributes: Attribute[];
   line: number;
 }
@@ -558,9 +559,9 @@ function parseTemplateParam(line: string, lineNumber: number): TemplateParam | u
 }
 
 function parseTemplateField(line: string, lineNumber: number): TemplateField | undefined {
-  const match = line.match(/^field\s+([A-Za-z_][A-Za-z0-9_]*)(?:\s+as\s+|\s+->\s*)(.+)$/);
+  const match = line.match(/^(mut\s+)?field\s+([A-Za-z_][A-Za-z0-9_]*)(?:\s+as\s+|\s+->\s*)(.+)$/);
   if (!match) {
     return undefined;
   }
-  return { name: match[1], target: match[2].trim(), attributes: [], line: lineNumber };
+  return { name: match[2], target: match[3].trim(), mutable: !!match[1], attributes: [], line: lineNumber };
 }

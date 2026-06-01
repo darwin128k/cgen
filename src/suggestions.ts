@@ -72,7 +72,6 @@ const snippets = [
   '@fn(extern)',
   '@fn(inline)',
   '@fn(static, inline)',
-  '@field(mutable)',
   '@template(mutable)',
   'package name:',
   'module name:',
@@ -88,6 +87,7 @@ const snippets = [
   'name',
   '... -> values',
   'field name -> type',
+  'mut field name -> type',
   'use c.ptr(value)'
 ];
 
@@ -427,10 +427,10 @@ function getContextSnippets(contextPath: string[], currentTemplate: CurrentTempl
   }
 
   if (currentTemplate.insideStruct) {
-    return ['field name -> type', 'use c.ptr(value)', 'fn name() -> type:', 'mut fn name() -> type:'];
+    return ['field name -> type', 'mut field name -> type', 'use c.ptr(value)', 'fn name() -> type:', 'mut fn name() -> type:'];
   }
   if (currentTemplate.excludeNames.length > 0) {
-    return ['name', 'name -> any', 'name -> template', '... -> values', 'field name -> type', 'use c.ptr(value)'];
+    return ['name', 'name -> any', 'name -> template', '... -> values', 'field name -> type', 'mut field name -> type', 'use c.ptr(value)'];
   }
 
   const node = findNode(index.root, contextPath);
@@ -457,10 +457,10 @@ function getContextSnippets(contextPath: string[], currentTemplate: CurrentTempl
 
 function getDeclarationSnippetsForContext(contextPath: string[], currentTemplate: CurrentTemplate, index: DslIndex): string[] {
   if (currentTemplate.insideStruct) {
-    return ['field name -> type', 'fn name() -> type:', 'mut fn name() -> type:'];
+    return ['field name -> type', 'mut field name -> type', 'fn name() -> type:', 'mut fn name() -> type:'];
   }
   if (currentTemplate.excludeNames.length > 0) {
-    return ['name', 'name -> any', 'name -> template', '... -> values', 'field name -> type'];
+    return ['name', 'name -> any', 'name -> template', '... -> values', 'field name -> type', 'mut field name -> type'];
   }
 
   const node = findNode(index.root, contextPath);

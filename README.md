@@ -243,7 +243,7 @@ const lh_bool_t lh_bool_true  = 1;
 ```cgen
 struct point:
     field x as c.int
-    field y as c.int
+    mut field y as c.int
 
     fn get_x() -> any:
         return self.x
@@ -360,6 +360,7 @@ template pair:
 | `param name as template` | Callable parameter — `name(args)` in the `use` body expands as a raw C call |
 | `param ... as name`      | Variadic — `name` becomes `__VA_ARGS__` in output. The `...` form without `as` is a parse error. |
 | `field name as type`     | Struct field; cannot mix with `param` or `use` in the same template |
+| `mut field name as type` | Mutable struct field |
 
 ### Built-in template operations
 
