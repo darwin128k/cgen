@@ -475,7 +475,7 @@ function parseFn(line: string, lineNumber: number): FnNode | undefined {
   let rest = line.slice(startMatch[0].length);
   const params: FnParam[] = [];
 
-  if (startMatch[2]) {
+  if (startMatch[3]) {
     let depth = 1;
     let i = 0;
     for (; i < rest.length; i++) {

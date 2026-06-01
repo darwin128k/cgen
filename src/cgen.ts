@@ -32,7 +32,7 @@ export interface CgenConfig {
 }
 
 type EnumConstMode = 'static' | 'define' | 'extern';
-type EmitTarget = 'header' | 'source' | 'both';
+type OutputTarget = 'header' | 'source' | 'both';
 
 interface ModuleContext {
   pathParts: string[];
@@ -1058,14 +1058,14 @@ function getFnSpecifiers(fn: FnNode): string {
   return last.args.join(' ');
 }
 
-function getFnEmitTarget(fn: FnNode): EmitTarget {
-  const emitAttrs = fn.attributes.filter((a) => a.name === 'emit');
-  if (emitAttrs.length === 0) { return fn.body.length > 0 ? 'both' : 'header'; }
-  const last = emitAttrs[emitAttrs.length - 1];
-  if (last.args.length !== 1 || !['header', 'source', 'both'].includes(last.args[0])) {
-    throw new Error(`Line ${last.line}: @emit only supports @emit(header), @emit(source), and @emit(both)`);
+function getFnOutputTarget(fn: FnNode): OutputTarget {
+  const pubAttrs = fn.attributes.filter((a) => a.name === 'pub');
+  if (pubAttrs.length === 0) { return fn.body.length > 0 ? 'both' : 'header'; }
+  const last = pubAttrs[pubAttrs.length - 1];
+  if (last.args.length !== 1 || !['header', 'source', 'all'].includes(last.args[0])) {
+    throw new Error(`Line ${last.line}: @pub only supports @pub(header), @pub(source), and @pub(all)`);
   }
-  return last.args[0] as EmitTarget;
+  return last.args[0] === 'all' ? 'both' : last.args[0] as OutputTarget;
 }
 
 function makeFnSignature(
@@ -1283,9 +1283,9 @@ function renderHeader(
 
     declaration.members.forEach((member, index) => {
       const mode = getEnumConstMode(declaration);
-      const emit = getEmitTarget(declaration);
+      const target = getEnumOutputTarget(declaration);
 
-      if (shouldEmitHeaderCase(mode, emit)) {
+      if (shouldOutputHeaderCase(mode, target)) {
         lines.push(renderEnumCaseForHeader(allSymbolParts, declaration, member, index, cName, mode));
       }
     });
@@ -1356,16 +1356,16 @@ function renderHeader(
     lines.push(`} ${typedefName};`);
 
     for (const fn of struct.fns) {
-      const emit = getFnEmitTarget(fn);
-      if (emit === 'source') { continue; }
+      const target = getFnOutputTarget(fn);
+      if (target === 'source') { continue; }
       const fnCName = makeStructMethodCName(module, symbolParts, struct.name, fn.name);
       lines.push(`${makeStructMethodSignature(fn, fnCName, symbols, templateSymbols, typedefName, struct, paramTemplates)};`);
     }
   }
 
   for (const { fn, symbolParts: extraParts } of collectScopeFns(module.section, [])) {
-    const emit = getFnEmitTarget(fn);
-    if (emit === 'source') { continue; }
+    const target = getFnOutputTarget(fn);
+    if (target === 'source') { continue; }
     const fnCName = makeFnCName(module, extraParts, fn.name);
     lines.push(`${makeFnSignature(fn, fnCName, symbols, templateSymbols)};`);
   }
@@ -1389,9 +1389,9 @@ function renderSource(
     }
 
     const mode = getEnumConstMode(declaration);
-    const emit = getEmitTarget(declaration);
+    const target = getEnumOutputTarget(declaration);
 
-    if (mode !== 'extern' || (emit !== 'source' && emit !== 'both')) {
+    if (mode !== 'extern' || (target !== 'source' && target !== 'both')) {
       continue;
     }
 
@@ -1406,8 +1406,8 @@ function renderSource(
   }
 
   for (const { fn, symbolParts: extraParts } of collectScopeFns(module.section, [])) {
-    const emit = getFnEmitTarget(fn);
-    if (emit !== 'source' && emit !== 'both') { continue; }
+    const target = getFnOutputTarget(fn);
+    if (target !== 'source' && target !== 'both') { continue; }
     const fnCName = makeFnCName(module, extraParts, fn.name);
     lines.push(`${makeFnSignature(fn, fnCName, symbols, templateSymbols)} {`);
     lines.push(...renderFnBody(fn, templateSymbols));
@@ -1419,8 +1419,8 @@ function renderSource(
     const allSymbolParts = [...module.symbolParts, ...symbolParts];
     const typedefName = makeTypedefName(allSymbolParts, struct.name);
     for (const fn of struct.fns) {
-      const emit = getFnEmitTarget(fn);
-      if (emit !== 'source' && emit !== 'both') { continue; }
+      const target = getFnOutputTarget(fn);
+      if (target !== 'source' && target !== 'both') { continue; }
       const fnCName = makeStructMethodCName(module, symbolParts, struct.name, fn.name);
       lines.push(`${makeStructMethodSignature(fn, fnCName, symbols, templateSymbols, typedefName, struct, paramTemplates)} {`);
       lines.push(...renderFnBody(fn, templateSymbols, true));
@@ -1437,12 +1437,12 @@ function renderSource(
   return lines.join('\n');
 }
 
-function shouldEmitHeaderCase(mode: EnumConstMode, emit: EmitTarget): boolean {
+function shouldOutputHeaderCase(mode: EnumConstMode, target: OutputTarget): boolean {
   if (mode === 'define' || mode === 'static') {
     return true;
   }
 
-  return emit === 'header' || emit === 'both';
+  return target === 'header' || target === 'both';
 }
 
 function renderEnumCaseForHeader(
@@ -1626,24 +1626,21 @@ function getEnumConstMode(declaration: EnumNode): EnumConstMode {
   return 'static';
 }
 
-function getEmitTarget(declaration: EnumNode): EmitTarget {
-  const emitAttributes = declaration.attributes.filter((attribute) => attribute.name === 'emit');
-  if (emitAttributes.length === 0) {
-    return 'header';
+function getEnumOutputTarget(declaration: EnumNode): OutputTarget {
+  const pubAttrs = declaration.attributes.filter((a) => a.name === 'pub');
+  if (pubAttrs.length === 0) { return 'header'; }
+  const last = pubAttrs[pubAttrs.length - 1];
+  if (last.args.length !== 1 || !['header', 'source', 'all'].includes(last.args[0])) {
+    throw new Error(`Line ${last.line}: @pub only supports @pub(header), @pub(source), and @pub(all)`);
   }
-
-  const attribute = emitAttributes[emitAttributes.length - 1];
-  if (attribute.args.length !== 1 || !['header', 'source', 'both'].includes(attribute.args[0])) {
-    throw new Error(`Line ${attribute.line}: @emit only supports @emit(header), @emit(source), and @emit(both)`);
+  if (last.args[0] === 'all') {
+    const mode = getEnumConstMode(declaration);
+    if (mode === 'static' || mode === 'define') {
+      throw new Error(`Line ${last.line}: @enum(${mode}) cannot use @pub(all), only @pub(header)`);
+    }
+    return 'both';
   }
-
-  const emit = attribute.args[0] as EmitTarget;
-  const mode = getEnumConstMode(declaration);
-  if ((mode === 'static' || mode === 'define') && emit !== 'header') {
-    throw new Error(`Line ${attribute.line}: @enum(${mode}) can only use @emit(header)`);
-  }
-
-  return emit;
+  return last.args[0] as OutputTarget;
 }
 
 function collectScopeTypeDeclarations(section: SectionNode, extraParts: string[]): ScopedTypeDeclaration[] {

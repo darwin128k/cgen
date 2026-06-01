@@ -202,19 +202,11 @@ case true  = 1
 | `@enum(define)` | `#define name ((T)value)`            | —             |
 | `@enum(extern)` | `extern const T name;`               | optional      |
 
-### Emit targets (for `@enum(extern)` only)
-
-| Attribute       | Effect |
-|-----------------|--------|
-| `@emit(header)` | Header declarations only (default) |
-| `@emit(source)` | Source definitions only |
-| `@emit(both)`   | Header declarations + source definitions |
-
 Example with source emission:
 
 ```cgen
+@pub(all)
 @enum(extern)
-@emit(both)
 enum bool as lh.byte:
     case false
     case true
@@ -275,13 +267,15 @@ Function bodies support two statement forms:
 
 When a struct method has `-> any` as its return type and a single `return self.field` body, the type is inferred from the field's declared type.
 
-### Emit targets
+### Visibility
 
-| Attribute       | Effect |
-|-----------------|--------|
-| `@emit(header)` | Declaration only (default when no body) |
-| `@emit(source)` | Definition only |
-| `@emit(both)`   | Both header declaration and source definition (default when body present) |
+| Attribute       | Header (.h) | Source (.c) |
+|-----------------|-------------|-------------|
+| `@pub(header)`  | declaration | —           |
+| `@pub(source)`  | —           | definition  |
+| `@pub(all)`     | declaration | definition  |
+
+Default when `@pub` is absent: `@pub(all)` if the function has a body, `@pub(header)` if it does not.
 
 ## Templates
 
