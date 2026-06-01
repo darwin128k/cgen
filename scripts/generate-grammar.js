@@ -3,7 +3,7 @@ const fs = require('fs');
 const path = require('path');
 
 const keywords = require('../src/keywords.json');
-const kwPattern = `\\\\b(${keywords.join('|')})\\\\b`;
+const kwPattern = `\\b(${keywords.join('|')})\\b`;
 
 const grammar = {
   scopeName: 'source.cgen',
