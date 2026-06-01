@@ -21,12 +21,51 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('cgen.saveEditor', () => saveEditorFn?.()),
     vscode.commands.registerCommand('cgen.openScratchFile', openScratchFile),
     vscode.commands.registerCommand('cgen.generateFromFile', () => generateFromCurrentFile(context)),
+    vscode.commands.registerCommand('cgen.internalSuggestionAccepted', async (contextKey: string, prefix: string, label: string, kind: string) => {
+      const workspaceFolder = getWorkspaceFolder();
+      if (!workspaceFolder) { return; }
+      const projectIndex = await getProjectIndex(context, workspaceFolder);
+      projectIndex?.recordSuggestionAccepted(contextKey, prefix, label, kind);
+    }),
     vscode.languages.registerDocumentFormattingEditProvider('cgen', {
       provideDocumentFormattingEdits(document) {
         const formatted = formatCgen(document.getText());
         return [vscode.TextEdit.replace(fullDocumentRange(document), formatted)];
       }
-    })
+    }),
+    vscode.languages.registerCompletionItemProvider(
+      'cgen',
+      {
+        async provideCompletionItems(document, position) {
+          const workspaceFolder = vscode.workspace.getWorkspaceFolder(document.uri) ?? getWorkspaceFolder();
+          if (!workspaceFolder) { return undefined; }
+          const projectIndex = await getProjectIndex(context, workspaceFolder);
+          if (!projectIndex) { return undefined; }
+
+          const text = document.getText();
+          const cursor = document.offsetAt(position);
+          const result = await createDslSuggestion(projectIndex, { text, cursor });
+          if (!result || result.candidates.length === 0) { return undefined; }
+
+          const tailLen = Math.max(0, result.candidates[0].length - result.insertText.length);
+          const rangeStart = document.positionAt(Math.max(0, cursor - tailLen - result.replaceLeft));
+          const range = new vscode.Range(rangeStart, position);
+
+          return result.candidates.map((label, i) => {
+            const item = new vscode.CompletionItem(label, kindToVscodeKind(result.candidateKinds[i]));
+            item.insertText = label;
+            item.range = range;
+            item.command = {
+              command: 'cgen.internalSuggestionAccepted',
+              title: '',
+              arguments: [result.contextKey, result.prefix, label, result.candidateKinds[i]]
+            };
+            return item;
+          });
+        }
+      },
+      '.', '@', '('
+    )
   );
 }
 
@@ -438,6 +477,23 @@ function escapeHtml(value: string): string {
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;');
+}
+
+function kindToVscodeKind(kind: string): vscode.CompletionItemKind {
+  switch (kind) {
+    case 'keyword': return vscode.CompletionItemKind.Keyword;
+    case 'alias': return vscode.CompletionItemKind.TypeParameter;
+    case 'enum': return vscode.CompletionItemKind.Enum;
+    case 'struct': return vscode.CompletionItemKind.Struct;
+    case 'template': return vscode.CompletionItemKind.Function;
+    case 'fn': return vscode.CompletionItemKind.Function;
+    case 'field': return vscode.CompletionItemKind.Field;
+    case 'param': return vscode.CompletionItemKind.Variable;
+    case 'package': return vscode.CompletionItemKind.Module;
+    case 'module': return vscode.CompletionItemKind.Module;
+    case 'scope': return vscode.CompletionItemKind.Module;
+    default: return vscode.CompletionItemKind.Text;
+  }
 }
 
 function parseErrorLineNumbers(message: string): number[] {
