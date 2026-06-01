@@ -214,7 +214,7 @@ function paint(): void {
   suggestion.textContent = '';
 
   const lineCount = Math.max(1, source.value.split('\n').length);
-  lineNumbers.textContent = Array.from({ length: lineCount }, (_, index) => String(index + 1)).join('\n');
+  lineNumbers.innerHTML = renderLineNumbers(lineCount);
   ensureStripeCount();
   renderErrorLines();
   updateSelectionMode();
@@ -223,6 +223,13 @@ function paint(): void {
   lineAttachments.render();
   syncScroll();
   requestAnimationFrame(syncScroll);
+}
+
+function renderLineNumbers(lineCount: number): string {
+  return Array.from({ length: lineCount }, (_, index) => {
+    const active = index === activeLineIndex ? ' active' : '';
+    return `<span class="line-number${active}">${index + 1}</span>`;
+  }).join('');
 }
 
 function ensureStripeCount(): void {
@@ -373,8 +380,12 @@ function updateBreadcrumb(): void {
 
 function updateActiveLine(): void {
   const textBeforeCaret = source.value.slice(0, source.selectionStart);
+  const previousActiveLineIndex = activeLineIndex;
   activeLineIndex = textBeforeCaret.split('\n').length - 1;
   renderStripeMarkers();
+  if (previousActiveLineIndex !== activeLineIndex) {
+    lineNumbers.innerHTML = renderLineNumbers(Math.max(1, source.value.split('\n').length));
+  }
 }
 
 function updateSelectionMode(): void {

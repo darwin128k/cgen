@@ -266,6 +266,7 @@ button:hover {
 
 .stripe-line.is-active::after {
   border-left: 3px solid var(--vscode-focusBorder, var(--vscode-editorCursor-foreground));
+  background: color-mix(in srgb, var(--vscode-editorLineHighlightBackground, var(--vscode-list-activeSelectionBackground, var(--vscode-focusBorder, #007acc))) 26%, transparent);
 }
 
 .stripe-line.has-error::before {
@@ -284,6 +285,18 @@ button:hover {
   pointer-events: none;
   text-align: right;
   user-select: none;
+}
+
+.line-number {
+  display: block;
+  height: var(--cgen-line-height);
+  line-height: var(--cgen-line-height);
+  box-sizing: border-box;
+  padding-right: 8px;
+}
+
+.line-number.active {
+  color: var(--vscode-editorLineNumber-activeForeground, var(--vscode-editor-foreground));
 }
 
 #highlight {
