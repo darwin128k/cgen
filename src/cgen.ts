@@ -134,8 +134,8 @@ export async function generateDsl(workspaceFolder: vscode.WorkspaceFolder, exten
   const includeRoot = resolveWorkspacePath(workspaceFolder, config.build.include);
   const sourceRoot = resolveWorkspacePath(workspaceFolder, config.build.source);
   const modules = collectModules(merged.root);
-  const symbols = buildTypeSymbols(modules);
   const templateSymbols = buildTemplateSymbols(modules);
+  const symbols = buildTypeSymbols(modules, templateSymbols);
   const paramTemplates = buildParamTemplateMap(modules);
   const bodyTemplates = buildBodyTemplateMap(modules);
 
@@ -537,12 +537,12 @@ function getHeaderArg(attributes: Attribute[]): string | undefined {
   return undefined;
 }
 
-function parseRawOf(target: string): string | undefined {
-  const match = target.match(/^c\.raw\("(.*)"\)$/);
+function parseExprOf(target: string): string | undefined {
+  const match = target.match(/^c\.expr\("(.*)"\)$/);
   return match ? match[1] : undefined;
 }
 
-function buildTypeSymbols(modules: ModuleArtifact[]): Map<string, TypeSymbol> {
+function buildTypeSymbols(modules: ModuleArtifact[], templateSymbols: Map<string, TemplateSymbol>): Map<string, TypeSymbol> {
   const symbols = new Map<string, TypeSymbol>();
   for (const module of modules) {
     for (const { declaration, symbolParts, typeParts } of collectScopeTypeDeclarations(module.section, [])) {
@@ -609,7 +609,7 @@ function buildTypeSymbols(modules: ModuleArtifact[]): Map<string, TypeSymbol> {
 
   for (const symbol of symbols.values()) {
     if (symbol.defineOnly) { continue; }
-    symbol.defineOnly = resolveTypeSymbolDefineOnly(symbol, symbols, new Set());
+    symbol.defineOnly = resolveTypeSymbolDefineOnly(symbol, symbols, templateSymbols, new Set());
   }
 
   return symbols;
@@ -826,7 +826,7 @@ function resolveModuleDependencies(
     for (const { declaration } of collectScopeTypeDeclarations(module.section, [])) {
       const header = getHeaderArg(declaration.attributes);
       if (header) { module.externHeaders.add(header); }
-      for (const symbol of getTypeExpressionSymbols(declaration.target, declaration.line, symbols)) {
+      for (const symbol of getTypeExpressionSymbols(declaration.target, declaration.line, symbols, templateSymbols)) {
         addDep(module, symbol.moduleId);
       }
     }
@@ -839,7 +839,7 @@ function resolveModuleDependencies(
         const paramNames = new Set(template.params.map((p) => p.name));
         for (const field of template.fields) {
           if (paramNames.has(field.target)) { continue; }
-          for (const symbol of getTypeExpressionSymbols(field.target, field.line, symbols)) {
+          for (const symbol of getTypeExpressionSymbols(field.target, field.line, symbols, templateSymbols)) {
             addDep(module, symbol.moduleId);
           }
         }
@@ -848,7 +848,7 @@ function resolveModuleDependencies(
 
       if (template.fields.length > 0) {
         for (const field of template.fields) {
-          for (const symbol of getTypeExpressionSymbols(field.target, field.line, symbols)) {
+          for (const symbol of getTypeExpressionSymbols(field.target, field.line, symbols, templateSymbols)) {
             addDep(module, symbol.moduleId);
           }
         }
@@ -869,7 +869,7 @@ function resolveModuleDependencies(
           for (const field of fieldTemplate.fields) {
             const mappedTarget = innerParamMap.get(field.target) ?? field.target;
             if (outerParamNames.has(mappedTarget)) { continue; }
-            for (const sym of getTypeExpressionSymbols(mappedTarget, field.line, symbols)) {
+            for (const sym of getTypeExpressionSymbols(mappedTarget, field.line, symbols, templateSymbols)) {
               addDep(module, sym.moduleId);
             }
           }
@@ -884,14 +884,14 @@ function resolveModuleDependencies(
 
     for (const { struct } of collectScopeStructs(module.section, [])) {
       for (const field of struct.fields) {
-        for (const symbol of getTypeExpressionSymbols(field.target, field.line, symbols)) {
+        for (const symbol of getTypeExpressionSymbols(field.target, field.line, symbols, templateSymbols)) {
           addDep(module, symbol.moduleId);
         }
       }
       for (const use of (struct.uses ?? [])) {
         if (use.inline) {
           for (const field of expandStructUse(use.expr, struct.line, paramTemplates)) {
-            for (const sym of getTypeExpressionSymbols(field.target, field.line, symbols)) {
+            for (const sym of getTypeExpressionSymbols(field.target, field.line, symbols, templateSymbols)) {
               addDep(module, sym.moduleId);
             }
           }
@@ -902,7 +902,7 @@ function resolveModuleDependencies(
         const tmpl = templateSymbols.get(call.callee);
         if (tmpl) { addDep(module, tmpl.moduleId); }
         for (const arg of call.args) {
-          for (const sym of getTypeExpressionSymbols(arg, struct.line, symbols)) {
+          for (const sym of getTypeExpressionSymbols(arg, struct.line, symbols, templateSymbols)) {
             addDep(module, sym.moduleId);
           }
         }
@@ -910,7 +910,7 @@ function resolveModuleDependencies(
       for (const fn of struct.fns) {
         for (const p of fn.params) {
           if (p.variadic) { continue; }
-          for (const symbol of getTypeExpressionSymbols(p.type, p.line, symbols)) {
+          for (const symbol of getTypeExpressionSymbols(p.type, p.line, symbols, templateSymbols)) {
             addDep(module, symbol.moduleId);
           }
         }
@@ -918,7 +918,7 @@ function resolveModuleDependencies(
           ? inferStructMethodReturnTargets(fn, struct, paramTemplates)
           : [fn.returnType];
         for (const returnTarget of returnTargets) {
-          for (const symbol of getTypeExpressionSymbols(returnTarget, fn.line, symbols)) {
+          for (const symbol of getTypeExpressionSymbols(returnTarget, fn.line, symbols, templateSymbols)) {
             addDep(module, symbol.moduleId);
           }
         }
@@ -928,14 +928,14 @@ function resolveModuleDependencies(
     for (const { fn } of collectScopeFns(module.section, [])) {
       for (const p of fn.params) {
         if (p.variadic) { continue; }
-        for (const symbol of getTypeExpressionSymbols(p.type, p.line, symbols)) {
+        for (const symbol of getTypeExpressionSymbols(p.type, p.line, symbols, templateSymbols)) {
           addDep(module, symbol.moduleId);
         }
       }
       if (fn.returnType === 'any') {
         throw new Error(`Line ${fn.line}: any return type is only supported for struct methods`);
       }
-      for (const symbol of getTypeExpressionSymbols(fn.returnType, fn.line, symbols)) {
+      for (const symbol of getTypeExpressionSymbols(fn.returnType, fn.line, symbols, templateSymbols)) {
         addDep(module, symbol.moduleId);
       }
     }
@@ -1068,14 +1068,15 @@ function makeFnSignature(
   fn: FnNode,
   fnCName: string,
   symbols: Map<string, TypeSymbol>,
+  templateSymbols: Map<string, TemplateSymbol>,
   leadingParams: string[] = []
 ): string {
   const specifiers = getFnSpecifiers(fn);
   const prefix = specifiers ? `${specifiers} ` : '';
-  const returnC = resolveFnReturnType(fn, symbols);
+  const returnC = resolveFnReturnType(fn, symbols, templateSymbols);
   const params = [
     ...leadingParams,
-    ...fn.params.map((p) => p.variadic ? '...' : renderFnParam(p, symbols))
+    ...fn.params.map((p) => p.variadic ? '...' : renderFnParam(p, symbols, templateSymbols))
   ];
   const paramsC = params.length > 0
     ? params.join(', ')
@@ -1083,16 +1084,24 @@ function makeFnSignature(
   return `${prefix}${returnC} ${fnCName}(${paramsC})`;
 }
 
-function resolveFnReturnType(fn: FnNode, symbols: Map<string, TypeSymbol>): string {
+function resolveFnReturnType(
+  fn: FnNode,
+  symbols: Map<string, TypeSymbol>,
+  templateSymbols: Map<string, TemplateSymbol>
+): string {
   if (fn.returnType !== 'any') {
-    return resolveTypeExpression(fn.returnType, fn.line, symbols);
+    return resolveTypeExpression(fn.returnType, fn.line, symbols, templateSymbols);
   }
 
   throw new Error(`Line ${fn.line}: any return type is only supported for struct methods`);
 }
 
-function renderFnParam(param: FnParam, symbols: Map<string, TypeSymbol>): string {
-  const typeName = resolveTypeExpression(param.type, param.line, symbols);
+function renderFnParam(
+  param: FnParam,
+  symbols: Map<string, TypeSymbol>,
+  templateSymbols: Map<string, TemplateSymbol>
+): string {
+  const typeName = resolveTypeExpression(param.type, param.line, symbols, templateSymbols);
   const prefix = param.mutable ? '' : 'const ';
   return `${prefix}${typeName} ${param.name}`;
 }
@@ -1101,15 +1110,16 @@ function makeStructMethodSignature(
   fn: FnNode,
   fnCName: string,
   symbols: Map<string, TypeSymbol>,
+  templateSymbols: Map<string, TemplateSymbol>,
   selfTypeName: string,
   struct: StructNode,
   paramTemplates: Map<string, TemplateNode>
 ): string {
   const specifiers = getFnSpecifiers(fn);
   const prefix = specifiers ? `${specifiers} ` : '';
-  const returnC = resolveStructMethodReturnType(fn, struct, paramTemplates, symbols);
+  const returnC = resolveStructMethodReturnType(fn, struct, paramTemplates, symbols, templateSymbols);
   const selfPrefix = fn.selfMutable ? '' : 'const ';
-  const params = [`${selfPrefix}${selfTypeName} *self`, ...fn.params.map((p) => p.variadic ? '...' : renderFnParam(p, symbols))];
+  const params = [`${selfPrefix}${selfTypeName} *self`, ...fn.params.map((p) => p.variadic ? '...' : renderFnParam(p, symbols, templateSymbols))];
   const paramsC = params.join(', ');
   return `${prefix}${returnC} ${fnCName}(${paramsC})`;
 }
@@ -1118,10 +1128,11 @@ function resolveStructMethodReturnType(
   fn: FnNode,
   struct: StructNode,
   paramTemplates: Map<string, TemplateNode>,
-  symbols: Map<string, TypeSymbol>
+  symbols: Map<string, TypeSymbol>,
+  templateSymbols: Map<string, TemplateSymbol>
 ): string {
   if (fn.returnType !== 'any') {
-    return resolveTypeExpression(fn.returnType, fn.line, symbols);
+    return resolveTypeExpression(fn.returnType, fn.line, symbols, templateSymbols);
   }
 
   const fieldName = inferReturnedSelfField(fn);
@@ -1134,7 +1145,7 @@ function resolveStructMethodReturnType(
     throw new Error(`Line ${fn.line}: cannot infer any return type, unknown field "self.${fieldName}"`);
   }
 
-  return resolveTypeExpression(field.target, field.line, symbols);
+  return resolveTypeExpression(field.target, field.line, symbols, templateSymbols);
 }
 
 function inferStructMethodReturnTargets(
@@ -1178,8 +1189,9 @@ function renderFnBodyLine(
   templateSymbols: Map<string, TemplateSymbol>,
   methodSelfPointer: boolean
 ): string {
-  if (/^use\s+c\.raw\("(.*)"\)$/.test(line)) {
-    return `  ${line.match(/^use\s+c\.raw\("(.*)"\)$/)![1]}`;
+  const exprOfMatch = line.match(/^use\s+c\.expr\((.*)\)$/);
+  if (exprOfMatch) {
+    return `  ${parseFnExprArgument(exprOfMatch[1].trim())}`;
   }
 
   if (/^return\s+/.test(line)) {
@@ -1195,7 +1207,11 @@ function renderFnBodyLine(
     return `  ${expanded};`;
   }
 
-  throw new Error(`Line ${fnLine}: function bodies only support \`return expr\` and \`use c.raw("...")\``);
+  throw new Error(`Line ${fnLine}: function bodies only support \`return expr\` and \`use c.expr(...)\``);
+}
+
+function parseFnExprArgument(arg: string): string {
+  return arg.match(/^"(.*)"$/)?.[1] ?? arg;
 }
 
 function renderFnExpression(expr: string, methodSelfPointer: boolean): string {
@@ -1245,15 +1261,15 @@ function renderHeader(
   for (const { declaration, symbolParts } of collectScopeTypeDeclarations(module.section, [])) {
     const allSymbolParts = [...module.symbolParts, ...symbolParts];
     if (declaration.kind === 'alias') {
-      const type = resolveTypeExpression(declaration.target, declaration.line, symbols);
+      const type = resolveTypeExpression(declaration.target, declaration.line, symbols, templateSymbols);
       const cName = makeTypedefName(allSymbolParts, declaration.name);
       const aliasKey = makeTypeKey([...module.typeParts, ...symbolParts], declaration.name);
-      const defineOnly = symbols.get(aliasKey)?.defineOnly ?? shouldDefineAlias(declaration.target, declaration.line, symbols);
+      const defineOnly = symbols.get(aliasKey)?.defineOnly ?? shouldDefineAlias(declaration.target, declaration.line, symbols, templateSymbols);
       lines.push(defineOnly ? `#define ${cName} ${type}` : `typedef ${type} ${cName};`);
       continue;
     }
 
-    const type = resolveTypeExpression(declaration.target, declaration.line, symbols);
+    const type = resolveTypeExpression(declaration.target, declaration.line, symbols, templateSymbols);
     const cName = makeTypedefName(allSymbolParts, declaration.name);
     lines.push(`typedef ${type} ${cName};`);
 
@@ -1279,7 +1295,7 @@ function renderHeader(
       const fieldDefs = template.fields.map((field, index) => {
         const typeName = paramNames.has(field.target)
           ? field.target
-          : resolveTypeExpression(field.target, field.line, symbols);
+          : resolveTypeExpression(field.target, field.line, symbols, templateSymbols);
         const semi = index < template.fields.length - 1 ? ';' : '';
         return `${renderFieldDeclaration(field, typeName, template)}${semi}`;
       }).join(' ');
@@ -1291,7 +1307,7 @@ function renderHeader(
       const cName = makeTypedefName(allSymbolParts, template.name);
       lines.push(`typedef struct ${cName} {`);
       for (const field of template.fields) {
-        const typeName = resolveTypeExpression(field.target, field.line, symbols);
+        const typeName = resolveTypeExpression(field.target, field.line, symbols, templateSymbols);
         lines.push(`  ${renderFieldDeclaration(field, typeName, template)};`);
       }
       lines.push(`} ${cName};`);
@@ -1315,13 +1331,13 @@ function renderHeader(
     const typedefName = makeTypedefName(allSymbolParts, struct.name);
     lines.push(`typedef struct ${tagName} {`);
     for (const field of struct.fields) {
-      const typeName = resolveTypeExpression(field.target, field.line, symbols);
+      const typeName = resolveTypeExpression(field.target, field.line, symbols, templateSymbols);
       lines.push(`  ${renderFieldDeclaration(field, typeName)};`);
     }
     for (const use of (struct.uses ?? [])) {
       if (use.inline) {
         for (const field of expandStructUse(use.expr, struct.line, paramTemplates)) {
-          const typeName = resolveTypeExpression(field.target, field.line, symbols);
+          const typeName = resolveTypeExpression(field.target, field.line, symbols, templateSymbols);
           lines.push(`  ${renderFieldDeclaration(field, typeName)};`);
         }
         continue;
@@ -1330,7 +1346,7 @@ function renderHeader(
       if (!call) { continue; }
       const tmpl = templateSymbols.get(call.callee);
       if (!tmpl) { continue; }
-      const resolvedArgs = call.args.map((arg) => resolveTypeExpression(arg, struct.line, symbols));
+      const resolvedArgs = call.args.map((arg) => resolveTypeExpression(arg, struct.line, symbols, templateSymbols));
       lines.push(`  ${tmpl.macroName}(${resolvedArgs.join(', ')});`);
     }
     lines.push(`} ${typedefName};`);
@@ -1339,7 +1355,7 @@ function renderHeader(
       const emit = getFnEmitTarget(fn);
       if (emit === 'source') { continue; }
       const fnCName = makeStructMethodCName(module, symbolParts, struct.name, fn.name);
-      lines.push(`${makeStructMethodSignature(fn, fnCName, symbols, typedefName, struct, paramTemplates)};`);
+      lines.push(`${makeStructMethodSignature(fn, fnCName, symbols, templateSymbols, typedefName, struct, paramTemplates)};`);
     }
   }
 
@@ -1347,7 +1363,7 @@ function renderHeader(
     const emit = getFnEmitTarget(fn);
     if (emit === 'source') { continue; }
     const fnCName = makeFnCName(module, extraParts, fn.name);
-    lines.push(`${makeFnSignature(fn, fnCName, symbols)};`);
+    lines.push(`${makeFnSignature(fn, fnCName, symbols, templateSymbols)};`);
   }
 
   lines.push('', `#endif // ${module.guard}`, '');
@@ -1389,7 +1405,7 @@ function renderSource(
     const emit = getFnEmitTarget(fn);
     if (emit !== 'source' && emit !== 'both') { continue; }
     const fnCName = makeFnCName(module, extraParts, fn.name);
-    lines.push(`${makeFnSignature(fn, fnCName, symbols)} {`);
+    lines.push(`${makeFnSignature(fn, fnCName, symbols, templateSymbols)} {`);
     lines.push(...renderFnBody(fn, templateSymbols));
     lines.push('}');
     hasDefinitions = true;
@@ -1402,7 +1418,7 @@ function renderSource(
       const emit = getFnEmitTarget(fn);
       if (emit !== 'source' && emit !== 'both') { continue; }
       const fnCName = makeStructMethodCName(module, symbolParts, struct.name, fn.name);
-      lines.push(`${makeStructMethodSignature(fn, fnCName, symbols, typedefName, struct, paramTemplates)} {`);
+      lines.push(`${makeStructMethodSignature(fn, fnCName, symbols, templateSymbols, typedefName, struct, paramTemplates)} {`);
       lines.push(...renderFnBody(fn, templateSymbols, true));
       lines.push('}');
       hasDefinitions = true;
@@ -1447,17 +1463,30 @@ function renderEnumCaseForHeader(
   return `static const ${cName} ${memberName} = ${rawValue};`;
 }
 
-function resolveTypeExpression(target: string, line: number, symbols: Map<string, TypeSymbol>): string {
-  const raw = parseRawOf(target);
-  if (raw !== undefined) { return raw; }
+function resolveTypeExpression(
+  target: string,
+  line: number,
+  symbols: Map<string, TypeSymbol>,
+  templateSymbols: Map<string, TemplateSymbol>
+): string {
+  const expr = parseExprOf(target);
+  if (expr !== undefined) { return expr; }
 
   const expression = parseCallExpression(target, line);
   if (expression) {
-    if (expression.callee !== 'c.ptr.of' || expression.args.length !== 1) {
-      throw new Error(`Line ${line}: unknown type builtin "${expression.callee}"`);
+    if (expression.callee === 'c.ptr.of' && expression.args.length === 1) {
+      return `${resolveTypeExpression(expression.args[0], line, symbols, templateSymbols)} *`;
     }
 
-    return `${resolveTypeExpression(expression.args[0], line, symbols)} *`;
+    const template = templateSymbols.get(expression.callee);
+    if (template?.rawBody !== undefined) {
+      return applyRawBody(template.rawBody, template.rawParams ?? [], expression.args);
+    }
+
+    if (expression.callee !== 'c.ptr.of') {
+      throw new Error(`Line ${line}: unknown type builtin "${expression.callee}"`);
+    }
+    throw new Error(`Line ${line}: c.ptr.of expects exactly one argument`);
   }
 
   const symbol = symbols.get(target);
@@ -1468,16 +1497,25 @@ function resolveTypeExpression(target: string, line: number, symbols: Map<string
   return symbol.cName;
 }
 
-function getTypeExpressionSymbols(target: string, line: number, symbols: Map<string, TypeSymbol>): TypeSymbol[] {
-  if (parseRawOf(target) !== undefined) { return []; }
+function getTypeExpressionSymbols(
+  target: string,
+  line: number,
+  symbols: Map<string, TypeSymbol>,
+  templateSymbols: Map<string, TemplateSymbol>
+): TypeSymbol[] {
+  if (parseExprOf(target) !== undefined) { return []; }
 
   const expression = parseCallExpression(target, line);
   if (expression) {
+    if (templateSymbols.get(expression.callee)?.rawBody !== undefined) {
+      return [];
+    }
+
     if (expression.callee !== 'c.ptr.of' || expression.args.length !== 1) {
       throw new Error(`Line ${line}: unknown type builtin "${expression.callee}"`);
     }
 
-    return getTypeExpressionSymbols(expression.args[0], line, symbols);
+    return getTypeExpressionSymbols(expression.args[0], line, symbols, templateSymbols);
   }
 
   const symbol = symbols.get(target);
@@ -1488,13 +1526,19 @@ function getTypeExpressionSymbols(target: string, line: number, symbols: Map<str
   return [symbol];
 }
 
-function shouldDefineAlias(target: string, line: number, symbols: Map<string, TypeSymbol>): boolean {
-  return isDefineOnlyTypeExpression(target, line, symbols, new Set());
+function shouldDefineAlias(
+  target: string,
+  line: number,
+  symbols: Map<string, TypeSymbol>,
+  templateSymbols: Map<string, TemplateSymbol>
+): boolean {
+  return isDefineOnlyTypeExpression(target, line, symbols, templateSymbols, new Set());
 }
 
 function resolveTypeSymbolDefineOnly(
   symbol: TypeSymbol,
   symbols: Map<string, TypeSymbol>,
+  templateSymbols: Map<string, TemplateSymbol>,
   seen: Set<string>
 ): boolean {
   if (symbol.kind === 'enum' || symbol.kind === 'template' || symbol.kind === 'struct') {
@@ -1506,7 +1550,7 @@ function resolveTypeSymbolDefineOnly(
   }
 
   seen.add(symbol.key);
-  const result = isDefineOnlyTypeExpression(symbol.target!, symbol.line, symbols, seen);
+  const result = isDefineOnlyTypeExpression(symbol.target!, symbol.line, symbols, templateSymbols, seen);
   seen.delete(symbol.key);
   return result;
 }
@@ -1515,12 +1559,17 @@ function isDefineOnlyTypeExpression(
   target: string,
   line: number,
   symbols: Map<string, TypeSymbol>,
+  templateSymbols: Map<string, TemplateSymbol>,
   seen: Set<string>
 ): boolean {
-  if (parseRawOf(target) !== undefined) { return false; }
+  if (parseExprOf(target) !== undefined) { return false; }
 
   const expression = parseCallExpression(target, line);
   if (expression) {
+    if (templateSymbols.get(expression.callee)?.rawBody !== undefined) {
+      return false;
+    }
+
     if (expression.callee !== 'c.ptr.of' || expression.args.length !== 1) {
       throw new Error(`Line ${line}: unknown type builtin "${expression.callee}"`);
     }
@@ -1533,7 +1582,7 @@ function isDefineOnlyTypeExpression(
     throw new Error(`Line ${line}: unknown type "${target}"`);
   }
 
-  return symbol.defineOnly || resolveTypeSymbolDefineOnly(symbol, symbols, seen);
+  return symbol.defineOnly || resolveTypeSymbolDefineOnly(symbol, symbols, templateSymbols, seen);
 }
 
 function getEnumConstMode(declaration: EnumNode): EnumConstMode {

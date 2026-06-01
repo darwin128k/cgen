@@ -116,27 +116,27 @@ Attaches to aliases and templates that depend on external C declarations. Specif
 ```cgen
 scope c:
     @header("stddef.h")
-    alias size as c.raw("size_t")
+    alias size as c.type(size_t)
 ```
 
 ## External C Symbols
 
-External C types, macros, and functions are represented with ordinary `alias` and `template` declarations, usually under a `scope c:` namespace. Use `c.raw("...")` for raw C spelling and `@header("...")` when generated files must include a C header.
+External C types, macros, and functions are represented with ordinary `alias` and `template` declarations, usually under a `scope c:` namespace. Use `c.type(...)` for C type spelling, `c.expr(...)` for literal C expressions, and `@header("...")` when generated files must include a C header.
 
 ```cgen
 scope c:
-    alias char as c.raw("char")
-    alias uint as c.raw("unsigned int")
+    alias char as c.type(char)
+    alias uint as c.type(unsigned int)
 
     @header("stddef.h")
-    alias size as c.raw("size_t")
+    alias size as c.type(size_t)
 
     @header("stdlib.h")
     template malloc(size):
-        use c.raw("malloc(${size})")
+        use c.expr(malloc(${size}))
 ```
 
-Alias declarations map a DSL name to a raw C type string. Template declarations map a DSL name to a C macro or function — they produce no output themselves but can be called from template `use` bodies or used as field types.
+Alias declarations map a DSL name to a C type spelling. Template declarations map a DSL name to a C macro or function — they produce no output themselves but can be called from template `use` bodies or used as field types.
 
 A bundled `packages/c.cgen` file declares the standard C types and common stdlib/string.h functions (see [Built-in C Types](#built-in-c-types)), so they are always available without any extra setup.
 
@@ -249,7 +249,7 @@ struct point:
         return self.x
 
     mut fn set_x(value as c.int) -> c.void:
-        use c.raw("self->x = value")
+        use c.expr(self->x = value)
 ```
 
 Inside a struct, `self` is the implicit first parameter — a const pointer to the struct type by default. Prefix a method with `mut` to get a non-const `self` pointer.
@@ -261,7 +261,7 @@ fn get(value as c.int) -> c.int:
     return value
 
 fn set(mut value as c.int) -> c.void:
-    use c.raw("(void)value")
+    use c.expr((void)value)
 ```
 
 Function bodies support two statement forms:
@@ -269,7 +269,7 @@ Function bodies support two statement forms:
 | DSL                    | C output         |
 |------------------------|------------------|
 | `return expr`          | `return expr;`   |
-| `use c.raw("...")`     | literal C line   |
+| `use c.expr(...)`      | literal C line   |
 
 `expr` in a `return` statement may be a plain identifier, a field access (`self.field`), or a built-in template call such as `c.cast(type, val)` — it is expanded the same way as a template argument.
 

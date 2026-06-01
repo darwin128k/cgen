@@ -249,11 +249,11 @@ export function parseDsl(source: string): ParsedDsl {
           diagnostics.push(`Line ${lineNumber}: template "${currentTemplate.node.name}" with fields cannot have a body`);
           return;
         }
-        const rawOfMatch = line.match(/^use\s+c\.raw\("(.*)"\)$/);
-        if (rawOfMatch) {
+        const exprOfMatch = line.match(/^use\s+c\.expr\((.*)\)$/);
+        if (exprOfMatch) {
           pendingAttributes = [];
           currentTemplate.node.bodyRaw = true;
-          currentTemplate.node.body = rawOfMatch[1];
+          currentTemplate.node.body = parseExprBodyArgument(exprOfMatch[1].trim());
           currentTemplate.node.bodyLine = lineNumber;
           return;
         }
@@ -425,6 +425,19 @@ function parseSection(line: string, lineNumber: number): SectionNode | undefined
     return undefined;
   }
   return createSection(match[1] as SectionKind, match[2], lineNumber);
+}
+
+function parseExprBodyArgument(arg: string): string {
+  const quoted = arg.match(/^"(.*)"$/);
+  if (quoted) {
+    return quoted[1];
+  }
+
+  if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(arg)) {
+    return `\${${arg}}`;
+  }
+
+  return arg;
 }
 
 function parseAlias(line: string, lineNumber: number): AliasNode | undefined {
