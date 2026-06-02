@@ -49,6 +49,8 @@ interface LineRange {
 interface CurrentTemplate {
   params: string[];
   callableParams: string[];
+  fnParams: string[];
+  structFields: string[];
   excludeNames: string[];
   insideStruct: boolean;
   insideTemplate: boolean;
@@ -84,7 +86,11 @@ export async function createDslSuggestion(
   const index = projectIndex.getSnapshot();
   const currentIndent = lineRange.before.match(/^\s*/)?.[0].length ?? 0;
   const context = findCurrentContext(request.text.slice(0, lineRange.lineStart), currentIndent);
-  const currentTemplate = findCurrentTemplate(request.text.slice(0, lineRange.lineStart), currentIndent);
+  const currentTemplate = findCurrentTemplate(
+    request.text.slice(0, lineRange.lineStart),
+    currentIndent,
+    request.text.slice(lineRange.lineStart)
+  );
   const contextKey = getSuggestionContextKey(context, currentTemplate, linePrefix, index);
   const prefix = getSuggestionPrefix(linePrefix);
   const usage = projectIndex.getSuggestionUsage(contextKey, prefix);
@@ -148,11 +154,11 @@ function findCurrentContext(textBeforeLine: string, currentIndent?: number): str
   return stack[stack.length - 1] ?? [];
 }
 
-function findCurrentTemplate(textBeforeLine: string, currentIndent?: number): CurrentTemplate {
+function findCurrentTemplate(textBeforeLine: string, currentIndent?: number, textFromLine?: string): CurrentTemplate {
   const sectionStack: Array<{ indent: number; path: string[] }> = [{ indent: -1, path: [] }];
   let currentTemplate: { indent: number; name: string; path: string[]; params: string[]; callableParams: string[] } | undefined;
-  let currentStruct: { indent: number } | undefined;
-  let currentFn: { indent: number } | undefined;
+  let currentStruct: { indent: number; fields: string[] } | undefined;
+  let currentFn: { indent: number; params: string[] } | undefined;
 
   for (const rawLine of expandInlineDsl(textBeforeLine).split(/\r?\n/)) {
     const withoutComment = rawLine.replace(/#.*$/, '').trimEnd();
@@ -184,13 +190,18 @@ function findCurrentTemplate(textBeforeLine: string, currentIndent?: number): Cu
     }
 
     if (/^struct\s+[A-Za-z_][A-Za-z0-9_]*\s*:\s*$/.test(line)) {
-      currentStruct = { indent };
+      currentStruct = { indent, fields: [] };
       continue;
     }
 
-    if (/^(?:mut\s+)?fn\s+[A-Za-z_][A-Za-z0-9_]*\([^)]*\)\s*(?:(?:as\s+|->\s*).+)?\s*:\s*$/.test(line)) {
-      currentFn = { indent };
+    const fnParams = parseInlineFnParamNames(line);
+    if (fnParams) {
+      currentFn = { indent, params: fnParams };
       continue;
+    }
+
+    if (currentStruct) {
+      currentStruct.fields.push(...getStructFieldNamesFromLine(line));
     }
 
     const templateMatch = line.match(/^template\s+([A-Za-z_][A-Za-z0-9_]*)(?:\(([^)]*)\))?\s*:\s*$/);
@@ -236,19 +247,113 @@ function findCurrentTemplate(textBeforeLine: string, currentIndent?: number): Cu
 
   const insideStruct = !!currentStruct && (currentIndent === undefined || currentIndent > currentStruct.indent);
   const insideFn = !!currentFn && (currentIndent === undefined || currentIndent > currentFn.indent);
+  const fnParams = insideFn ? currentFn?.params ?? [] : [];
+  const structFields = insideStruct && currentStruct
+    ? uniqueInOrder([
+      ...currentStruct.fields,
+      ...collectTrailingStructFields(textFromLine ?? '', currentStruct.indent)
+    ])
+    : [];
 
   if (!currentTemplate || (currentIndent !== undefined && currentIndent <= currentTemplate.indent)) {
-    return { params: [], callableParams: [], excludeNames: [], insideStruct, insideTemplate: false, insideFn };
+    return { params: [], callableParams: [], fnParams, structFields, excludeNames: [], insideStruct, insideTemplate: false, insideFn };
   }
 
   return {
     params: currentTemplate.params,
     callableParams: currentTemplate.callableParams,
+    fnParams,
+    structFields,
     excludeNames: [currentTemplate.name, makePublicPath(currentTemplate.path).join('.')],
     insideStruct,
     insideTemplate: true,
     insideFn
   };
+}
+
+function collectTrailingStructFields(textFromLine: string, structIndent: number): string[] {
+  const fields: string[] = [];
+  const lines = expandInlineDsl(textFromLine).split(/\r?\n/);
+
+  for (let i = 1; i < lines.length; i += 1) {
+    const withoutComment = lines[i].replace(/#.*$/, '').trimEnd();
+    if (withoutComment.trim().length === 0) {
+      continue;
+    }
+
+    const indent = withoutComment.match(/^\s*/)?.[0].length ?? 0;
+    if (indent <= structIndent) {
+      break;
+    }
+
+    fields.push(...getStructFieldNamesFromLine(withoutComment.trim()));
+  }
+
+  return fields;
+}
+
+function parseInlineFnParamNames(line: string): string[] | undefined {
+  const match = line.match(/^(?:mut\s+)?fn\s+[A-Za-z_][A-Za-z0-9_]*\(([^)]*)\)\s*(?:(?:as\s+|->\s*).+)?\s*[:;]\s*$/);
+  if (!match) {
+    return undefined;
+  }
+
+  return match[1]
+    .split(',')
+    .map((part) => {
+      const trimmed = part.trim();
+      const variadic = trimmed.match(/^(?:param\s+)?\.\.\.(?:\s+as\s+|\s+->\s*)([A-Za-z_][A-Za-z0-9_]*)$/);
+      const normal = trimmed.match(/^(?:mut|const)?\s*(?:param\s+)?([A-Za-z_][A-Za-z0-9_]*)(?:\s+as\s+|\s+->\s*)/);
+      return variadic?.[1] ?? normal?.[1] ?? '';
+    })
+    .filter(Boolean);
+}
+
+function getStructFieldNamesFromLine(line: string): string[] {
+  const fieldName = line.match(/^(?:mut\s+)?field\s+([A-Za-z_][A-Za-z0-9_]*)(?:\s+as\s+|\s+->\s*)/)?.[1];
+  if (fieldName) {
+    return [fieldName];
+  }
+
+  const useExpr = line.match(/^use\s+(.+)$/)?.[1]?.trim();
+  if (!useExpr) {
+    return [];
+  }
+
+  return inferStructUseFieldNames(useExpr);
+}
+
+function inferStructUseFieldNames(useExpr: string): string[] {
+  const call = useExpr.match(/^([A-Za-z_][A-Za-z0-9_.]*)\((.*)\)$/);
+  if (!call || !call[1].endsWith('.fields')) {
+    return [];
+  }
+
+  return splitCommaBalanced(call[2])
+    .map((arg) => arg.trim().match(/([A-Za-z_][A-Za-z0-9_]*)\s*$/)?.[1] ?? '')
+    .filter(Boolean);
+}
+
+function splitCommaBalanced(source: string): string[] {
+  if (!source.trim()) { return []; }
+  const parts: string[] = [];
+  let depth = 0;
+  let start = 0;
+
+  for (let i = 0; i < source.length; i += 1) {
+    const char = source[i];
+    if (char === '(') {
+      depth += 1;
+    } else if (char === ')') {
+      depth = Math.max(0, depth - 1);
+    } else if (char === ',' && depth === 0) {
+      parts.push(source.slice(start, i));
+      start = i + 1;
+    }
+  }
+
+  parts.push(source.slice(start));
+  return parts;
 }
 
 function expandInlineDsl(source: string): string {
@@ -436,6 +541,13 @@ function getCandidates(typed: string, contextPath: string[], currentTemplate: Cu
     return getDeclarationSnippetsForContext(contextPath, currentTemplate, index);
   }
 
+  if (currentTemplate.insideFn) {
+    return uniqueInOrder([
+      ...getContextSnippets(contextPath, currentTemplate, index),
+      ...getExpressionCandidates(typed, contextPath, currentTemplate, index)
+    ]);
+  }
+
   return getContextSnippets(contextPath, currentTemplate, index);
 }
 
@@ -593,12 +705,14 @@ function getExpressionCandidates(
   const token = getTailToken(typed);
   if (token.includes('.')) {
     return uniqueInOrder([
+      ...getDottedSelfCandidates(token, currentTemplate),
       ...getDottedTemplateUseCandidates(token, index, currentTemplate),
       ...getDottedFnUseCandidates(token, index)
     ]);
   }
 
   return uniqueInOrder([
+    ...getLocalExpressionCandidates(currentTemplate),
     ...getRootUseNamespaces(contextPath, index),
     ...getFnUseCandidates(index)
   ]);
@@ -613,12 +727,14 @@ function getUseArgumentCandidates(
   const token = getTailToken(typed);
   if (token.includes('.')) {
     return uniqueInOrder([
+      ...getDottedSelfCandidates(token, currentTemplate),
       ...getTemplateUseCandidates(typed, contextPath, currentTemplate, index),
       ...getTypeCandidates(typed, contextPath, index)
     ]);
   }
 
   return sortUnique([
+    ...getLocalExpressionCandidates(currentTemplate),
     ...currentTemplate.params.filter((p) => !currentTemplate.callableParams.includes(p)),
     ...currentTemplate.callableParams.map((p) => `${p}()`),
     ...getTemplateUseCandidates(typed, contextPath, currentTemplate, index)
@@ -627,6 +743,23 @@ function getUseArgumentCandidates(
 
 function getTailToken(typed: string): string {
   return typed.match(/[A-Za-z_][A-Za-z0-9_.]*$/)?.[0] ?? '';
+}
+
+function getLocalExpressionCandidates(currentTemplate: CurrentTemplate): string[] {
+  return uniqueInOrder([
+    ...currentTemplate.fnParams,
+    ...(currentTemplate.insideStruct && currentTemplate.insideFn ? ['self'] : [])
+  ]);
+}
+
+function getDottedSelfCandidates(token: string, currentTemplate: CurrentTemplate): string[] {
+  if (!currentTemplate.insideStruct || !currentTemplate.insideFn || !token.startsWith('self.')) {
+    return [];
+  }
+
+  return currentTemplate.structFields
+    .map((field) => `self.${field}`)
+    .filter((candidate) => candidate.startsWith(token));
 }
 
 function getDottedTemplateUseCandidates(token: string, index: DslIndex, currentTemplate: CurrentTemplate): string[] {
@@ -813,6 +946,8 @@ function resolveKindForCandidate(candidate: string, index: DslIndex): string {
   if (/^(?:mut\s+)?fn\b/.test(candidate)) return 'fn';
   if (/^(?:mut\s+)?field\b/.test(candidate)) return 'field';
   if (/^param\b/.test(candidate)) return 'param';
+  if (/^self\./.test(candidate)) return 'field';
+  if (candidate === 'self') return 'param';
   if (/^(use|case|name|\.\.\.)/.test(candidate)) return 'keyword';
 
   const pathStr = candidate.endsWith('.') ? candidate.slice(0, -1) : candidate;
