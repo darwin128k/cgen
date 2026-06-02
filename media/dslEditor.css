@@ -323,7 +323,6 @@ button:hover {
   top: 0;
   height: var(--cgen-line-height);
   box-sizing: border-box;
-  border-left: 3px solid var(--vscode-errorForeground, #f14c4c);
   background: color-mix(in srgb, var(--vscode-errorForeground, #f14c4c) 18%, transparent);
 }
 
@@ -342,8 +341,7 @@ button:hover {
 }
 
 .stripe-line.has-error::before {
-  border-left: 3px solid var(--vscode-errorForeground, #f14c4c);
-  background: color-mix(in srgb, var(--vscode-errorForeground, #f14c4c) 18%, transparent);
+  background: color-mix(in srgb, var(--vscode-errorForeground, #f14c4c) 15%, transparent);
 }
 
 .stripe-line.is-active.has-error::after {
@@ -445,12 +443,12 @@ button:hover {
   z-index: 9;
   box-sizing: border-box;
   max-width: min(760px, calc(100% - var(--cgen-editor-left) - 18px));
-  padding: 5px 8px;
-  border-left: 3px solid var(--vscode-errorForeground, #f14c4c);
-  border-radius: 4px;
+  padding: 7px 11px;
+  border: none;
+  border-radius: 10px;
   color: var(--vscode-editorError-foreground, var(--vscode-editor-foreground));
-  background: color-mix(in srgb, var(--vscode-editor-background) 86%, var(--vscode-errorForeground, #f14c4c) 14%);
-  box-shadow: 0 4px 14px rgb(0 0 0 / 20%);
+  background: color-mix(in srgb, var(--vscode-editor-background) 83%, var(--vscode-errorForeground, #f14c4c) 17%);
+  box-shadow: 0 6px 18px rgb(0 0 0 / 18%);
   font-family: var(--cgen-editor-font-family, var(--vscode-editor-font-family, var(--vscode-font-family)));
   font-feature-settings: var(--cgen-editor-font-feature-settings, normal);
   font-size: calc(var(--cgen-editor-font-size, var(--vscode-editor-font-size, 13px)) - 1px);
@@ -458,6 +456,18 @@ button:hover {
   font-weight: var(--cgen-editor-font-weight, var(--vscode-editor-font-weight, normal));
   line-height: 1.35;
   pointer-events: none;
+}
+
+.diagnostic-bubble::before {
+  content: "";
+  position: absolute;
+  top: -5px;
+  left: 16px;
+  width: 9px;
+  height: 9px;
+  border: none;
+  background: inherit;
+  transform: rotate(45deg);
 }
 
 .diagnostic-bubble[hidden] {
