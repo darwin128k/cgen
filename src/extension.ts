@@ -1,6 +1,6 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
-import { generateDsl } from './cgen';
+import { generateDsl, resolveDslUsage } from './cgen';
 import { formatCgen } from './formatter';
 import { CgenProjectIndex } from './indexer';
 import { createDslSuggestion } from './suggestions';
@@ -8,6 +8,7 @@ import { createDslSuggestion } from './suggestions';
 let saveEditorFn: (() => Promise<void>) | undefined;
 let projectIndexPromise: Promise<CgenProjectIndex | undefined> | undefined;
 let postProgressMessage: ((active: boolean) => void) | undefined;
+let currentEditorContent = '';
 
 interface FormatPolicy {
   formatOnSave: boolean;
@@ -215,6 +216,7 @@ async function openDslEditor(context: vscode.ExtensionContext) {
 
     if (message.type === 'change' && typeof message.text === 'string') {
       currentContent = message.text;
+      currentEditorContent = message.text;
       await vscode.workspace.fs.createDirectory(vscode.Uri.joinPath(workspaceFolder.uri, '.cgen'));
       await vscode.workspace.fs.writeFile(scratchUri, Buffer.from(message.text, 'utf8'));
       if (typeof message.cursor === 'number') {
@@ -297,7 +299,10 @@ async function openDslEditor(context: vscode.ExtensionContext) {
 
     try {
       currentContent = message.text;
-      const files = await generateDsl(workspaceFolder, context.extensionUri, message.text);
+      const { files, root, usage } = await generateDsl(workspaceFolder, context.extensionUri, message.text);
+      const projectIndex = await getProjectIndex(context, workspaceFolder);
+      projectIndex?.updateFromArtifacts(root);
+      projectIndex?.updateSymbolUsage(usage);
       await panel.webview.postMessage({ type: 'error', lines: [] });
       vscode.window.showInformationMessage(`CGen generated ${files.length} file(s).`);
     } catch (error) {
@@ -327,7 +332,10 @@ async function generateFromCurrentFile(context: vscode.ExtensionContext) {
   }
 
   try {
-    const files = await generateDsl(workspaceFolder, context.extensionUri, editor.document.getText());
+    const { files, root, usage } = await generateDsl(workspaceFolder, context.extensionUri, editor.document.getText());
+    const projectIndex = await getProjectIndex(context, workspaceFolder);
+    projectIndex?.updateFromArtifacts(root);
+    projectIndex?.updateSymbolUsage(usage);
     vscode.window.showInformationMessage(`CGen generated ${files.length} file(s).`);
   } catch (error) {
     vscode.window.showErrorMessage(error instanceof Error ? error.message : String(error));
@@ -388,7 +396,25 @@ async function initializeProjectIndex(context: vscode.ExtensionContext): Promise
   }
 
   try {
-    return await CgenProjectIndex.create(context, workspaceFolder);
+    const index = await CgenProjectIndex.create(context, workspaceFolder);
+    let usageTimer: NodeJS.Timeout | undefined;
+    index.onSourceChanged = () => {
+      if (usageTimer) { clearTimeout(usageTimer); }
+      usageTimer = setTimeout(async () => {
+        index.onBusyChange?.(true);
+        try {
+          const { root, usage } = await resolveDslUsage(workspaceFolder, context.extensionUri, currentEditorContent);
+          index.updateFromArtifacts(root);
+          index.updateSymbolUsage(usage);
+        } catch {
+          // DSL may have errors during editing
+        } finally {
+          index.onBusyChange?.(false);
+        }
+      }, 500);
+    };
+    index.onSourceChanged();
+    return index;
   } catch (error) {
     vscode.window.showWarningMessage(`CGen index: ${error instanceof Error ? error.message : String(error)}`);
     return undefined;

@@ -53,6 +53,12 @@ interface ModuleArtifact {
   typeParts: string[];
   dependencies: Set<string>;
   externHeaders: Set<string>;
+  symbolRefs: Map<string, number>;
+}
+
+export interface SymbolUsageIndex {
+  usedBy: Map<string, Array<{ moduleId: string; count: number }>>;
+  totalCount: Map<string, number>;
 }
 
 interface TypeSymbol {
@@ -121,9 +127,17 @@ export async function loadConfig(workspaceFolder: vscode.WorkspaceFolder): Promi
   };
 }
 
-export async function generateDsl(workspaceFolder: vscode.WorkspaceFolder, extensionUri: vscode.Uri, source: string): Promise<string[]> {
-  const config = await loadConfig(workspaceFolder);
+interface DslArtifacts {
+  root: SectionNode;
+  modules: ModuleArtifact[];
+  symbols: Map<string, TypeSymbol>;
+  templateSymbols: Map<string, TemplateSymbol>;
+  paramTemplates: Map<string, TemplateNode>;
+  bodyTemplates: Map<string, TemplateNode>;
+  usage: SymbolUsageIndex;
+}
 
+async function buildDslArtifacts(workspaceFolder: vscode.WorkspaceFolder, extensionUri: vscode.Uri, source: string): Promise<DslArtifacts> {
   const allSources = await collectAllDslSources(workspaceFolder, extensionUri, source);
   const parsedList = allSources.map(parseDsl);
   const merged = mergeDsls(parsedList);
@@ -132,9 +146,6 @@ export async function generateDsl(workspaceFolder: vscode.WorkspaceFolder, exten
     throw new Error(merged.diagnostics.join('\n'));
   }
 
-  const generated: string[] = [];
-  const includeRoot = resolveWorkspacePath(workspaceFolder, config.build.include);
-  const sourceRoot = resolveWorkspacePath(workspaceFolder, config.build.source);
   const modules = collectModules(merged.root);
   const templateSymbols = buildTemplateSymbols(modules);
   const symbols = buildTypeSymbols(modules, templateSymbols);
@@ -142,6 +153,23 @@ export async function generateDsl(workspaceFolder: vscode.WorkspaceFolder, exten
   const bodyTemplates = buildBodyTemplateMap(modules);
 
   resolveModuleDependencies(modules, symbols, templateSymbols, paramTemplates);
+  const usage = buildSymbolUsageIndex(modules);
+
+  return { root: merged.root, modules, symbols, templateSymbols, paramTemplates, bodyTemplates, usage };
+}
+
+export async function resolveDslUsage(workspaceFolder: vscode.WorkspaceFolder, extensionUri: vscode.Uri, source: string): Promise<{ root: SectionNode; usage: SymbolUsageIndex }> {
+  const { root, usage } = await buildDslArtifacts(workspaceFolder, extensionUri, source);
+  return { root, usage };
+}
+
+export async function generateDsl(workspaceFolder: vscode.WorkspaceFolder, extensionUri: vscode.Uri, source: string): Promise<{ files: string[]; root: SectionNode; usage: SymbolUsageIndex }> {
+  const config = await loadConfig(workspaceFolder);
+  const { root, modules, symbols, templateSymbols, paramTemplates, bodyTemplates, usage } = await buildDslArtifacts(workspaceFolder, extensionUri, source);
+
+  const generated: string[] = [];
+  const includeRoot = resolveWorkspacePath(workspaceFolder, config.build.include);
+  const sourceRoot = resolveWorkspacePath(workspaceFolder, config.build.source);
 
   for (const module of modules) {
     if (module.headerPathParts.length === 0) { continue; }
@@ -168,7 +196,7 @@ export async function generateDsl(workspaceFolder: vscode.WorkspaceFolder, exten
   }
 
   await runClangFormat(workspaceFolder, generated);
-  return generated;
+  return { files: generated, root, usage };
 }
 
 async function collectAllDslSources(workspaceFolder: vscode.WorkspaceFolder, extensionUri: vscode.Uri, primarySource: string): Promise<string[]> {
@@ -436,7 +464,8 @@ function collectModules(root: SectionNode): ModuleArtifact[] {
       symbolParts: [child.name],
       typeParts: [child.name],
       dependencies: new Set<string>(),
-      externHeaders: new Set<string>()
+      externHeaders: new Set<string>(),
+      symbolRefs: new Map<string, number>()
     });
   }
 
@@ -461,7 +490,8 @@ function collectModules(root: SectionNode): ModuleArtifact[] {
       symbolParts: context.symbolParts,
       typeParts: context.typeParts,
       dependencies: new Set<string>(),
-      externHeaders: new Set<string>()
+      externHeaders: new Set<string>(),
+      symbolRefs: new Map<string, number>()
     });
   });
 
@@ -820,6 +850,10 @@ function addDep(module: ModuleArtifact, otherModuleId: string): void {
   }
 }
 
+function addSymbolRef(module: ModuleArtifact, symbolKey: string): void {
+  module.symbolRefs.set(symbolKey, (module.symbolRefs.get(symbolKey) ?? 0) + 1);
+}
+
 function resolveModuleDependencies(
   modules: ModuleArtifact[],
   symbols: Map<string, TypeSymbol>,
@@ -832,6 +866,7 @@ function resolveModuleDependencies(
       if (header) { module.externHeaders.add(header); }
       for (const symbol of getTypeExpressionSymbols(declaration.target, declaration.line, symbols, templateSymbols)) {
         addDep(module, symbol.moduleId);
+        addSymbolRef(module, symbol.key);
       }
     }
 
@@ -845,6 +880,7 @@ function resolveModuleDependencies(
           if (paramNames.has(field.target)) { continue; }
           for (const symbol of getTypeExpressionSymbols(field.target, field.line, symbols, templateSymbols)) {
             addDep(module, symbol.moduleId);
+            addSymbolRef(module, symbol.key);
           }
         }
         continue;
@@ -854,6 +890,7 @@ function resolveModuleDependencies(
         for (const field of template.fields) {
           for (const symbol of getTypeExpressionSymbols(field.target, field.line, symbols, templateSymbols)) {
             addDep(module, symbol.moduleId);
+            addSymbolRef(module, symbol.key);
           }
         }
         continue;
@@ -875,6 +912,7 @@ function resolveModuleDependencies(
             if (outerParamNames.has(mappedTarget)) { continue; }
             for (const sym of getTypeExpressionSymbols(mappedTarget, field.line, symbols, templateSymbols)) {
               addDep(module, sym.moduleId);
+              addSymbolRef(module, sym.key);
             }
           }
         }
@@ -883,6 +921,7 @@ function resolveModuleDependencies(
 
       for (const usedTemplate of getUsedTemplateSymbols(template, templateSymbols)) {
         addDep(module, usedTemplate.moduleId);
+        addSymbolRef(module, usedTemplate.key);
       }
     }
 
@@ -890,6 +929,7 @@ function resolveModuleDependencies(
       for (const field of struct.fields) {
         for (const symbol of getTypeExpressionSymbols(field.target, field.line, symbols, templateSymbols)) {
           addDep(module, symbol.moduleId);
+          addSymbolRef(module, symbol.key);
         }
       }
       for (const use of (struct.uses ?? [])) {
@@ -897,6 +937,7 @@ function resolveModuleDependencies(
           for (const field of expandStructUse(use.expr, struct.line, paramTemplates)) {
             for (const sym of getTypeExpressionSymbols(field.target, field.line, symbols, templateSymbols)) {
               addDep(module, sym.moduleId);
+              addSymbolRef(module, sym.key);
             }
           }
           continue;
@@ -904,10 +945,11 @@ function resolveModuleDependencies(
         const call = parseCallExpression(use.expr, struct.line);
         if (!call) { continue; }
         const tmpl = templateSymbols.get(call.callee);
-        if (tmpl) { addDep(module, tmpl.moduleId); }
+        if (tmpl) { addDep(module, tmpl.moduleId); addSymbolRef(module, tmpl.key); }
         for (const arg of call.args) {
           for (const sym of getTypeExpressionSymbols(arg, struct.line, symbols, templateSymbols)) {
             addDep(module, sym.moduleId);
+            addSymbolRef(module, sym.key);
           }
         }
       }
@@ -916,6 +958,7 @@ function resolveModuleDependencies(
           if (p.variadic) { continue; }
           for (const symbol of getTypeExpressionSymbols(p.type, p.line, symbols, templateSymbols)) {
             addDep(module, symbol.moduleId);
+            addSymbolRef(module, symbol.key);
           }
         }
         const returnTargets = fn.returnType === 'any'
@@ -924,6 +967,7 @@ function resolveModuleDependencies(
         for (const returnTarget of returnTargets) {
           for (const symbol of getTypeExpressionSymbols(returnTarget, fn.line, symbols, templateSymbols)) {
             addDep(module, symbol.moduleId);
+            addSymbolRef(module, symbol.key);
           }
         }
       }
@@ -934,6 +978,7 @@ function resolveModuleDependencies(
         if (p.variadic) { continue; }
         for (const symbol of getTypeExpressionSymbols(p.type, p.line, symbols, templateSymbols)) {
           addDep(module, symbol.moduleId);
+          addSymbolRef(module, symbol.key);
         }
       }
       if (fn.returnType === 'any') {
@@ -941,6 +986,7 @@ function resolveModuleDependencies(
       }
       for (const symbol of getTypeExpressionSymbols(fn.returnType, fn.line, symbols, templateSymbols)) {
         addDep(module, symbol.moduleId);
+        addSymbolRef(module, symbol.key);
       }
     }
   }
@@ -957,6 +1003,22 @@ function resolveModuleDependencies(
       }
     }
   }
+}
+
+function buildSymbolUsageIndex(modules: ModuleArtifact[]): SymbolUsageIndex {
+  const usedBy = new Map<string, Array<{ moduleId: string; count: number }>>();
+  const totalCount = new Map<string, number>();
+
+  for (const module of modules) {
+    for (const [symbolKey, count] of module.symbolRefs) {
+      let refs = usedBy.get(symbolKey);
+      if (!refs) { refs = []; usedBy.set(symbolKey, refs); }
+      refs.push({ moduleId: module.id, count });
+      totalCount.set(symbolKey, (totalCount.get(symbolKey) ?? 0) + count);
+    }
+  }
+
+  return { usedBy, totalCount };
 }
 
 function getUsedTemplateSymbols(template: TemplateNode, templateSymbols: Map<string, TemplateSymbol>): TemplateSymbol[] {

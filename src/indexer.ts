@@ -1,8 +1,8 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
 import initSqlJs, { Database, SqlJsStatic } from 'sql.js';
-import { formatCgen } from './formatter';
-import { parseDsl, makePublicPath, type SectionKind, type SectionNode } from './parser';
+import { makePublicPath, type SectionKind, type SectionNode } from './parser';
+import type { SymbolUsageIndex } from './cgen';
 
 type SymbolKind = 'alias' | 'enum' | 'template' | 'struct' | 'fn';
 
@@ -35,25 +35,6 @@ export interface SuggestionUsageRecord {
   lastAcceptedAt: string;
 }
 
-interface SectionRecord {
-  kind: SectionKind;
-  name: string;
-  path: string;
-  parentPath: string;
-  sourcePath: string;
-  line: number;
-}
-
-interface SymbolRecord {
-  kind: SymbolKind;
-  name: string;
-  path: string;
-  parentPath: string;
-  sourcePath: string;
-  line: number;
-  params: string;
-}
-
 const builtinTypes = [
   'c.bool',
   'c.char',
@@ -82,16 +63,8 @@ export class CgenProjectIndex {
   private watcher: vscode.FileSystemWatcher | undefined;
   private saveTimer: NodeJS.Timeout | undefined;
   private readonly dbUri: vscode.Uri;
-  private busyCount = 0;
   onBusyChange?: (active: boolean) => void;
-
-  private beginWork(): void {
-    if (++this.busyCount === 1) { this.onBusyChange?.(true); }
-  }
-
-  private endWork(): void {
-    if (--this.busyCount === 0) { this.onBusyChange?.(false); }
-  }
+  onSourceChanged?: () => void;
 
   private constructor(
     private readonly sql: SqlJsStatic,
@@ -117,11 +90,6 @@ export class CgenProjectIndex {
     }
     this.save().catch(() => undefined);
     this.db?.close();
-  }
-
-  async indexVirtualText(text: string): Promise<void> {
-    this.ensureDb();
-    this.replaceSource('__editor__', text);
   }
 
   getSnapshot(): IndexedDsl {
@@ -197,6 +165,122 @@ export class CgenProjectIndex {
     this.queueSave();
   }
 
+  updateFromArtifacts(root: SectionNode): void {
+    const db = this.ensureDb();
+    db.run('BEGIN');
+    try {
+      db.run('DELETE FROM sections');
+      db.run('DELETE FROM symbols');
+
+      const walkSection = (node: SectionNode, pathParts: string[]): void => {
+        if (node.kind !== 'root') {
+          const publicPath = makePublicPath(pathParts);
+          const publicParentPath = makePublicPath(pathParts.slice(0, -1));
+          if (publicPath.join('.') !== publicParentPath.join('.')) {
+            db.run(
+              'INSERT INTO sections(kind, name, path, parent_path) VALUES (?, ?, ?, ?)',
+              [node.kind, node.name, publicPath.join('.'), publicParentPath.join('.')]
+            );
+          }
+        }
+
+        const symbolParentPath = makePublicPath(pathParts).join('.');
+
+        for (const alias of node.aliases) {
+          db.run(
+            'INSERT INTO symbols(kind, name, path, parent_path, params) VALUES (?, ?, ?, ?, ?)',
+            ['alias', alias.name, makePublicPath([...pathParts, alias.name]).join('.'), symbolParentPath, '']
+          );
+        }
+
+        for (const enumNode of node.enums) {
+          db.run(
+            'INSERT INTO symbols(kind, name, path, parent_path, params) VALUES (?, ?, ?, ?, ?)',
+            ['enum', enumNode.name, makePublicPath([...pathParts, enumNode.name]).join('.'), symbolParentPath, '']
+          );
+        }
+
+        for (const template of node.templates) {
+          db.run(
+            'INSERT INTO symbols(kind, name, path, parent_path, params) VALUES (?, ?, ?, ?, ?)',
+            ['template', template.name, makePublicPath([...pathParts, template.name]).join('.'), symbolParentPath, template.params.map((p) => p.name).join(',')]
+          );
+        }
+
+        for (const struct of node.structs) {
+          const structPath = makePublicPath([...pathParts, struct.name]);
+          db.run(
+            'INSERT INTO symbols(kind, name, path, parent_path, params) VALUES (?, ?, ?, ?, ?)',
+            ['struct', struct.name, structPath.join('.'), symbolParentPath, '']
+          );
+          for (const fn of struct.fns) {
+            db.run(
+              'INSERT INTO symbols(kind, name, path, parent_path, params) VALUES (?, ?, ?, ?, ?)',
+              ['fn', fn.name, [...structPath, fn.name].join('.'), structPath.join('.'), fn.params.map((p) => p.name).join(',')]
+            );
+          }
+        }
+
+        for (const fn of node.fns) {
+          db.run(
+            'INSERT INTO symbols(kind, name, path, parent_path, params) VALUES (?, ?, ?, ?, ?)',
+            ['fn', fn.name, makePublicPath([...pathParts, fn.name]).join('.'), symbolParentPath, fn.params.map((p) => p.name).join(',')]
+          );
+        }
+
+        for (const child of node.children) {
+          walkSection(child, [...pathParts, child.name]);
+        }
+      };
+
+      walkSection(root, []);
+      db.run('COMMIT');
+    } catch (error) {
+      db.run('ROLLBACK');
+      throw error;
+    }
+    this.queueSave();
+  }
+
+  updateSymbolUsage(usage: SymbolUsageIndex): void {
+    const db = this.ensureDb();
+    db.run('BEGIN');
+    try {
+      db.run('DELETE FROM symbol_usage');
+      for (const [symbolKey, refs] of usage.usedBy) {
+        for (const { moduleId, count } of refs) {
+          db.run(
+            'INSERT INTO symbol_usage(symbol_key, used_by_module, use_count) VALUES (?, ?, ?)',
+            [symbolKey, moduleId, count]
+          );
+        }
+      }
+      db.run('COMMIT');
+    } catch (error) {
+      db.run('ROLLBACK');
+      throw error;
+    }
+    this.queueSave();
+  }
+
+  getSymbolUsedBy(symbolKey: string): Array<{ moduleId: string; count: number }> {
+    const db = this.ensureDb();
+    return queryRows(
+      db,
+      'SELECT used_by_module, use_count FROM symbol_usage WHERE symbol_key = ? ORDER BY use_count DESC',
+      [symbolKey]
+    ).map((row) => ({ moduleId: String(row.used_by_module), count: Number(row.use_count) }));
+  }
+
+  getModuleSymbolRefs(moduleId: string): Array<{ symbolKey: string; count: number }> {
+    const db = this.ensureDb();
+    return queryRows(
+      db,
+      'SELECT symbol_key, use_count FROM symbol_usage WHERE used_by_module = ? ORDER BY use_count DESC',
+      [moduleId]
+    ).map((row) => ({ symbolKey: String(row.symbol_key), count: Number(row.use_count) }));
+  }
+
   private async initialize(): Promise<void> {
     const configUri = vscode.Uri.joinPath(this.workspaceFolder.uri, 'cgen.json');
     try {
@@ -207,57 +291,21 @@ export class CgenProjectIndex {
       return;
     }
 
-    this.beginWork();
     try {
-      const dir = vscode.Uri.joinPath(this.workspaceFolder.uri, '.cgen');
-      await vscode.workspace.fs.createDirectory(dir);
-      try {
-        await vscode.workspace.fs.delete(this.dbUri);
-      } catch {
-        // Fresh projects do not have an index yet.
-      }
-
-      this.db = new this.sql.Database();
-      this.createSchema();
-      this.addHistory('startup_reindex', 'clean');
-      await this.indexBuiltinPackages();
-      await this.indexWorkspaceFiles();
-      await this.save();
-      this.startWatcher();
-    } finally {
-      this.endWork();
-    }
-  }
-
-  private async indexBuiltinPackages(): Promise<void> {
-    const packagesUri = vscode.Uri.joinPath(this.context.extensionUri, 'packages');
-    let entries: [string, vscode.FileType][];
-    try {
-      entries = await vscode.workspace.fs.readDirectory(packagesUri);
+      const bytes = await vscode.workspace.fs.readFile(this.dbUri);
+      this.db = new this.sql.Database(bytes);
     } catch {
-      return;
+      this.db = new this.sql.Database();
     }
 
-    for (const [name, type] of entries) {
-      if (type !== vscode.FileType.File || !name.endsWith('.cgen')) {
-        continue;
-      }
-      const fileUri = vscode.Uri.joinPath(packagesUri, name);
-      const bytes = await vscode.workspace.fs.readFile(fileUri);
-      this.replaceSource(`__builtin__/${name}`, Buffer.from(bytes).toString('utf8'));
-    }
-  }
+    this.createSchema();
 
-  private async indexWorkspaceFiles(): Promise<void> {
-    const files = await vscode.workspace.findFiles(
-      new vscode.RelativePattern(this.workspaceFolder, '**/*.cgen'),
-      '**/{node_modules,out,build,dist,releases,.cgen}/**',
-      256
-    );
+    const db = this.db;
+    db.run('DELETE FROM sections');
+    db.run('DELETE FROM symbols');
+    db.run('DELETE FROM symbol_usage');
 
-    for (const uri of files) {
-      await this.indexFile(uri);
-    }
+    this.startWatcher();
   }
 
   private startWatcher(): void {
@@ -265,61 +313,9 @@ export class CgenProjectIndex {
       new vscode.RelativePattern(this.workspaceFolder, '**/*.cgen')
     );
     this.context.subscriptions.push(this.watcher);
-    this.watcher.onDidCreate((uri) => this.indexFile(uri).catch(reportIndexError));
-    this.watcher.onDidChange((uri) => this.indexFile(uri).catch(reportIndexError));
-    this.watcher.onDidDelete((uri) => {
-      this.deleteSource(this.relativePath(uri));
-      this.queueSave();
-    });
-  }
-
-  private async indexFile(uri: vscode.Uri): Promise<void> {
-    if (this.relativePath(uri).startsWith('.cgen/')) {
-      return;
-    }
-
-    this.beginWork();
-    try {
-      const bytes = await vscode.workspace.fs.readFile(uri);
-      this.replaceSource(this.relativePath(uri), Buffer.from(bytes).toString('utf8'));
-      this.addHistory('index_file', this.relativePath(uri));
-      this.queueSave();
-    } finally {
-      this.endWork();
-    }
-  }
-
-  private replaceSource(sourcePath: string, text: string): void {
-    const db = this.ensureDb();
-    const records = extractRecords(text, sourcePath);
-    db.run('BEGIN');
-    try {
-      db.run('DELETE FROM sections WHERE source_path = ?', [sourcePath]);
-      db.run('DELETE FROM symbols WHERE source_path = ?', [sourcePath]);
-      for (const section of records.sections) {
-        db.run(
-          'INSERT INTO sections(kind, name, path, parent_path, source_path, line) VALUES (?, ?, ?, ?, ?, ?)',
-          [section.kind, section.name, section.path, section.parentPath, section.sourcePath, section.line]
-        );
-      }
-      for (const symbol of records.symbols) {
-        db.run(
-          'INSERT INTO symbols(kind, name, path, parent_path, source_path, line, params) VALUES (?, ?, ?, ?, ?, ?, ?)',
-          [symbol.kind, symbol.name, symbol.path, symbol.parentPath, symbol.sourcePath, symbol.line, symbol.params]
-        );
-      }
-      db.run('COMMIT');
-    } catch (error) {
-      db.run('ROLLBACK');
-      throw error;
-    }
-  }
-
-  private deleteSource(sourcePath: string): void {
-    const db = this.ensureDb();
-    db.run('DELETE FROM sections WHERE source_path = ?', [sourcePath]);
-    db.run('DELETE FROM symbols WHERE source_path = ?', [sourcePath]);
-    this.addHistory('delete_file', sourcePath);
+    this.watcher.onDidCreate(() => this.onSourceChanged?.());
+    this.watcher.onDidChange(() => this.onSourceChanged?.());
+    this.watcher.onDidDelete(() => this.onSourceChanged?.());
   }
 
   private createSchema(): void {
@@ -330,9 +326,7 @@ export class CgenProjectIndex {
         kind TEXT NOT NULL,
         name TEXT NOT NULL,
         path TEXT NOT NULL,
-        parent_path TEXT NOT NULL,
-        source_path TEXT NOT NULL,
-        line INTEGER NOT NULL
+        parent_path TEXT NOT NULL
       );
       CREATE TABLE IF NOT EXISTS symbols (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -340,15 +334,7 @@ export class CgenProjectIndex {
         name TEXT NOT NULL,
         path TEXT NOT NULL,
         parent_path TEXT NOT NULL,
-        source_path TEXT NOT NULL,
-        line INTEGER NOT NULL,
         params TEXT NOT NULL DEFAULT ''
-      );
-      CREATE TABLE IF NOT EXISTS history (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        event TEXT NOT NULL,
-        detail TEXT NOT NULL,
-        created_at TEXT NOT NULL
       );
       CREATE TABLE IF NOT EXISTS suggestion_usage (
         label TEXT NOT NULL,
@@ -360,19 +346,20 @@ export class CgenProjectIndex {
         last_accepted_at TEXT NOT NULL DEFAULT '',
         PRIMARY KEY(label, kind, context_key, prefix)
       );
+      CREATE TABLE IF NOT EXISTS symbol_usage (
+        symbol_key TEXT NOT NULL,
+        used_by_module TEXT NOT NULL,
+        use_count INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY(symbol_key, used_by_module)
+      );
       CREATE INDEX IF NOT EXISTS idx_sections_path ON sections(path);
       CREATE INDEX IF NOT EXISTS idx_sections_parent ON sections(parent_path);
       CREATE INDEX IF NOT EXISTS idx_symbols_path ON symbols(path);
       CREATE INDEX IF NOT EXISTS idx_symbols_parent ON symbols(parent_path);
       CREATE INDEX IF NOT EXISTS idx_suggestion_usage_context ON suggestion_usage(context_key, prefix);
+      CREATE INDEX IF NOT EXISTS idx_symbol_usage_key ON symbol_usage(symbol_key);
+      CREATE INDEX IF NOT EXISTS idx_symbol_usage_module ON symbol_usage(used_by_module);
     `);
-  }
-
-  private addHistory(event: string, detail: string): void {
-    this.ensureDb().run(
-      'INSERT INTO history(event, detail, created_at) VALUES (?, ?, ?)',
-      [event, detail, new Date().toISOString()]
-    );
   }
 
   private async save(): Promise<void> {
@@ -393,10 +380,6 @@ export class CgenProjectIndex {
     }, 250);
   }
 
-  private relativePath(uri: vscode.Uri): string {
-    return path.relative(this.workspaceFolder.uri.fsPath, uri.fsPath).replace(/\\/g, '/');
-  }
-
   private ensureDb(): Database {
     if (!this.db) {
       this.db = new this.sql.Database();
@@ -404,112 +387,6 @@ export class CgenProjectIndex {
     }
     return this.db;
   }
-}
-
-function extractRecords(text: string, sourcePath: string): { sections: SectionRecord[]; symbols: SymbolRecord[] } {
-  const sections: SectionRecord[] = [];
-  const symbols: SymbolRecord[] = [];
-
-  const { root } = parseDsl(formatCgen(text));
-
-  function walkSection(node: SectionNode, pathParts: string[]): void {
-    if (node.kind !== 'root') {
-      const publicPath = makePublicPath(pathParts);
-      const publicParentPath = makePublicPath(pathParts.slice(0, -1));
-      if (publicPath.join('.') !== publicParentPath.join('.')) {
-        sections.push({
-          kind: node.kind,
-          name: node.name,
-          path: publicPath.join('.'),
-          parentPath: publicParentPath.join('.'),
-          sourcePath,
-          line: node.line
-        });
-      }
-    }
-
-    const symbolParentPath = makePublicPath(pathParts).join('.');
-
-    for (const alias of node.aliases) {
-      symbols.push({
-        kind: 'alias',
-        name: alias.name,
-        path: makePublicPath([...pathParts, alias.name]).join('.'),
-        parentPath: symbolParentPath,
-        sourcePath,
-        line: alias.line,
-        params: ''
-      });
-    }
-
-    for (const enumNode of node.enums) {
-      symbols.push({
-        kind: 'enum',
-        name: enumNode.name,
-        path: makePublicPath([...pathParts, enumNode.name]).join('.'),
-        parentPath: symbolParentPath,
-        sourcePath,
-        line: enumNode.line,
-        params: ''
-      });
-    }
-
-    for (const template of node.templates) {
-      symbols.push({
-        kind: 'template',
-        name: template.name,
-        path: makePublicPath([...pathParts, template.name]).join('.'),
-        parentPath: symbolParentPath,
-        sourcePath,
-        line: template.line,
-        params: template.params.map((p) => p.name).join(',')
-      });
-    }
-
-    for (const struct of node.structs) {
-      const structPath = makePublicPath([...pathParts, struct.name]);
-      symbols.push({
-        kind: 'struct',
-        name: struct.name,
-        path: structPath.join('.'),
-        parentPath: symbolParentPath,
-        sourcePath,
-        line: struct.line,
-        params: ''
-      });
-
-      for (const fn of struct.fns) {
-        symbols.push({
-          kind: 'fn',
-          name: fn.name,
-          path: [...structPath, fn.name].join('.'),
-          parentPath: structPath.join('.'),
-          sourcePath,
-          line: fn.line,
-          params: fn.params.map((p) => p.name).join(',')
-        });
-      }
-    }
-
-    for (const fn of node.fns) {
-      symbols.push({
-        kind: 'fn',
-        name: fn.name,
-        path: makePublicPath([...pathParts, fn.name]).join('.'),
-        parentPath: symbolParentPath,
-        sourcePath,
-        line: fn.line,
-        params: fn.params.map((p) => p.name).join(',')
-      });
-    }
-
-    for (const child of node.children) {
-      walkSection(child, [...pathParts, child.name]);
-    }
-  }
-
-  walkSection(root, []);
-  return { sections, symbols };
 }
 
 function createNode(kind: SectionKind, name: string, nodePath: string[]): IndexedNode {

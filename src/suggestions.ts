@@ -81,7 +81,6 @@ export async function createDslSuggestion(
 
   const linePrefix = lineRange.before;
 
-  await projectIndex.indexVirtualText(request.text);
   const index = projectIndex.getSnapshot();
   const currentIndent = lineRange.before.match(/^\s*/)?.[0].length ?? 0;
   const context = findCurrentContext(request.text.slice(0, lineRange.lineStart), currentIndent);
