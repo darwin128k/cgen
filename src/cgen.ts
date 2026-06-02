@@ -155,6 +155,12 @@ async function buildDslArtifacts(workspaceFolder: vscode.WorkspaceFolder, extens
   resolveModuleDependencies(modules, symbols, templateSymbols, paramTemplates);
   const usage = buildSymbolUsageIndex(modules);
 
+  for (const module of modules) {
+    if (module.headerPathParts.length === 0) { continue; }
+    renderHeader(module, [], symbols, templateSymbols, paramTemplates, bodyTemplates);
+    renderSource(module, symbols, templateSymbols, paramTemplates);
+  }
+
   return { root: merged.root, modules, symbols, templateSymbols, paramTemplates, bodyTemplates, usage };
 }
 

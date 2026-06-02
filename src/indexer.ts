@@ -298,13 +298,19 @@ export class CgenProjectIndex {
       this.db = new this.sql.Database();
     }
 
-    this.createSchema();
-
+    // Drop derived tables so schema changes take effect; suggestion_usage is preserved.
     const db = this.db;
-    db.run('DELETE FROM sections');
-    db.run('DELETE FROM symbols');
-    db.run('DELETE FROM symbol_usage');
+    db.run('DROP TABLE IF EXISTS sections');
+    db.run('DROP TABLE IF EXISTS symbols');
+    db.run('DROP TABLE IF EXISTS symbol_usage');
+    db.run('DROP INDEX IF EXISTS idx_sections_path');
+    db.run('DROP INDEX IF EXISTS idx_sections_parent');
+    db.run('DROP INDEX IF EXISTS idx_symbols_path');
+    db.run('DROP INDEX IF EXISTS idx_symbols_parent');
+    db.run('DROP INDEX IF EXISTS idx_symbol_usage_key');
+    db.run('DROP INDEX IF EXISTS idx_symbol_usage_module');
 
+    this.createSchema();
     this.startWatcher();
   }
 

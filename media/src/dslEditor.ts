@@ -1195,7 +1195,7 @@ window.addEventListener('message', (event: MessageEvent) => {
   }
   if (event.data.type === 'error') {
     setDiagnosticLines(event.data.lines);
-    if (diagnosticLines.length > 0) {
+    if (event.data.jump && diagnosticLines.length > 0) {
       const firstLine = diagnosticLines[0];
       const offset = source.value
         .split('\n')
@@ -1204,9 +1204,9 @@ window.addEventListener('message', (event: MessageEvent) => {
       source.selectionStart = offset;
       source.selectionEnd = offset;
       scrollToCursor();
-      paint();
       source.focus();
     }
+    paint();
   }
 });
 let isExpanded = false;

@@ -8,6 +8,7 @@ import { createDslSuggestion } from './suggestions';
 let saveEditorFn: (() => Promise<void>) | undefined;
 let projectIndexPromise: Promise<CgenProjectIndex | undefined> | undefined;
 let postProgressMessage: ((active: boolean) => void) | undefined;
+let postDiagnosticsMessage: ((lines: number[]) => void) | undefined;
 let currentEditorContent = '';
 
 interface FormatPolicy {
@@ -190,6 +191,9 @@ async function openDslEditor(context: vscode.ExtensionContext) {
   postProgressMessage = (active) => {
     void panel.webview.postMessage({ type: 'progress', active });
   };
+  postDiagnosticsMessage = (lines) => {
+    void panel.webview.postMessage({ type: 'error', lines });
+  };
   projectIndexPromise?.then((index) => {
     if (index) { index.onBusyChange = postProgressMessage; }
   });
@@ -201,6 +205,7 @@ async function openDslEditor(context: vscode.ExtensionContext) {
   panel.onDidDispose(() => {
     saveEditorFn = undefined;
     postProgressMessage = undefined;
+    postDiagnosticsMessage = undefined;
     projectIndexPromise?.then((index) => {
       if (index) { index.onBusyChange = undefined; }
     });
@@ -222,6 +227,7 @@ async function openDslEditor(context: vscode.ExtensionContext) {
       if (typeof message.cursor === 'number') {
         await saveSession(message.cursor, message.scrollTop ?? 0);
       }
+      projectIndexPromise?.then((index) => index?.onSourceChanged?.());
       return;
     }
 
@@ -303,11 +309,11 @@ async function openDslEditor(context: vscode.ExtensionContext) {
       const projectIndex = await getProjectIndex(context, workspaceFolder);
       projectIndex?.updateFromArtifacts(root);
       projectIndex?.updateSymbolUsage(usage);
-      await panel.webview.postMessage({ type: 'error', lines: [] });
+      await panel.webview.postMessage({ type: 'error', lines: [], jump: true });
       vscode.window.showInformationMessage(`CGen generated ${files.length} file(s).`);
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
-      await panel.webview.postMessage({ type: 'error', lines: parseErrorLineNumbers(msg) });
+      await panel.webview.postMessage({ type: 'error', lines: parseErrorLineNumbers(msg), jump: true });
       vscode.window.showErrorMessage(msg);
     }
   });
@@ -406,8 +412,10 @@ async function initializeProjectIndex(context: vscode.ExtensionContext): Promise
           const { root, usage } = await resolveDslUsage(workspaceFolder, context.extensionUri, currentEditorContent);
           index.updateFromArtifacts(root);
           index.updateSymbolUsage(usage);
-        } catch {
-          // DSL may have errors during editing
+          postDiagnosticsMessage?.([]);
+        } catch (error) {
+          const msg = error instanceof Error ? error.message : String(error);
+          postDiagnosticsMessage?.(parseErrorLineNumbers(msg));
         } finally {
           index.onBusyChange?.(false);
         }
