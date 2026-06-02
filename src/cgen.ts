@@ -94,6 +94,12 @@ interface UseExpression {
   args: string[];
 }
 
+interface LetStatement {
+  name: string;
+  type: string;
+  expr: string;
+}
+
 type TypeDeclaration = AliasNode | EnumNode;
 
 interface ScopedTypeDeclaration {
@@ -986,6 +992,7 @@ function resolveModuleDependencies(
             addSymbolRef(module, symbol.key);
           }
         }
+        addFnBodyDependencies(module, fn, symbols, templateSymbols);
       }
     }
 
@@ -1004,6 +1011,7 @@ function resolveModuleDependencies(
         addDep(module, symbol.moduleId);
         addSymbolRef(module, symbol.key);
       }
+      addFnBodyDependencies(module, fn, symbols, templateSymbols);
     }
   }
 
@@ -1069,6 +1077,64 @@ function collectUsedTemplateSymbols(
     if (nested) {
       collectUsedTemplateSymbols(nested, line, templateSymbols, result, callableParams);
     }
+  }
+}
+
+function addFnBodyDependencies(
+  module: ModuleArtifact,
+  fn: FnNode,
+  symbols: Map<string, TypeSymbol>,
+  templateSymbols: Map<string, TemplateSymbol>
+): void {
+  for (const line of fn.body) {
+    const letStatement = parseLetStatement(line);
+    if (letStatement) {
+      for (const symbol of getTypeExpressionSymbols(letStatement.type, fn.line, symbols, templateSymbols)) {
+        addDep(module, symbol.moduleId);
+        addSymbolRef(module, symbol.key);
+      }
+      addFnExpressionDependencies(module, letStatement.expr, fn.line, templateSymbols);
+      continue;
+    }
+
+    if (/^return\s+/.test(line)) {
+      addFnExpressionDependencies(module, line.slice('return '.length).trim(), fn.line, templateSymbols);
+      continue;
+    }
+
+    if (/^use\s+c\.expr\(/.test(line)) {
+      continue;
+    }
+
+    if (/^use\s+/.test(line)) {
+      addFnUseExpressionDependencies(module, parseUseExpression(line, fn.line), fn.line, templateSymbols);
+    }
+  }
+}
+
+function addFnExpressionDependencies(
+  module: ModuleArtifact,
+  expr: string,
+  line: number,
+  templateSymbols: Map<string, TemplateSymbol>
+): void {
+  const expression = parseCallExpression(expr, line);
+  if (expression) {
+    addFnUseExpressionDependencies(module, expression, line, templateSymbols);
+  }
+}
+
+function addFnUseExpressionDependencies(
+  module: ModuleArtifact,
+  expression: UseExpression,
+  line: number,
+  templateSymbols: Map<string, TemplateSymbol>
+): void {
+  const used: TemplateSymbol[] = [];
+  collectUsedTemplateSymbols(expression, line, templateSymbols, used, new Set());
+  for (const symbol of used) {
+    addDep(module, symbol.moduleId);
+    addSymbolRef(module, symbol.key);
   }
 }
 
@@ -1261,16 +1327,30 @@ function getStructFields(struct: StructNode, paramTemplates: Map<string, Templat
   return fields;
 }
 
-function renderFnBody(fn: FnNode, templateSymbols: Map<string, TemplateSymbol>, methodSelfPointer = false): string[] {
-  return fn.body.map((line) => renderFnBodyLine(line, fn.line, templateSymbols, methodSelfPointer));
+function renderFnBody(
+  fn: FnNode,
+  symbols: Map<string, TypeSymbol>,
+  templateSymbols: Map<string, TemplateSymbol>,
+  methodSelfPointer = false
+): string[] {
+  return fn.body.map((line) => renderFnBodyLine(line, fn.line, symbols, templateSymbols, methodSelfPointer));
 }
 
 function renderFnBodyLine(
   line: string,
   fnLine: number,
+  symbols: Map<string, TypeSymbol>,
   templateSymbols: Map<string, TemplateSymbol>,
   methodSelfPointer: boolean
 ): string {
+  const letStatement = parseLetStatement(line);
+  if (letStatement) {
+    const typeName = resolveTypeExpression(letStatement.type, fnLine, symbols, templateSymbols);
+    const expr = renderFnExpression(letStatement.expr, methodSelfPointer);
+    const expanded = expandTemplateArgument(expr, fnLine, templateSymbols, new Set());
+    return `  ${typeName} ${letStatement.name} = ${expanded};`;
+  }
+
   const exprOfMatch = line.match(/^use\s+c\.expr\((.*)\)$/);
   if (exprOfMatch) {
     return `  ${parseFnExprArgument(exprOfMatch[1].trim())}`;
@@ -1289,7 +1369,20 @@ function renderFnBodyLine(
     return `  ${expanded};`;
   }
 
-  throw new Error(`Line ${fnLine}: function bodies only support \`return expr\` and \`use c.expr(...)\``);
+  throw new Error(`Line ${fnLine}: function bodies only support \`let name -> type = expr\`, \`return expr\`, and \`use c.expr(...)\``);
+}
+
+function parseLetStatement(line: string): LetStatement | undefined {
+  const match = line.match(/^let\s+([A-Za-z_][A-Za-z0-9_]*)(?:\s+as\s+|\s+->\s*)(.+?)\s*=\s*(.+)$/);
+  if (!match) {
+    return undefined;
+  }
+
+  return {
+    name: match[1],
+    type: match[2].trim(),
+    expr: match[3].trim()
+  };
 }
 
 function parseFnExprArgument(arg: string): string {
@@ -1488,7 +1581,7 @@ function renderSource(
     if (target !== 'source' && target !== 'both') { continue; }
     const fnCName = makeFnCName(module, extraParts, fn.name);
     lines.push(`${makeFnSignature(fn, fnCName, symbols, templateSymbols)} {`);
-    lines.push(...renderFnBody(fn, templateSymbols));
+    lines.push(...renderFnBody(fn, symbols, templateSymbols));
     lines.push('}');
     hasDefinitions = true;
   }
@@ -1501,7 +1594,7 @@ function renderSource(
       if (target !== 'source' && target !== 'both') { continue; }
       const fnCName = makeStructMethodCName(module, symbolParts, struct.name, fn.name);
       lines.push(`${makeStructMethodSignature(fn, fnCName, symbols, templateSymbols, typedefName, struct, paramTemplates)} {`);
-      lines.push(...renderFnBody(fn, templateSymbols, true));
+      lines.push(...renderFnBody(fn, symbols, templateSymbols, true));
       lines.push('}');
       hasDefinitions = true;
     }

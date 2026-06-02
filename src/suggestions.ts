@@ -457,6 +457,7 @@ function getSuggestionContextKey(
 ): string {
   const typed = linePrefix.trimStart();
   if (/^@/.test(typed)) return 'attribute';
+  if (/^let\s+[A-Za-z_][A-Za-z0-9_]*(?:\s+as\s+|\s+->\s*).+=\s*/.test(typed)) return 'let.expression';
   if (/(?:\s+as\s+|\s+->\s*)[A-Za-z_][A-Za-z0-9_.]*$/.test(typed)) return 'type';
   if (/^use\s+/.test(typed)) return isUseArgumentPosition(typed) ? 'use.argument' : 'use.template';
   if (/^return\s+/.test(typed)) return 'return.expression';
@@ -494,6 +495,14 @@ function getCandidates(typed: string, contextPath: string[], currentTemplate: Cu
   }
 
   if (/^field\s+\S+(?:\s+as\s+|\s+->\s*)/.test(typed)) {
+    return completeTail(typed, getTypeCandidates(typed, contextPath, index));
+  }
+
+  if (/^let\s+\S+(?:\s+as\s+|\s+->\s*)[^=]*=\s*/.test(typed)) {
+    return completeTail(typed, getExpressionCandidates(typed, contextPath, currentTemplate, index));
+  }
+
+  if (/^let\s+\S+(?:\s+as\s+|\s+->\s*)/.test(typed)) {
     return completeTail(typed, getTypeCandidates(typed, contextPath, index));
   }
 
@@ -537,7 +546,7 @@ function getCandidates(typed: string, contextPath: string[], currentTemplate: Cu
     return getDeclarationSnippetsForContext(contextPath, currentTemplate, index);
   }
 
-  if (/^(alias|enum|template|fn|param|field)\b/.test(typed)) {
+  if (/^(alias|enum|template|fn|param|field|let)\b/.test(typed)) {
     return getDeclarationSnippetsForContext(contextPath, currentTemplate, index);
   }
 

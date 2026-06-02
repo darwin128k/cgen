@@ -30,6 +30,7 @@ export const contextCandidates: Readonly<Record<string, readonly string[]>> = {
     'scope name:',
   ],
   'fn.body': [
+    'let name -> type = value',
     'return ',
     'use c.expr("")',
   ],

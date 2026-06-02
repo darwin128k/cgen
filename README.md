@@ -256,14 +256,15 @@ fn set(mut value as c.int) -> c.void:
     use c.expr((void)value)
 ```
 
-Function bodies support two statement forms:
+Function bodies support these statement forms:
 
 | DSL                    | C output         |
 |------------------------|------------------|
+| `let name -> T = expr` | `T name = expr;` |
 | `return expr`          | `return expr;`   |
 | `use c.expr(...)`      | literal C line   |
 
-`expr` in a `return` statement may be a plain identifier, a field access (`self.field`), or a built-in template call such as `c.cast(type, val)` — it is expanded the same way as a template argument.
+`expr` in a `let` or `return` statement may be a plain identifier, a field access (`self.field`), or a built-in template call such as `c.cast(type, val)` — it is expanded the same way as a template argument.
 
 When a struct method has `-> any` as its return type and a single `return self.field` body, the type is inferred from the field's declared type.
 
