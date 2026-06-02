@@ -61,6 +61,12 @@ export interface SymbolUsageIndex {
   totalCount: Map<string, number>;
 }
 
+export class DslError extends Error {
+  constructor(message: string, public readonly root: SectionNode) {
+    super(message);
+  }
+}
+
 interface TypeSymbol {
   key: string;
   cName: string;
@@ -142,26 +148,30 @@ async function buildDslArtifacts(workspaceFolder: vscode.WorkspaceFolder, extens
   const parsedList = allSources.map(parseDsl);
   const merged = mergeDsls(parsedList);
 
-  if (merged.diagnostics.length > 0) {
-    throw new Error(merged.diagnostics.join('\n'));
+  try {
+    if (merged.diagnostics.length > 0) {
+      throw new Error(merged.diagnostics.join('\n'));
+    }
+
+    const modules = collectModules(merged.root);
+    const templateSymbols = buildTemplateSymbols(modules);
+    const symbols = buildTypeSymbols(modules, templateSymbols);
+    const paramTemplates = buildParamTemplateMap(modules);
+    const bodyTemplates = buildBodyTemplateMap(modules);
+
+    resolveModuleDependencies(modules, symbols, templateSymbols, paramTemplates);
+    const usage = buildSymbolUsageIndex(modules);
+
+    for (const module of modules) {
+      if (module.headerPathParts.length === 0) { continue; }
+      renderHeader(module, [], symbols, templateSymbols, paramTemplates, bodyTemplates);
+      renderSource(module, symbols, templateSymbols, paramTemplates);
+    }
+
+    return { root: merged.root, modules, symbols, templateSymbols, paramTemplates, bodyTemplates, usage };
+  } catch (e) {
+    throw new DslError(e instanceof Error ? e.message : String(e), merged.root);
   }
-
-  const modules = collectModules(merged.root);
-  const templateSymbols = buildTemplateSymbols(modules);
-  const symbols = buildTypeSymbols(modules, templateSymbols);
-  const paramTemplates = buildParamTemplateMap(modules);
-  const bodyTemplates = buildBodyTemplateMap(modules);
-
-  resolveModuleDependencies(modules, symbols, templateSymbols, paramTemplates);
-  const usage = buildSymbolUsageIndex(modules);
-
-  for (const module of modules) {
-    if (module.headerPathParts.length === 0) { continue; }
-    renderHeader(module, [], symbols, templateSymbols, paramTemplates, bodyTemplates);
-    renderSource(module, symbols, templateSymbols, paramTemplates);
-  }
-
-  return { root: merged.root, modules, symbols, templateSymbols, paramTemplates, bodyTemplates, usage };
 }
 
 export async function resolveDslUsage(workspaceFolder: vscode.WorkspaceFolder, extensionUri: vscode.Uri, source: string): Promise<{ root: SectionNode; usage: SymbolUsageIndex }> {

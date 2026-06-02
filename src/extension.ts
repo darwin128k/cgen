@@ -1,6 +1,6 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
-import { generateDsl, resolveDslUsage } from './cgen';
+import { generateDsl, resolveDslUsage, DslError } from './cgen';
 import { formatCgen } from './formatter';
 import { CgenProjectIndex } from './indexer';
 import { createDslSuggestion } from './suggestions';
@@ -416,6 +416,9 @@ async function initializeProjectIndex(context: vscode.ExtensionContext): Promise
         } catch (error) {
           const msg = error instanceof Error ? error.message : String(error);
           postDiagnosticsMessage?.(parseErrorLineNumbers(msg));
+          if (error instanceof DslError) {
+            index.updateFromArtifacts(error.root);
+          }
         } finally {
           index.onBusyChange?.(false);
         }
