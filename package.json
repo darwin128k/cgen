@@ -2,7 +2,7 @@
   "name": "cgen-vscode",
   "displayName": "CGen DSL",
   "description": "Small DSL editor and C header/source generator for VS Code.",
-  "version": "0.0.77",
+  "version": "0.0.78",
   "publisher": "local",
   "license": "MIT",
   "engines": {
@@ -122,7 +122,7 @@
   "scripts": {
     "compile": "node scripts/generate-grammar.js && tsc -p ./ && npm run build:webview",
     "build:webview": "esbuild media/src/dslEditor.ts --bundle --outfile=media/dslEditor.js --format=iife --target=es2020",
-    "package": "vsce package --allow-missing-repository --out releases/cgen-vscode-${npm_package_version}.vsix",
+    "package": "vsce package --allow-missing-repository --no-dependencies --out releases/cgen-vscode-${npm_package_version}.vsix && node scripts/include-sqljs-in-vsix.js releases/cgen-vscode-${npm_package_version}.vsix",
     "watch": "tsc -watch -p ./",
     "vscode:prepublish": "npm run compile"
   },

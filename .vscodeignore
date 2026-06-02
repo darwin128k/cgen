@@ -6,6 +6,8 @@ node_modules/**
 releases/**
 src/**
 media/src/**
+!out/**
+!media/dslEditor.js
 
 *.vsix
 *.tsbuildinfo

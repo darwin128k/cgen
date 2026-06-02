@@ -15,6 +15,8 @@
 
 .codicon-save::before { content: "\eb4b"; }
 .codicon-folder-opened::before { content: "\eaf7"; }
+.codicon-error::before { content: "\ea87"; }
+.codicon-close::before { content: "\ea76"; }
 .codicon-symbol-function::before { content: "\eb63"; }
 .codicon-symbol-interface::before { content: "\eb64"; }
 .codicon-symbol-enum::before { content: "\eb5e"; }
@@ -25,6 +27,7 @@
 .codicon-symbol-keyword::before { content: "\eb65"; }
 .codicon-symbol-struct::before { content: "\eb71"; }
 .codicon-symbol-method::before { content: "\eb66"; }
+.codicon-pinned::before { content: "\eb2b"; }
 
 html,
 body {
@@ -121,6 +124,9 @@ button:hover {
   padding: 4px 4px 4px 12px;
   border-bottom: 1px solid var(--vscode-panel-border);
   background: var(--vscode-sideBar-background);
+  font-family: var(--cgen-editor-font-family, var(--vscode-editor-font-family, var(--vscode-font-family)));
+  font-feature-settings: var(--cgen-editor-font-feature-settings, normal);
+  font-variant-ligatures: var(--cgen-editor-font-variant-ligatures, normal);
 }
 
 .toolbar .icon-btn {
@@ -131,7 +137,6 @@ button:hover {
   padding: 0 8px;
   overflow: hidden;
   color: var(--vscode-sideBarTitle-foreground);
-  font-family: var(--vscode-editor-font-family, var(--vscode-font-family));
   font-size: 12px;
   font-weight: 600;
   opacity: 0.55;
@@ -160,6 +165,7 @@ button:hover {
 }
 
 .generate-btn {
+  margin-left: auto;
   border: 1px solid var(--vscode-button-border, transparent);
   color: var(--vscode-button-foreground);
   background: var(--vscode-button-background);
@@ -177,10 +183,6 @@ button:hover {
   padding: 4px 8px 4px 8px;
   border-top: 1px solid var(--vscode-panel-border);
   background: var(--vscode-sideBar-background);
-}
-
-#generate {
-  margin-left: auto;
 }
 
 .title {
@@ -256,9 +258,11 @@ button:hover {
   border: 0;
   outline: 0;
   overflow: auto;
-  font-family: var(--vscode-editor-font-family, var(--vscode-font-family));
-  font-size: var(--vscode-editor-font-size, 13px);
-  font-weight: var(--vscode-editor-font-weight, normal);
+  font-family: var(--cgen-editor-font-family, var(--vscode-editor-font-family, var(--vscode-font-family)));
+  font-feature-settings: var(--cgen-editor-font-feature-settings, normal);
+  font-size: var(--cgen-editor-font-size, var(--vscode-editor-font-size, 13px));
+  font-variant-ligatures: var(--cgen-editor-font-variant-ligatures, normal);
+  font-weight: var(--cgen-editor-font-weight, var(--vscode-editor-font-weight, normal));
   line-height: 1.55;
   tab-size: 4;
   white-space: pre;
@@ -342,6 +346,15 @@ button:hover {
   background: color-mix(in srgb, var(--vscode-errorForeground, #f14c4c) 18%, transparent);
 }
 
+.stripe-line.is-active.has-error::after {
+  border-left-color: transparent;
+  background: transparent;
+}
+
+.stripe-line.is-active.has-error::before {
+  z-index: 1;
+}
+
 #lineNumbers {
   z-index: 4;
   width: var(--cgen-gutter-width);
@@ -401,9 +414,11 @@ button:hover {
   border-radius: 4px;
   color: var(--vscode-descriptionForeground, var(--vscode-editor-foreground));
   background: color-mix(in srgb, var(--vscode-editor-background) 82%, var(--vscode-editor-foreground) 18%);
-  font-family: var(--vscode-editor-font-family, var(--vscode-font-family));
-  font-size: calc(var(--vscode-editor-font-size, 13px) - 2px);
-  font-weight: var(--vscode-editor-font-weight, normal);
+  font-family: var(--cgen-editor-font-family, var(--vscode-editor-font-family, var(--vscode-font-family)));
+  font-feature-settings: var(--cgen-editor-font-feature-settings, normal);
+  font-size: calc(var(--cgen-editor-font-size, var(--vscode-editor-font-size, 13px)) - 2px);
+  font-variant-ligatures: var(--cgen-editor-font-variant-ligatures, normal);
+  font-weight: var(--cgen-editor-font-weight, var(--vscode-editor-font-weight, normal));
   line-height: 1;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -421,6 +436,36 @@ button:hover {
 .line-attachment-button:hover {
   color: var(--vscode-textLink-activeForeground, var(--vscode-textLink-foreground));
   background: var(--vscode-toolbar-hoverBackground);
+}
+
+.diagnostic-bubble {
+  position: absolute;
+  left: var(--cgen-editor-left);
+  right: 18px;
+  z-index: 9;
+  box-sizing: border-box;
+  max-width: min(760px, calc(100% - var(--cgen-editor-left) - 18px));
+  padding: 5px 8px;
+  border-left: 3px solid var(--vscode-errorForeground, #f14c4c);
+  border-radius: 4px;
+  color: var(--vscode-editorError-foreground, var(--vscode-editor-foreground));
+  background: color-mix(in srgb, var(--vscode-editor-background) 86%, var(--vscode-errorForeground, #f14c4c) 14%);
+  box-shadow: 0 4px 14px rgb(0 0 0 / 20%);
+  font-family: var(--cgen-editor-font-family, var(--vscode-editor-font-family, var(--vscode-font-family)));
+  font-feature-settings: var(--cgen-editor-font-feature-settings, normal);
+  font-size: calc(var(--cgen-editor-font-size, var(--vscode-editor-font-size, 13px)) - 1px);
+  font-variant-ligatures: var(--cgen-editor-font-variant-ligatures, normal);
+  font-weight: var(--cgen-editor-font-weight, var(--vscode-editor-font-weight, normal));
+  line-height: 1.35;
+  pointer-events: none;
+}
+
+.diagnostic-bubble[hidden] {
+  display: none;
+}
+
+.diagnostic-message + .diagnostic-message {
+  margin-top: 3px;
 }
 
 .line-attachment-text {
@@ -478,8 +523,10 @@ button:hover {
   border: 1px solid var(--vscode-editorSuggestWidget-border, var(--vscode-editorWidget-border, #454545));
   border-radius: 6px;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
-  font-family: var(--vscode-editor-font-family, monospace);
-  font-size: var(--vscode-editor-font-size, 13px);
+  font-family: var(--cgen-editor-font-family, var(--vscode-editor-font-family, monospace));
+  font-feature-settings: var(--cgen-editor-font-feature-settings, normal);
+  font-size: var(--cgen-editor-font-size, var(--vscode-editor-font-size, 13px));
+  font-variant-ligatures: var(--cgen-editor-font-variant-ligatures, normal);
   line-height: 1.4;
   overflow-y: auto;
 }

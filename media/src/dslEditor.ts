@@ -13,6 +13,8 @@ declare global {
   }
 }
 
+interface Diagnostic { line: number; message: string; }
+
 const vscode = acquireVsCodeApi();
 const source = document.getElementById('source') as HTMLTextAreaElement;
 const highlight = document.getElementById('highlight')!;
@@ -27,6 +29,7 @@ const save = document.getElementById('save')!;
 const load = document.getElementById('load')!;
 const expand = document.getElementById('expand')!;
 const progressBar = document.getElementById('progressBar')!;
+const diagnosticBubble = document.getElementById('diagnosticBubble')!;
 let autoSaveTimer: ReturnType<typeof setTimeout> | undefined;
 let suggestTimer: ReturnType<typeof setTimeout> | undefined;
 let suggestRequestId = 0;
@@ -38,7 +41,7 @@ const snippetEngine = new SnippetEngine();
 let navHoverRange: { start: number; end: number } | undefined;
 let stripeActiveLineIndex = -1;
 let stripeHasSelection = false;
-let stripeErrorCount = -1;
+let stripeDiagnosticKey = '';
 let scheduledPaintId: number | undefined;
 let completionCandidates: string[] = [];
 let completionInsertTexts: string[] = [];
@@ -64,6 +67,7 @@ const lineAttachments = new LineAttachmentController({
   onAction: (action) => vscode.postMessage({ type: 'lineAttachmentAction', ...action })
 });
 let characterWidth: number | undefined;
+let diagnostics: Diagnostic[] = [];
 let diagnosticLines: number[] = [];
 let activeLineIndex = 0;
 const indentText = '    ';
@@ -206,6 +210,7 @@ function paint(): void {
   updateSelectionMode();
   updateActiveLine();
   updateBreadcrumb();
+  renderActiveDiagnostic();
   lineAttachments.render();
   syncScroll();
   requestAnimationFrame(syncScroll);
@@ -267,28 +272,64 @@ function getCharacterWidth(): number {
   return characterWidth;
 }
 
-function setDiagnosticLines(lines: unknown): void {
-  diagnosticLines = Array.isArray(lines)
-    ? [...new Set((lines as number[]).filter((line) => Number.isInteger(line) && line > 0))].sort((left, right) => left - right)
-    : [];
+function setDiagnostics(newDiagnostics: Diagnostic[]): void {
+  diagnostics = newDiagnostics;
+  diagnosticLines = [...new Set(newDiagnostics.map((d) => d.line))].sort((a, b) => a - b);
   renderErrorLines();
+  renderActiveDiagnostic();
 }
 
-function clearDiagnosticLines(): void {
-  if (diagnosticLines.length === 0) {
+function clearDiagnostics(): void {
+  if (diagnostics.length === 0) {
     return;
   }
 
+  diagnostics = [];
   diagnosticLines = [];
   renderErrorLines();
+  renderActiveDiagnostic();
 }
 
 function shiftDiagnosticLines(fromLine: number, delta: number): void {
-  if (diagnosticLines.length === 0 || delta === 0) { return; }
+  if (diagnostics.length === 0 || delta === 0) { return; }
   const maxLine = source.value.split('\n').length;
-  diagnosticLines = diagnosticLines
-    .map((line) => line >= fromLine ? line + delta : line)
-    .filter((line) => line >= 1 && line <= maxLine);
+  diagnostics = diagnostics
+    .map((d) => ({ ...d, line: d.line >= fromLine ? d.line + delta : d.line }))
+    .filter((d) => d.line >= 1 && d.line <= maxLine);
+  diagnosticLines = [...new Set(diagnostics.map((d) => d.line))].sort((a, b) => a - b);
+  renderErrorLines();
+  renderActiveDiagnostic();
+}
+
+function renderActiveDiagnostic(): void {
+  const line = activeLineIndex + 1;
+  const lineDiagnostics = diagnostics.filter((diagnostic) => diagnostic.line === line);
+  if (lineDiagnostics.length === 0) {
+    diagnosticBubble.hidden = true;
+    diagnosticBubble.textContent = '';
+    return;
+  }
+
+  const lineHeight = parseFloat(getComputedStyle(source).lineHeight) || 20;
+  const paddingTop = getEditorPaddingTop();
+  diagnosticBubble.innerHTML = lineDiagnostics.map((diagnostic) =>
+    `<div class="diagnostic-message">${escapeHtml(diagnostic.message)}</div>`
+  ).join('');
+  diagnosticBubble.style.top = `${paddingTop + line * lineHeight - source.scrollTop + 2}px`;
+  diagnosticBubble.hidden = false;
+}
+
+function jumpToDiagnostic(line: number): void {
+  const offset = source.value
+    .split('\n')
+    .slice(0, line - 1)
+    .reduce((sum, value) => sum + value.length + 1, 0);
+  source.selectionStart = offset;
+  source.selectionEnd = offset;
+  clearSuggestion();
+  scrollToCursor();
+  source.focus();
+  paint();
 }
 
 function renderErrorLines(): void {
@@ -297,12 +338,13 @@ function renderErrorLines(): void {
 
 function renderStripeMarkers(): void {
   const hasSelection = source.selectionStart !== source.selectionEnd;
-  if (activeLineIndex === stripeActiveLineIndex && hasSelection === stripeHasSelection && diagnosticLines.length === stripeErrorCount) {
+  const diagnosticKey = diagnosticLines.join(',');
+  if (activeLineIndex === stripeActiveLineIndex && hasSelection === stripeHasSelection && diagnosticKey === stripeDiagnosticKey) {
     return;
   }
   stripeActiveLineIndex = activeLineIndex;
   stripeHasSelection = hasSelection;
-  stripeErrorCount = diagnosticLines.length;
+  stripeDiagnosticKey = diagnosticKey;
 
   const stripeLines = document.getElementById('stripeContent')?.children;
   if (!stripeLines) {
@@ -317,7 +359,7 @@ function renderStripeMarkers(): void {
 }
 
 function generateNow(): void {
-  clearDiagnosticLines();
+  clearDiagnostics();
   vscode.postMessage({ type: 'generate', text: source.value });
 }
 
@@ -358,6 +400,7 @@ function syncScroll(): void {
     stripeContent.style.transform = `translateY(${-source.scrollTop}px)`;
   }
   updateActiveLine();
+  renderActiveDiagnostic();
   lineAttachments.render();
 }
 
@@ -397,6 +440,7 @@ function updateActiveLine(): void {
   if (previousActiveLineIndex !== activeLineIndex) {
     lineNumbers.innerHTML = renderLineNumbers(Math.max(1, source.value.split('\n').length));
   }
+  renderActiveDiagnostic();
 }
 
 function updateSelectionMode(): void {
@@ -1140,7 +1184,7 @@ const filename = document.getElementById('filename')!;
 const breadcrumb = document.getElementById('breadcrumb')!;
 window.addEventListener('message', (event: MessageEvent) => {
   if (event.data.type === 'load') {
-    clearDiagnosticLines();
+    clearDiagnostics();
     clearSuggestion();
     source.value = event.data.text;
     paint();
@@ -1194,17 +1238,14 @@ window.addEventListener('message', (event: MessageEvent) => {
     renderSuggestionNow();
   }
   if (event.data.type === 'error') {
-    setDiagnosticLines(event.data.lines);
+    const rawDiagnostics: unknown = event.data.diagnostics;
+    const parsed: Diagnostic[] = Array.isArray(rawDiagnostics)
+      ? (rawDiagnostics as Array<{ line: number; message: string }>)
+          .filter((d) => typeof d.line === 'number' && typeof d.message === 'string')
+      : [];
+    setDiagnostics(parsed);
     if (event.data.jump && diagnosticLines.length > 0) {
-      const firstLine = diagnosticLines[0];
-      const offset = source.value
-        .split('\n')
-        .slice(0, firstLine - 1)
-        .reduce((sum, line) => sum + line.length + 1, 0);
-      source.selectionStart = offset;
-      source.selectionEnd = offset;
-      scrollToCursor();
-      source.focus();
+      jumpToDiagnostic(diagnosticLines[0]);
     }
     paint();
   }

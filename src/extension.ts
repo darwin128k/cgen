@@ -1,19 +1,35 @@
 import * as path from 'path';
+import * as fs from 'fs';
+import * as childProcess from 'child_process';
 import * as vscode from 'vscode';
 import { generateDsl, resolveDslUsage, DslError } from './cgen';
 import { formatCgen } from './formatter';
 import { CgenProjectIndex } from './indexer';
 import { createDslSuggestion } from './suggestions';
 
+interface ParsedDiagnostic {
+  line: number;
+  message: string;
+}
+
 let saveEditorFn: (() => Promise<void>) | undefined;
 let projectIndexPromise: Promise<CgenProjectIndex | undefined> | undefined;
 let postProgressMessage: ((active: boolean) => void) | undefined;
-let postDiagnosticsMessage: ((lines: number[]) => void) | undefined;
+let postDiagnosticsMessage: ((diagnostics: ParsedDiagnostic[]) => void) | undefined;
 let currentEditorContent = '';
 
 interface FormatPolicy {
   formatOnSave: boolean;
   formatOnPaste: boolean;
+}
+
+interface EditorFontConfig {
+  family: string;
+  size: number;
+  weight: string;
+  featureSettings: string;
+  variantLigatures: string;
+  faceUri?: string;
 }
 
 export function activate(context: vscode.ExtensionContext) {
@@ -82,16 +98,6 @@ async function openDslEditor(context: vscode.ExtensionContext) {
     return;
   }
 
-  const panel = vscode.window.createWebviewPanel(
-    'cgen.dslEditor',
-    'CGen',
-    vscode.ViewColumn.Active,
-    {
-      enableScripts: true,
-      retainContextWhenHidden: true
-    }
-  );
-
   const config = vscode.workspace.getConfiguration('cgen');
   const scratchUri = vscode.Uri.joinPath(workspaceFolder.uri, '.cgen', 'session.cgen');
   const stateUri = vscode.Uri.joinPath(workspaceFolder.uri, '.cgen', 'session.json');
@@ -128,7 +134,37 @@ async function openDslEditor(context: vscode.ExtensionContext) {
     }
   }
 
-  panel.webview.html = getWebviewHtml(panel.webview, context.extensionUri, initialValue, initialCursor, initialScroll);
+  const editorFont = getEditorFontConfig(currentFilePath ? vscode.Uri.file(currentFilePath) : scratchUri);
+  const editorFontFile = resolveEditorFontFile(editorFont.family, editorFont.weight);
+  const localResourceRoots = [context.extensionUri];
+  if (editorFontFile) {
+    localResourceRoots.push(vscode.Uri.file(path.dirname(editorFontFile.fsPath)));
+  }
+
+  const panel = vscode.window.createWebviewPanel(
+    'cgen.dslEditor',
+    'CGen',
+    vscode.ViewColumn.Active,
+    {
+      enableScripts: true,
+      retainContextWhenHidden: true,
+      localResourceRoots
+    }
+  );
+
+  if (editorFontFile) {
+    editorFont.faceUri = panel.webview.asWebviewUri(editorFontFile).toString();
+    editorFont.family = `"CGenEditorFont", ${editorFont.family}`;
+  }
+
+  panel.webview.html = getWebviewHtml(
+    panel.webview,
+    context.extensionUri,
+    initialValue,
+    editorFont,
+    initialCursor,
+    initialScroll
+  );
   if (currentFilePath) {
     panel.title = `CGen — ${path.basename(currentFilePath)}`;
   }
@@ -191,8 +227,8 @@ async function openDslEditor(context: vscode.ExtensionContext) {
   postProgressMessage = (active) => {
     void panel.webview.postMessage({ type: 'progress', active });
   };
-  postDiagnosticsMessage = (lines) => {
-    void panel.webview.postMessage({ type: 'error', lines });
+  postDiagnosticsMessage = (diagnostics) => {
+    void panel.webview.postMessage({ type: 'error', diagnostics });
   };
   projectIndexPromise?.then((index) => {
     if (index) { index.onBusyChange = postProgressMessage; }
@@ -309,11 +345,11 @@ async function openDslEditor(context: vscode.ExtensionContext) {
       const projectIndex = await getProjectIndex(context, workspaceFolder);
       projectIndex?.updateFromArtifacts(root);
       projectIndex?.updateSymbolUsage(usage);
-      await panel.webview.postMessage({ type: 'error', lines: [], jump: true });
+      await panel.webview.postMessage({ type: 'error', diagnostics: [], jump: true });
       vscode.window.showInformationMessage(`CGen generated ${files.length} file(s).`);
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
-      await panel.webview.postMessage({ type: 'error', lines: parseErrorLineNumbers(msg), jump: true });
+      await panel.webview.postMessage({ type: 'error', diagnostics: parseErrorDiagnostics(msg), jump: true });
       vscode.window.showErrorMessage(msg);
     }
   });
@@ -362,6 +398,97 @@ function getFormatPolicy(uri: vscode.Uri): FormatPolicy {
     formatOnSave: config.get<boolean>('formatOnSave', false),
     formatOnPaste: config.get<boolean>('formatOnPaste', false)
   };
+}
+
+function getEditorFontConfig(uri: vscode.Uri): EditorFontConfig {
+  const config = vscode.workspace.getConfiguration('editor', { uri, languageId: 'cgen' });
+  const ligatures = config.get<boolean | string>('fontLigatures', false);
+  return {
+    family: config.get<string>('fontFamily', 'monospace'),
+    size: config.get<number>('fontSize', 13),
+    weight: String(config.get<string | number>('fontWeight', 'normal')),
+    featureSettings: typeof ligatures === 'string' ? ligatures : ligatures ? 'normal' : '"liga" 0, "calt" 0',
+    variantLigatures: ligatures ? 'normal' : 'none'
+  };
+}
+
+function resolveEditorFontFile(fontFamily: string, fontWeight: string): vscode.Uri | undefined {
+  if (process.platform !== 'linux') {
+    return undefined;
+  }
+
+  const family = parseFontFamilyList(fontFamily).find((name) => !isGenericFontFamily(name));
+  if (!family) {
+    return undefined;
+  }
+
+  const patterns = fontStylePatterns(family, fontWeight);
+  for (const pattern of patterns) {
+    const result = childProcess.spawnSync('fc-match', ['-f', '%{file}', pattern], {
+      encoding: 'utf8'
+    });
+    const file = result.status === 0 ? result.stdout.trim() : '';
+    if (file && fs.existsSync(file)) {
+      return vscode.Uri.file(file);
+    }
+  }
+
+  return undefined;
+}
+
+function parseFontFamilyList(value: string): string[] {
+  const names: string[] = [];
+  let current = '';
+  let quote = '';
+
+  for (const char of value) {
+    if (quote) {
+      if (char === quote) {
+        quote = '';
+      } else {
+        current += char;
+      }
+      continue;
+    }
+
+    if (char === '"' || char === "'") {
+      quote = char;
+      continue;
+    }
+
+    if (char === ',') {
+      if (current.trim()) {
+        names.push(current.trim());
+      }
+      current = '';
+      continue;
+    }
+
+    current += char;
+  }
+
+  if (current.trim()) {
+    names.push(current.trim());
+  }
+
+  return names;
+}
+
+function isGenericFontFamily(name: string): boolean {
+  return ['serif', 'sans-serif', 'monospace', 'cursive', 'fantasy', 'system-ui'].includes(name.toLowerCase());
+}
+
+function fontStylePatterns(family: string, weight: string): string[] {
+  const numericWeight = parseInt(weight, 10);
+  const style =
+    numericWeight >= 700 || weight.toLowerCase() === 'bold' ? 'Bold' :
+    numericWeight >= 600 ? 'Semibold' :
+    numericWeight >= 500 ? 'Medium' :
+    undefined;
+
+  return style
+    ? [`${family}:style=${style}`, family]
+    : [family];
 }
 
 async function openScratchFile() {
@@ -415,7 +542,7 @@ async function initializeProjectIndex(context: vscode.ExtensionContext): Promise
           postDiagnosticsMessage?.([]);
         } catch (error) {
           const msg = error instanceof Error ? error.message : String(error);
-          postDiagnosticsMessage?.(parseErrorLineNumbers(msg));
+          postDiagnosticsMessage?.(parseErrorDiagnostics(msg));
           if (error instanceof DslError) {
             index.updateFromArtifacts(error.root);
           }
@@ -448,17 +575,29 @@ async function getProjectIndex(
   return projectIndexPromise;
 }
 
-function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri, value: string, cursor = 0, scrollTop = 0): string {
+function getWebviewHtml(
+  webview: vscode.Webview,
+  extensionUri: vscode.Uri,
+  value: string,
+  editorFont: EditorFontConfig,
+  cursor = 0,
+  scrollTop = 0
+): string {
   const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'media', 'dslEditor.js'));
   const styleUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'media', 'dslEditor.css'));
   const nonce = createNonce();
+  const initialState = JSON.stringify({ cursor, scrollTop, editorFont });
+  const fontFaceCss = editorFont.faceUri
+    ? `@font-face{font-family:CGenEditorFont;src:url("${escapeCssUrl(editorFont.faceUri)}");font-weight:${escapeCssValue(editorFont.weight)};font-style:normal;}`
+    : '';
 
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; font-src ${webview.cspSource}; style-src ${webview.cspSource}; script-src 'nonce-${nonce}';">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; font-src ${webview.cspSource}; style-src ${webview.cspSource} 'nonce-${nonce}'; script-src 'nonce-${nonce}';">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style nonce="${nonce}">${fontFaceCss}</style>
   <link href="${styleUri}" rel="stylesheet">
   <title>CGen</title>
 </head>
@@ -480,6 +619,7 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri, value
       <pre id="highlight" aria-hidden="true"></pre>
       <pre id="suggestion" aria-hidden="true"></pre>
       <div id="lineAttachments" aria-hidden="false"></div>
+      <div id="diagnosticBubble" class="diagnostic-bubble" hidden></div>
       <textarea id="source" wrap="off" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="off">${escapeHtml(value)}</textarea>
     </div>
     <div class="footer">
@@ -494,10 +634,34 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri, value
       </button>
     </div>
   </main>
-  <script nonce="${nonce}">window.__cgenCursor=${cursor};window.__cgenScroll=${scrollTop};</script>
+  <script nonce="${nonce}">
+    {
+      const state = ${escapeScriptJson(initialState)};
+      window.__cgenCursor = state.cursor;
+      window.__cgenScroll = state.scrollTop;
+      const root = document.documentElement;
+      root.style.setProperty('--cgen-editor-font-family', state.editorFont.family);
+      root.style.setProperty('--cgen-editor-font-size', state.editorFont.size + 'px');
+      root.style.setProperty('--cgen-editor-font-weight', state.editorFont.weight);
+      root.style.setProperty('--cgen-editor-font-feature-settings', state.editorFont.featureSettings);
+      root.style.setProperty('--cgen-editor-font-variant-ligatures', state.editorFont.variantLigatures);
+    }
+  </script>
   <script nonce="${nonce}" src="${scriptUri}"></script>
 </body>
 </html>`;
+}
+
+function escapeScriptJson(json: string): string {
+  return json.replace(/</g, '\\u003c').replace(/>/g, '\\u003e').replace(/&/g, '\\u0026');
+}
+
+function escapeCssUrl(value: string): string {
+  return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '');
+}
+
+function escapeCssValue(value: string): string {
+  return value.replace(/[^0-9A-Za-z -]/g, '');
 }
 
 function createNonce(): string {
@@ -533,14 +697,15 @@ function kindToVscodeKind(kind: string): vscode.CompletionItemKind {
   }
 }
 
-function parseErrorLineNumbers(message: string): number[] {
-  const lines = new Set<number>();
-  const pattern = /^Line (\d+):/gm;
+function parseErrorDiagnostics(message: string): ParsedDiagnostic[] {
+  const results: ParsedDiagnostic[] = [];
+  const pattern = /^Line (\d+):\s*(.*)/gm;
   let match: RegExpExecArray | null;
 
   while ((match = pattern.exec(message)) !== null) {
-    lines.add(parseInt(match[1], 10));
+    const line = parseInt(match[1], 10);
+    results.push({ line, message: match[2] });
   }
 
-  return [...lines];
+  return results;
 }
