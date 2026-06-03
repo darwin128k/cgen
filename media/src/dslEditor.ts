@@ -305,8 +305,9 @@ function renderActiveDiagnostic(): void {
   const minLeft = getEditorPaddingLeft();
   const maxLeft = Math.max(minLeft, source.clientWidth - 320);
   const left = Math.max(minLeft, Math.min(maxLeft, cursorPos.x - 22));
+  const errorIcon = `<svg class="diagnostic-icon" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><circle cx="8" cy="8" r="7" stroke="currentColor" stroke-width="1.5"/><line x1="5.5" y1="5.5" x2="10.5" y2="10.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><line x1="10.5" y1="5.5" x2="5.5" y2="10.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>`;
   diagnosticBubble.innerHTML = lineDiagnostics.map((diagnostic) =>
-    `<div class="diagnostic-message">${escapeHtml(diagnostic.message)}</div>`
+    `<div class="diagnostic-message">${errorIcon}${escapeHtml(diagnostic.message)}</div>`
   ).join('');
   diagnosticBubble.style.top = `${cursorPos.y + 2}px`;
   diagnosticBubble.style.left = `${left}px`;

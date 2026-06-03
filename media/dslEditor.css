@@ -444,8 +444,21 @@ button:hover {
   display: none;
 }
 
+.diagnostic-message {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .diagnostic-message + .diagnostic-message {
   margin-top: 3px;
+}
+
+.diagnostic-icon {
+  flex-shrink: 0;
+  width: 1em;
+  height: 1em;
+  translate: 0 1px;
 }
 
 .ghost-text {
