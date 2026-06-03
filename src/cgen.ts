@@ -1285,12 +1285,12 @@ function resolveStructMethodReturnType(
 
   const fieldName = inferReturnedSelfField(fn);
   if (!fieldName) {
-    throw new Error(`Line ${fn.line}: cannot infer any return type`);
+    throw new Error(`Line ${fn.bodyLine || fn.line}: cannot infer any return type`);
   }
 
   const field = getStructFields(struct, paramTemplates).find((candidate) => candidate.name === fieldName);
   if (!field) {
-    throw new Error(`Line ${fn.line}: cannot infer any return type, unknown field "self.${fieldName}"`);
+    throw new Error(`Line ${fn.bodyLine || fn.line}: cannot infer any return type, unknown field "self.${fieldName}"`);
   }
 
   return resolveTypeExpression(field.target, field.line, symbols, templateSymbols);
@@ -1303,12 +1303,12 @@ function inferStructMethodReturnTargets(
 ): string[] {
   const fieldName = inferReturnedSelfField(fn);
   if (!fieldName) {
-    throw new Error(`Line ${fn.line}: cannot infer any return type`);
+    throw new Error(`Line ${fn.bodyLine || fn.line}: cannot infer any return type`);
   }
 
   const field = getStructFields(struct, paramTemplates).find((candidate) => candidate.name === fieldName);
   if (!field) {
-    throw new Error(`Line ${fn.line}: cannot infer any return type, unknown field "self.${fieldName}"`);
+    throw new Error(`Line ${fn.bodyLine || fn.line}: cannot infer any return type, unknown field "self.${fieldName}"`);
   }
 
   return [field.target];

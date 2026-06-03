@@ -21,6 +21,7 @@ export interface FnNode {
   params: FnParam[];
   returnType: string;
   body: string[];
+  bodyLine: number;
   attributes: Attribute[];
   selfMutable: boolean;
   line: number;
@@ -208,6 +209,7 @@ export function parseDsl(source: string): ParsedDsl {
         return;
       }
 
+      if (currentFn.node.body.length === 0) { currentFn.node.bodyLine = lineNumber; }
       currentFn.node.body.push(line);
       return;
     }
@@ -495,7 +497,7 @@ function parseFn(line: string, lineNumber: number): FnNode | undefined {
     return undefined;
   }
 
-  return { kind: 'fn', name, params, returnType: returnMatch[1].trim(), body: [], attributes: [], selfMutable, line: lineNumber };
+  return { kind: 'fn', name, params, returnType: returnMatch[1].trim(), body: [], bodyLine: 0, attributes: [], selfMutable, line: lineNumber };
 }
 
 function parseFnParam(text: string, lineNumber: number, attributes: Attribute[] = []): FnParam | undefined {
