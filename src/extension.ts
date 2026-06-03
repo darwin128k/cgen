@@ -329,13 +329,7 @@ async function openDslEditor(context: vscode.ExtensionContext) {
       return;
     }
 
-    if (message.type === 'lineAttachmentAction') {
-      const label = message.action || message.id || 'line attachment';
-      vscode.window.showInformationMessage(`CGen ${label} on line ${message.line ?? '?'}`);
-      return;
-    }
-
-    if (message.type !== 'generate' || typeof message.text !== 'string') {
+if (message.type !== 'generate' || typeof message.text !== 'string') {
       return;
     }
 
@@ -618,8 +612,7 @@ function getWebviewHtml(
       <pre id="lineNumbers" aria-hidden="true"></pre>
       <pre id="highlight" aria-hidden="true"></pre>
       <pre id="suggestion" aria-hidden="true"></pre>
-      <div id="lineAttachments" aria-hidden="false"></div>
-      <div id="diagnosticBubble" class="diagnostic-bubble" hidden></div>
+<div id="diagnosticBubble" class="diagnostic-bubble" hidden></div>
       <textarea id="source" wrap="off" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="off">${escapeHtml(value)}</textarea>
     </div>
     <div class="footer">

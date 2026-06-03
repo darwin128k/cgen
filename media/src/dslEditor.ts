@@ -1,5 +1,4 @@
 import { SnippetEngine } from './snippetEngine';
-import { LineAttachmentController } from './lineAttachments';
 import { formatCgenWithCursor } from '../../src/formatter';
 import keywords from '../../src/keywords.json';
 import { contextCandidates } from '../../src/completionRules';
@@ -20,7 +19,6 @@ const source = document.getElementById('source') as HTMLTextAreaElement;
 const highlight = document.getElementById('highlight')!;
 const suggestion = document.getElementById('suggestion')!;
 const lineNumbers = document.getElementById('lineNumbers')!;
-const lineAttachmentsLayer = document.getElementById('lineAttachments')!;
 const stripes = document.getElementById('stripes')!;
 const errorLines = document.getElementById('errorLines')!;
 const activeLine = document.getElementById('activeLine')!;
@@ -60,12 +58,6 @@ const completionList = document.createElement('div');
 completionList.id = 'completionList';
 completionList.className = 'completion-list';
 completionList.hidden = true;
-const lineAttachments = new LineAttachmentController({
-  source,
-  layer: lineAttachmentsLayer,
-  getEditorPaddingTop,
-  onAction: (action) => vscode.postMessage({ type: 'lineAttachmentAction', ...action })
-});
 let characterWidth: number | undefined;
 let diagnostics: Diagnostic[] = [];
 let diagnosticLines: number[] = [];
@@ -211,7 +203,6 @@ function paint(): void {
   updateActiveLine();
   updateBreadcrumb();
   renderActiveDiagnostic();
-  lineAttachments.render();
   syncScroll();
   requestAnimationFrame(syncScroll);
 }
@@ -406,7 +397,6 @@ function syncScroll(): void {
   }
   updateActiveLine();
   renderActiveDiagnostic();
-  lineAttachments.render();
 }
 
 function updateBreadcrumb(): void {
@@ -1211,10 +1201,7 @@ window.addEventListener('message', (event: MessageEvent) => {
   if (event.data.type === 'progress') {
     progressBar.classList.toggle('active', !!event.data.active);
   }
-  if (event.data.type === 'lineAttachments') {
-    lineAttachments.set(event.data.attachments);
-  }
-  if (event.data.type === 'suggestion' && event.data.id === suggestRequestId) {
+if (event.data.type === 'suggestion' && event.data.id === suggestRequestId) {
     const serverInsertText: string = event.data.insertText || '';
     const serverReplaceLeft: number = event.data.replaceLeft || 0;
     const candidates: string[] = event.data.candidates || [];
