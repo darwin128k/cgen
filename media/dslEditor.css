@@ -391,7 +391,6 @@ button:hover {
   position: absolute;
   left: var(--cgen-editor-left);
   z-index: 9;
-  --cgen-diagnostic-shell: var(--cgen-stripe-even, color-mix(in srgb, var(--vscode-editor-background) 99%, var(--vscode-editor-foreground) 1%));
   box-sizing: border-box;
   width: max-content;
   max-width: min(760px, calc(100% - 18px - var(--cgen-diagnostic-left, var(--cgen-editor-left))));
@@ -399,45 +398,15 @@ button:hover {
   border: none;
   border-radius: 10px;
   color: var(--vscode-editorError-foreground, var(--vscode-editor-foreground));
-  --cgen-diagnostic-fill: color-mix(in srgb, var(--vscode-editor-background) 83%, var(--vscode-errorForeground, #f14c4c) 17%);
   background: color-mix(in srgb, var(--vscode-editor-background) 83%, var(--vscode-errorForeground, #f14c4c) 17%);
-  box-shadow:
-    0 0 0 4px var(--cgen-diagnostic-shell),
-    0 6px 18px rgb(0 0 0 / 18%);
+  box-shadow: 0 6px 18px rgb(0 0 0 / 18%);
   font-family: var(--cgen-editor-font-family, var(--vscode-editor-font-family, var(--vscode-font-family)));
   font-feature-settings: var(--cgen-editor-font-feature-settings, normal);
   font-size: calc(var(--cgen-editor-font-size, var(--vscode-editor-font-size, 13px)) - 1px);
   font-variant-ligatures: var(--cgen-editor-font-variant-ligatures, normal);
   font-weight: var(--cgen-editor-font-weight, var(--vscode-editor-font-weight, normal));
   line-height: 1.35;
-  isolation: isolate;
   pointer-events: none;
-}
-
-.diagnostic-bubble::before {
-  content: "";
-  position: absolute;
-  top: -7px;
-  left: calc(var(--cgen-diagnostic-dot-center, 23px) - 8px);
-  width: 16px;
-  height: 16px;
-  border: none;
-  border-radius: 50%;
-  background: var(--cgen-diagnostic-fill);
-  z-index: -2;
-}
-
-.diagnostic-bubble::after {
-  content: "";
-  position: absolute;
-  top: -3px;
-  left: calc(var(--cgen-diagnostic-dot-center, 23px) - 4px);
-  width: 8px;
-  height: 8px;
-  border: none;
-  border-radius: 50%;
-  background: var(--cgen-diagnostic-shell);
-  z-index: -1;
 }
 
 .diagnostic-bubble[hidden] {

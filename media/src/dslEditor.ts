@@ -312,7 +312,6 @@ function renderActiveDiagnostic(): void {
   diagnosticBubble.style.top = `${cursorPos.y + 2}px`;
   diagnosticBubble.style.left = `${left}px`;
   diagnosticBubble.style.setProperty('--cgen-diagnostic-left', `${left}px`);
-  diagnosticBubble.style.setProperty('--cgen-diagnostic-dot-center', `${Math.max(18, cursorPos.x - left)}px`);
   diagnosticBubble.hidden = false;
 }
 
