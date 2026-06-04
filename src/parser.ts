@@ -272,13 +272,14 @@ export function parseDsl(source: string): ParsedDsl {
 
     if (currentStruct) {
       const fnNode = parseFn(line, lineNumber, diagnostics);
-      if (fnNode) {
+      if (fnNode != null) {
         fnNode.attributes = [...parentFrame.inheritedAttributes, ...pendingAttributes];
         pendingAttributes = [];
         currentStruct.node.fns.push(fnNode);
         currentFn = { indent, node: fnNode };
         return;
       }
+      if (fnNode === null) { return; }
 
       const field = parseTemplateField(line, lineNumber);
       if (field) {
@@ -340,13 +341,14 @@ export function parseDsl(source: string): ParsedDsl {
     }
 
     const fnNode = parseFn(line, lineNumber, diagnostics);
-    if (fnNode) {
+    if (fnNode != null) {
       fnNode.attributes = [...parentFrame.inheritedAttributes, ...pendingAttributes];
       pendingAttributes = [];
       parent.fns.push(fnNode);
       currentFn = { indent, node: fnNode };
       return;
     }
+    if (fnNode === null) { return; }
 
     diagnostics.push(`Line ${lineNumber}: cannot parse "${line}"`);
   });
@@ -466,7 +468,7 @@ function parseEnumMember(line: string, lineNumber: number): EnumMemberNode | und
   return { name: match[1], value: match[2], line: lineNumber };
 }
 
-function parseFn(line: string, lineNumber: number, diagnostics?: string[]): FnNode | undefined {
+function parseFn(line: string, lineNumber: number, diagnostics?: string[]): FnNode | null | undefined {
   const startMatch = line.match(/^(mut\s+)?fn\s+([A-Za-z_][A-Za-z0-9_]*)\s*(\()?/);
   if (!startMatch) {
     return undefined;
@@ -494,7 +496,7 @@ function parseFn(line: string, lineNumber: number, diagnostics?: string[]): FnNo
 
   if (/^as\s+/.test(rest)) {
     diagnostics?.push(`Line ${lineNumber}: use \`->\` instead of \`as\` to specify fn return type`);
-    return undefined;
+    return null;
   }
 
   const returnMatch = rest.match(/^->\s*(.+?)\s*:\s*$/);
