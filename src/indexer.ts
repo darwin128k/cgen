@@ -1,8 +1,5 @@
-import * as path from 'path';
+import * as crypto from 'crypto';
 import * as vscode from 'vscode';
-import type { Database, SqlJsStatic } from 'sql.js';
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-const initSqlJs: (config?: object) => Promise<SqlJsStatic> = require(require('path').join(__dirname, 'sqljs', 'sql-wasm.js'));
 import { makePublicPath, type SectionKind, type SectionNode } from './parser';
 import type { SymbolUsageIndex } from './cgen';
 
@@ -37,6 +34,39 @@ export interface SuggestionUsageRecord {
   lastAcceptedAt: string;
 }
 
+export interface FileIndexEntry {
+  relativePath: string | null;
+  hash: string;
+  root: SectionNode;
+}
+
+interface StoredSection {
+  kind: string;
+  name: string;
+  path: string;
+  parentPath: string;
+}
+
+interface StoredSymbol {
+  kind: string;
+  name: string;
+  path: string;
+  parentPath: string;
+  params: string;
+}
+
+interface FileCacheEntry {
+  relativePath: string;
+  hash: string;
+  sections: StoredSection[];
+  symbols: StoredSymbol[];
+}
+
+type SuggestionUsageMap = Record<string, SuggestionUsageRecord & { contextKey: string; prefix: string }>;
+
+const ANON_PREFIX = '\0anon\0';
+const ERROR_KEY = '\0anon\0error';
+
 const builtinTypes = [
   'c.bool',
   'c.char',
@@ -61,66 +91,60 @@ const builtinTypes = [
 ];
 
 export class CgenProjectIndex {
-  private db: Database | undefined;
+  private fileCache = new Map<string, FileCacheEntry>();
+  private suggestionUsage = new Map<string, SuggestionUsageRecord & { contextKey: string; prefix: string }>();
+  private symbolUsageData = new Map<string, Array<{ moduleId: string; count: number }>>();
+  private symbolUsedInData = new Map<string, Array<{ symbolKey: string; count: number }>>();
   private watcher: vscode.FileSystemWatcher | undefined;
-  private saveTimer: NodeJS.Timeout | undefined;
-  private readonly dbUri: vscode.Uri;
+  private suggestionSaveTimer: NodeJS.Timeout | undefined;
+  private symbolUsageSaveTimer: NodeJS.Timeout | undefined;
+  private readonly cacheDir: vscode.Uri;
   onBusyChange?: (active: boolean) => void;
   onSourceChanged?: () => void;
 
   private constructor(
-    private readonly sql: SqlJsStatic,
     private readonly context: vscode.ExtensionContext,
     private readonly workspaceFolder: vscode.WorkspaceFolder
   ) {
-    this.dbUri = vscode.Uri.joinPath(workspaceFolder.uri, '.cgen', 'index.sqlite');
+    this.cacheDir = vscode.Uri.joinPath(workspaceFolder.uri, '.cgen', 'cache');
   }
 
   static async create(context: vscode.ExtensionContext, workspaceFolder: vscode.WorkspaceFolder): Promise<CgenProjectIndex> {
-    const sql = await initSqlJs({
-      locateFile: (file: string) => path.join(__dirname, 'sqljs', file)
-    });
-    const index = new CgenProjectIndex(sql, context, workspaceFolder);
+    const index = new CgenProjectIndex(context, workspaceFolder);
     await index.initialize();
     return index;
   }
 
   dispose(): void {
     this.watcher?.dispose();
-    if (this.saveTimer) {
-      clearTimeout(this.saveTimer);
-    }
-    this.save().catch(() => undefined);
-    this.db?.close();
+    if (this.suggestionSaveTimer) { clearTimeout(this.suggestionSaveTimer); }
+    if (this.symbolUsageSaveTimer) { clearTimeout(this.symbolUsageSaveTimer); }
   }
 
   getSnapshot(): IndexedDsl {
-    const db = this.ensureDb();
     const root = createNode('root', '', []);
     const symbols: IndexedSymbol[] = [];
 
-    for (const row of queryRows(db, 'SELECT kind, name, path, parent_path FROM sections ORDER BY path')) {
-      const pathParts = splitPath(String(row.path));
-      if (pathParts.length === 0) {
-        continue;
+    for (const entry of this.fileCache.values()) {
+      for (const section of entry.sections) {
+        const pathParts = splitPath(section.path);
+        if (pathParts.length === 0) { continue; }
+        const parent = findOrCreatePath(root, splitPath(section.parentPath));
+        findOrCreateChild(parent, section.kind as SectionKind, section.name, pathParts);
       }
-
-      const parent = findOrCreatePath(root, splitPath(String(row.parent_path)));
-      findOrCreateChild(parent, row.kind as SectionKind, String(row.name), pathParts);
-    }
-
-    for (const row of queryRows(db, 'SELECT kind, name, path, parent_path, params FROM symbols ORDER BY path')) {
-      const parent = findOrCreatePath(root, splitPath(String(row.parent_path)));
-      const symbol = {
-        kind: row.kind as SymbolKind,
-        name: String(row.name),
-        path: splitPath(String(row.path)),
-        params: String(row.params || '').split(',').filter(Boolean)
-      };
-      if (!parent.symbols.some((item) => item.kind === symbol.kind && item.path.join('.') === symbol.path.join('.'))) {
-        parent.symbols.push(symbol);
+      for (const sym of entry.symbols) {
+        const parent = findOrCreatePath(root, splitPath(sym.parentPath));
+        const symbol: IndexedSymbol = {
+          kind: sym.kind as SymbolKind,
+          name: sym.name,
+          path: splitPath(sym.path),
+          params: sym.params.split(',').filter(Boolean)
+        };
+        if (!parent.symbols.some((s) => s.kind === symbol.kind && s.path.join('.') === symbol.path.join('.'))) {
+          parent.symbols.push(symbol);
+        }
+        symbols.push(symbol);
       }
-      symbols.push(symbol);
     }
 
     return {
@@ -129,158 +153,88 @@ export class CgenProjectIndex {
       typeNames: sortUnique([
         ...builtinTypes,
         ...symbols
-          .filter((symbol) => symbol.kind === 'alias' || symbol.kind === 'enum' || symbol.kind === 'struct')
-          .map((symbol) => symbol.path.join('.'))
+          .filter((s) => s.kind === 'alias' || s.kind === 'enum' || s.kind === 'struct')
+          .map((s) => s.path.join('.'))
       ])
     };
   }
 
   getSuggestionUsage(contextKey: string, prefix: string): SuggestionUsageRecord[] {
-    const db = this.ensureDb();
-    return queryRows(
-      db,
-      `SELECT label, kind, accepted_count, shown_count, last_accepted_at
-       FROM suggestion_usage
-       WHERE context_key = ? AND (prefix = ? OR prefix = '')
-       ORDER BY accepted_count DESC, last_accepted_at DESC
-       LIMIT 80`,
-      [contextKey, prefix]
-    ).map((row) => ({
-      label: String(row.label),
-      kind: String(row.kind),
-      acceptedCount: Number(row.accepted_count || 0),
-      shownCount: Number(row.shown_count || 0),
-      lastAcceptedAt: String(row.last_accepted_at || '')
-    }));
+    return [...this.suggestionUsage.values()]
+      .filter((r) => r.contextKey === contextKey && (r.prefix === prefix || r.prefix === ''))
+      .sort((a, b) => b.acceptedCount - a.acceptedCount || b.lastAcceptedAt.localeCompare(a.lastAcceptedAt))
+      .slice(0, 80);
   }
 
   recordSuggestionAccepted(contextKey: string, prefix: string, label: string, kind: string): void {
-    const db = this.ensureDb();
-    db.run(
-      `INSERT INTO suggestion_usage(label, kind, context_key, prefix, accepted_count, shown_count, last_accepted_at)
-       VALUES (?, ?, ?, ?, 1, 0, ?)
-       ON CONFLICT(label, kind, context_key, prefix) DO UPDATE SET
-         accepted_count = accepted_count + 1,
-         last_accepted_at = excluded.last_accepted_at`,
-      [label, kind, contextKey, prefix, new Date().toISOString()]
-    );
-    this.queueSave();
+    const key = `${contextKey}\0${prefix}\0${label}\0${kind}`;
+    const existing = this.suggestionUsage.get(key);
+    if (existing) {
+      existing.acceptedCount++;
+      existing.lastAcceptedAt = new Date().toISOString();
+    } else {
+      this.suggestionUsage.set(key, { label, kind, contextKey, prefix, acceptedCount: 1, shownCount: 0, lastAcceptedAt: new Date().toISOString() });
+    }
+    this.scheduleSave('suggestions');
   }
 
-  updateFromArtifacts(root: SectionNode): void {
-    const db = this.ensureDb();
-    db.run('BEGIN');
-    try {
-      db.run('DELETE FROM sections');
-      db.run('DELETE FROM symbols');
-
-      const walkSection = (node: SectionNode, pathParts: string[]): void => {
-        if (node.kind !== 'root') {
-          const publicPath = makePublicPath(pathParts);
-          const publicParentPath = makePublicPath(pathParts.slice(0, -1));
-          if (publicPath.join('.') !== publicParentPath.join('.')) {
-            db.run(
-              'INSERT INTO sections(kind, name, path, parent_path) VALUES (?, ?, ?, ?)',
-              [node.kind, node.name, publicPath.join('.'), publicParentPath.join('.')]
-            );
-          }
-        }
-
-        const symbolParentPath = makePublicPath(pathParts).join('.');
-
-        for (const alias of node.aliases) {
-          db.run(
-            'INSERT INTO symbols(kind, name, path, parent_path, params) VALUES (?, ?, ?, ?, ?)',
-            ['alias', alias.name, makePublicPath([...pathParts, alias.name]).join('.'), symbolParentPath, '']
-          );
-        }
-
-        for (const enumNode of node.enums) {
-          db.run(
-            'INSERT INTO symbols(kind, name, path, parent_path, params) VALUES (?, ?, ?, ?, ?)',
-            ['enum', enumNode.name, makePublicPath([...pathParts, enumNode.name]).join('.'), symbolParentPath, '']
-          );
-        }
-
-        for (const template of node.templates) {
-          db.run(
-            'INSERT INTO symbols(kind, name, path, parent_path, params) VALUES (?, ?, ?, ?, ?)',
-            ['template', template.name, makePublicPath([...pathParts, template.name]).join('.'), symbolParentPath, template.params.map((p) => p.name).join(',')]
-          );
-        }
-
-        for (const struct of node.structs) {
-          const structPath = makePublicPath([...pathParts, struct.name]);
-          db.run(
-            'INSERT INTO symbols(kind, name, path, parent_path, params) VALUES (?, ?, ?, ?, ?)',
-            ['struct', struct.name, structPath.join('.'), symbolParentPath, '']
-          );
-          for (const fn of struct.fns) {
-            db.run(
-              'INSERT INTO symbols(kind, name, path, parent_path, params) VALUES (?, ?, ?, ?, ?)',
-              ['fn', fn.name, [...structPath, fn.name].join('.'), structPath.join('.'), fn.params.map((p) => p.name).join(',')]
-            );
-          }
-        }
-
-        for (const fn of node.fns) {
-          db.run(
-            'INSERT INTO symbols(kind, name, path, parent_path, params) VALUES (?, ?, ?, ?, ?)',
-            ['fn', fn.name, makePublicPath([...pathParts, fn.name]).join('.'), symbolParentPath, fn.params.map((p) => p.name).join(',')]
-          );
-        }
-
-        for (const child of node.children) {
-          walkSection(child, [...pathParts, child.name]);
-        }
-      };
-
-      walkSection(root, []);
-      db.run('COMMIT');
-    } catch (error) {
-      db.run('ROLLBACK');
-      throw error;
+  updateFromFiles(files: FileIndexEntry[]): void {
+    for (const key of [...this.fileCache.keys()]) {
+      if (key.startsWith(ANON_PREFIX)) { this.fileCache.delete(key); }
     }
-    this.queueSave();
+
+    const currentKeys = new Set<string>();
+    for (const file of files) {
+      const cacheKey = file.relativePath ?? `${ANON_PREFIX}${file.hash}`;
+      currentKeys.add(cacheKey);
+
+      const existing = this.fileCache.get(cacheKey);
+      if (existing?.hash === file.hash) { continue; }
+
+      const entry: FileCacheEntry = { relativePath: file.relativePath!, hash: file.hash, ...extractFromRoot(file.root) };
+      this.fileCache.set(cacheKey, entry);
+
+      if (file.relativePath) {
+        this.saveCacheFile(entry).catch(reportIndexError);
+      }
+    }
+
+    for (const key of [...this.fileCache.keys()]) {
+      if (!key.startsWith(ANON_PREFIX) && !currentKeys.has(key)) {
+        this.fileCache.delete(key);
+        this.deleteCacheFile(key).catch(() => undefined);
+      }
+    }
+  }
+
+  updateFromMergedRoot(root: SectionNode): void {
+    for (const key of [...this.fileCache.keys()]) {
+      if (key.startsWith(ANON_PREFIX)) { this.fileCache.delete(key); }
+    }
+    this.fileCache.set(ERROR_KEY, { relativePath: '', hash: '', ...extractFromRoot(root) });
   }
 
   updateSymbolUsage(usage: SymbolUsageIndex): void {
-    const db = this.ensureDb();
-    db.run('BEGIN');
-    try {
-      db.run('DELETE FROM symbol_usage');
-      for (const [symbolKey, refs] of usage.usedBy) {
-        for (const { moduleId, count } of refs) {
-          db.run(
-            'INSERT INTO symbol_usage(symbol_key, used_by_module, use_count) VALUES (?, ?, ?)',
-            [symbolKey, moduleId, count]
-          );
-        }
+    this.symbolUsageData.clear();
+    this.symbolUsedInData.clear();
+    for (const [symbolKey, refs] of usage.usedBy) {
+      const refList = refs.map((r) => ({ moduleId: r.moduleId, count: r.count }));
+      this.symbolUsageData.set(symbolKey, refList);
+      for (const { moduleId, count } of refList) {
+        const arr = this.symbolUsedInData.get(moduleId) ?? [];
+        arr.push({ symbolKey, count });
+        this.symbolUsedInData.set(moduleId, arr);
       }
-      db.run('COMMIT');
-    } catch (error) {
-      db.run('ROLLBACK');
-      throw error;
     }
-    this.queueSave();
+    this.scheduleSave('symbolUsage');
   }
 
   getSymbolUsedBy(symbolKey: string): Array<{ moduleId: string; count: number }> {
-    const db = this.ensureDb();
-    return queryRows(
-      db,
-      'SELECT used_by_module, use_count FROM symbol_usage WHERE symbol_key = ? ORDER BY use_count DESC',
-      [symbolKey]
-    ).map((row) => ({ moduleId: String(row.used_by_module), count: Number(row.use_count) }));
+    return this.symbolUsageData.get(symbolKey) ?? [];
   }
 
   getModuleSymbolRefs(moduleId: string): Array<{ symbolKey: string; count: number }> {
-    const db = this.ensureDb();
-    return queryRows(
-      db,
-      'SELECT symbol_key, use_count FROM symbol_usage WHERE used_by_module = ? ORDER BY use_count DESC',
-      [moduleId]
-    ).map((row) => ({ symbolKey: String(row.symbol_key), count: Number(row.use_count) }));
+    return this.symbolUsedInData.get(moduleId) ?? [];
   }
 
   private async initialize(): Promise<void> {
@@ -288,32 +242,59 @@ export class CgenProjectIndex {
     try {
       await vscode.workspace.fs.stat(configUri);
     } catch {
-      this.db = new this.sql.Database();
-      this.createSchema();
       return;
     }
-
-    try {
-      const bytes = await vscode.workspace.fs.readFile(this.dbUri);
-      this.db = new this.sql.Database(bytes);
-    } catch {
-      this.db = new this.sql.Database();
-    }
-
-    // Drop derived tables so schema changes take effect; suggestion_usage is preserved.
-    const db = this.db;
-    db.run('DROP TABLE IF EXISTS sections');
-    db.run('DROP TABLE IF EXISTS symbols');
-    db.run('DROP TABLE IF EXISTS symbol_usage');
-    db.run('DROP INDEX IF EXISTS idx_sections_path');
-    db.run('DROP INDEX IF EXISTS idx_sections_parent');
-    db.run('DROP INDEX IF EXISTS idx_symbols_path');
-    db.run('DROP INDEX IF EXISTS idx_symbols_parent');
-    db.run('DROP INDEX IF EXISTS idx_symbol_usage_key');
-    db.run('DROP INDEX IF EXISTS idx_symbol_usage_module');
-
-    this.createSchema();
+    await this.loadCaches();
     this.startWatcher();
+  }
+
+  private async loadCaches(): Promise<void> {
+    try {
+      const entries = await vscode.workspace.fs.readDirectory(this.cacheDir);
+      await Promise.all(
+        entries
+          .filter(([name, type]) =>
+            type === vscode.FileType.File &&
+            name !== 'suggestions.index' &&
+            name !== 'symbols.index' &&
+            name.endsWith('.index')
+          )
+          .map(async ([name]) => {
+            try {
+              const bytes = await vscode.workspace.fs.readFile(vscode.Uri.joinPath(this.cacheDir, name));
+              const data = JSON.parse(Buffer.from(bytes).toString('utf8')) as FileCacheEntry;
+              if (data.relativePath) { this.fileCache.set(data.relativePath, data); }
+            } catch { /* ignore corrupt cache */ }
+          })
+      );
+    } catch { /* cache dir doesn't exist yet */ }
+
+    await Promise.all([this.loadSuggestionUsage(), this.loadSymbolUsage()]);
+  }
+
+  private async loadSuggestionUsage(): Promise<void> {
+    try {
+      const bytes = await vscode.workspace.fs.readFile(vscode.Uri.joinPath(this.cacheDir, 'suggestions.index'));
+      const data = JSON.parse(Buffer.from(bytes).toString('utf8')) as SuggestionUsageMap;
+      for (const [key, record] of Object.entries(data)) {
+        this.suggestionUsage.set(key, record);
+      }
+    } catch { /* no file yet */ }
+  }
+
+  private async loadSymbolUsage(): Promise<void> {
+    try {
+      const bytes = await vscode.workspace.fs.readFile(vscode.Uri.joinPath(this.cacheDir, 'symbols.index'));
+      const data = JSON.parse(Buffer.from(bytes).toString('utf8')) as Record<string, Array<{ moduleId: string; count: number }>>;
+      for (const [symbolKey, refs] of Object.entries(data)) {
+        this.symbolUsageData.set(symbolKey, refs);
+        for (const { moduleId, count } of refs) {
+          const arr = this.symbolUsedInData.get(moduleId) ?? [];
+          arr.push({ symbolKey, count });
+          this.symbolUsedInData.set(moduleId, arr);
+        }
+      }
+    } catch { /* no file yet */ }
   }
 
   private startWatcher(): void {
@@ -326,75 +307,100 @@ export class CgenProjectIndex {
     this.watcher.onDidDelete(() => this.onSourceChanged?.());
   }
 
-  private createSchema(): void {
-    const db = this.ensureDb();
-    db.run(`
-      CREATE TABLE IF NOT EXISTS sections (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        kind TEXT NOT NULL,
-        name TEXT NOT NULL,
-        path TEXT NOT NULL,
-        parent_path TEXT NOT NULL
-      );
-      CREATE TABLE IF NOT EXISTS symbols (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        kind TEXT NOT NULL,
-        name TEXT NOT NULL,
-        path TEXT NOT NULL,
-        parent_path TEXT NOT NULL,
-        params TEXT NOT NULL DEFAULT ''
-      );
-      CREATE TABLE IF NOT EXISTS suggestion_usage (
-        label TEXT NOT NULL,
-        kind TEXT NOT NULL,
-        context_key TEXT NOT NULL,
-        prefix TEXT NOT NULL DEFAULT '',
-        accepted_count INTEGER NOT NULL DEFAULT 0,
-        shown_count INTEGER NOT NULL DEFAULT 0,
-        last_accepted_at TEXT NOT NULL DEFAULT '',
-        PRIMARY KEY(label, kind, context_key, prefix)
-      );
-      CREATE TABLE IF NOT EXISTS symbol_usage (
-        symbol_key TEXT NOT NULL,
-        used_by_module TEXT NOT NULL,
-        use_count INTEGER NOT NULL DEFAULT 0,
-        PRIMARY KEY(symbol_key, used_by_module)
-      );
-      CREATE INDEX IF NOT EXISTS idx_sections_path ON sections(path);
-      CREATE INDEX IF NOT EXISTS idx_sections_parent ON sections(parent_path);
-      CREATE INDEX IF NOT EXISTS idx_symbols_path ON symbols(path);
-      CREATE INDEX IF NOT EXISTS idx_symbols_parent ON symbols(parent_path);
-      CREATE INDEX IF NOT EXISTS idx_suggestion_usage_context ON suggestion_usage(context_key, prefix);
-      CREATE INDEX IF NOT EXISTS idx_symbol_usage_key ON symbol_usage(symbol_key);
-      CREATE INDEX IF NOT EXISTS idx_symbol_usage_module ON symbol_usage(used_by_module);
-    `);
+  private async saveCacheFile(entry: FileCacheEntry): Promise<void> {
+    await vscode.workspace.fs.createDirectory(this.cacheDir);
+    await vscode.workspace.fs.writeFile(
+      vscode.Uri.joinPath(this.cacheDir, cacheKeyToFileName(entry.relativePath)),
+      Buffer.from(JSON.stringify(entry), 'utf8')
+    );
   }
 
-  private async save(): Promise<void> {
-    if (!this.db) {
-      return;
+  private async deleteCacheFile(cacheKey: string): Promise<void> {
+    try {
+      await vscode.workspace.fs.delete(vscode.Uri.joinPath(this.cacheDir, cacheKeyToFileName(cacheKey)));
+    } catch { /* already gone */ }
+  }
+
+  private scheduleSave(type: 'suggestions' | 'symbolUsage'): void {
+    if (type === 'suggestions') {
+      if (this.suggestionSaveTimer) { clearTimeout(this.suggestionSaveTimer); }
+      this.suggestionSaveTimer = setTimeout(() => { this.saveSuggestions().catch(reportIndexError); }, 250);
+    } else {
+      if (this.symbolUsageSaveTimer) { clearTimeout(this.symbolUsageSaveTimer); }
+      this.symbolUsageSaveTimer = setTimeout(() => { this.saveSymbolUsage().catch(reportIndexError); }, 250);
+    }
+  }
+
+  private async saveSuggestions(): Promise<void> {
+    await vscode.workspace.fs.createDirectory(this.cacheDir);
+    await vscode.workspace.fs.writeFile(
+      vscode.Uri.joinPath(this.cacheDir, 'suggestions.index'),
+      Buffer.from(JSON.stringify(Object.fromEntries(this.suggestionUsage)), 'utf8')
+    );
+  }
+
+  private async saveSymbolUsage(): Promise<void> {
+    await vscode.workspace.fs.createDirectory(this.cacheDir);
+    await vscode.workspace.fs.writeFile(
+      vscode.Uri.joinPath(this.cacheDir, 'symbols.index'),
+      Buffer.from(JSON.stringify(Object.fromEntries(this.symbolUsageData)), 'utf8')
+    );
+  }
+}
+
+function cacheKeyToFileName(relativePath: string): string {
+  const parts = relativePath.replace(/\\/g, '/').split('/');
+  const module = parts[parts.length - 1].replace(/\.cgen$/, '');
+  const pkg = parts.slice(0, -1).filter((p) => !p.startsWith('.')).join('.');
+  return pkg ? `${pkg}.${module}.index` : `${module}.index`;
+}
+
+function extractFromRoot(root: SectionNode): { sections: StoredSection[]; symbols: StoredSymbol[] } {
+  const sections: StoredSection[] = [];
+  const symbols: StoredSymbol[] = [];
+
+  const walk = (node: SectionNode, pathParts: string[]): void => {
+    if (node.kind !== 'root') {
+      const publicPath = makePublicPath(pathParts);
+      const publicParentPath = makePublicPath(pathParts.slice(0, -1));
+      if (publicPath.join('.') !== publicParentPath.join('.')) {
+        sections.push({ kind: node.kind, name: node.name, path: publicPath.join('.'), parentPath: publicParentPath.join('.') });
+      }
     }
 
-    await vscode.workspace.fs.createDirectory(vscode.Uri.joinPath(this.workspaceFolder.uri, '.cgen'));
-    await vscode.workspace.fs.writeFile(this.dbUri, this.db.export());
-  }
+    const symbolParentPath = makePublicPath(pathParts).join('.');
 
-  private queueSave(): void {
-    if (this.saveTimer) {
-      clearTimeout(this.saveTimer);
+    for (const alias of node.aliases) {
+      symbols.push({ kind: 'alias', name: alias.name, path: makePublicPath([...pathParts, alias.name]).join('.'), parentPath: symbolParentPath, params: '' });
     }
-    this.saveTimer = setTimeout(() => {
-      this.save().catch(reportIndexError);
-    }, 250);
-  }
+    for (const enumNode of node.enums) {
+      symbols.push({ kind: 'enum', name: enumNode.name, path: makePublicPath([...pathParts, enumNode.name]).join('.'), parentPath: symbolParentPath, params: '' });
+    }
+    for (const template of node.templates) {
+      symbols.push({ kind: 'template', name: template.name, path: makePublicPath([...pathParts, template.name]).join('.'), parentPath: symbolParentPath, params: template.params.map((p) => p.name).join(',') });
+    }
+    for (const struct of node.structs) {
+      const structPath = makePublicPath([...pathParts, struct.name]);
+      symbols.push({ kind: 'struct', name: struct.name, path: structPath.join('.'), parentPath: symbolParentPath, params: '' });
+      for (const fn of struct.fns) {
+        symbols.push({ kind: 'fn', name: fn.name, path: [...structPath, fn.name].join('.'), parentPath: structPath.join('.'), params: fn.params.map((p) => p.name).join(',') });
+      }
+    }
+    for (const fn of node.fns) {
+      symbols.push({ kind: 'fn', name: fn.name, path: makePublicPath([...pathParts, fn.name]).join('.'), parentPath: symbolParentPath, params: fn.params.map((p) => p.name).join(',') });
+    }
 
-  private ensureDb(): Database {
-    if (!this.db) {
-      this.db = new this.sql.Database();
-      this.createSchema();
+    for (const child of node.children) {
+      walk(child, [...pathParts, child.name]);
     }
-    return this.db;
-  }
+  };
+
+  walk(root, []);
+  return { sections, symbols };
+}
+
+export function hashSource(source: string): string {
+  return crypto.createHash('sha256').update(source).digest('hex');
 }
 
 function createNode(kind: SectionKind, name: string, nodePath: string[]): IndexedNode {
@@ -413,36 +419,10 @@ function findOrCreatePath(root: IndexedNode, nodePath: string[]): IndexedNode {
 
 function findOrCreateChild(parent: IndexedNode, kind: SectionKind, name: string, nodePath: string[]): IndexedNode {
   const existing = parent.children.find((child) => child.name === name);
-  if (existing) {
-    return existing;
-  }
-
+  if (existing) { return existing; }
   const child = createNode(kind, name, nodePath);
   parent.children.push(child);
   return child;
-}
-
-function queryRows(db: Database, sql: string, params: unknown[] = []): Record<string, unknown>[] {
-  if (params.length > 0) {
-    const stmt = db.prepare(sql);
-    try {
-      stmt.bind(params);
-      const rows: Record<string, unknown>[] = [];
-      while (stmt.step()) {
-        rows.push(stmt.getAsObject());
-      }
-      return rows;
-    } finally {
-      stmt.free();
-    }
-  }
-
-  const result = db.exec(sql)[0];
-  if (!result) {
-    return [];
-  }
-
-  return result.values.map((values) => Object.fromEntries(result.columns.map((column, index) => [column, values[index]])));
 }
 
 function splitPath(value: string): string[] {

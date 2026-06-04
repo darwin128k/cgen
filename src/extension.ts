@@ -335,9 +335,9 @@ if (message.type !== 'generate' || typeof message.text !== 'string') {
 
     try {
       currentContent = message.text;
-      const { files, root, usage } = await generateDsl(workspaceFolder, context.extensionUri, message.text);
+      const { files, perFileData, usage } = await generateDsl(workspaceFolder, context.extensionUri, message.text);
       const projectIndex = await getProjectIndex(context, workspaceFolder);
-      projectIndex?.updateFromArtifacts(root);
+      projectIndex?.updateFromFiles(perFileData);
       projectIndex?.updateSymbolUsage(usage);
       await panel.webview.postMessage({ type: 'error', diagnostics: [], jump: true });
       vscode.window.showInformationMessage(`CGen generated ${files.length} file(s).`);
@@ -368,9 +368,9 @@ async function generateFromCurrentFile(context: vscode.ExtensionContext) {
   }
 
   try {
-    const { files, root, usage } = await generateDsl(workspaceFolder, context.extensionUri, editor.document.getText());
+    const { files, perFileData, usage } = await generateDsl(workspaceFolder, context.extensionUri, editor.document.getText());
     const projectIndex = await getProjectIndex(context, workspaceFolder);
-    projectIndex?.updateFromArtifacts(root);
+    projectIndex?.updateFromFiles(perFileData);
     projectIndex?.updateSymbolUsage(usage);
     vscode.window.showInformationMessage(`CGen generated ${files.length} file(s).`);
   } catch (error) {
@@ -530,15 +530,16 @@ async function initializeProjectIndex(context: vscode.ExtensionContext): Promise
       usageTimer = setTimeout(async () => {
         index.onBusyChange?.(true);
         try {
-          const { root, usage } = await resolveDslUsage(workspaceFolder, context.extensionUri, currentEditorContent);
-          index.updateFromArtifacts(root);
+          const { perFileData, usage } = await resolveDslUsage(workspaceFolder, context.extensionUri, currentEditorContent);
+          index.updateFromFiles(perFileData);
           index.updateSymbolUsage(usage);
           postDiagnosticsMessage?.([]);
         } catch (error) {
           const msg = error instanceof Error ? error.message : String(error);
           postDiagnosticsMessage?.(parseErrorDiagnostics(msg));
           if (error instanceof DslError) {
-            index.updateFromArtifacts(error.root);
+            index.updateFromFiles(error.perFileData);
+            index.updateFromMergedRoot(error.root);
           }
         } finally {
           index.onBusyChange?.(false);

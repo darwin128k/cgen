@@ -2,6 +2,7 @@ import * as cp from 'child_process';
 import * as path from 'path';
 import * as util from 'util';
 import * as vscode from 'vscode';
+import { hashSource, type FileIndexEntry } from './indexer';
 import {
   type SectionKind,
   type Attribute,
@@ -62,7 +63,7 @@ export interface SymbolUsageIndex {
 }
 
 export class DslError extends Error {
-  constructor(message: string, public readonly root: SectionNode) {
+  constructor(message: string, public readonly root: SectionNode, public readonly perFileData: FileIndexEntry[] = []) {
     super(message);
   }
 }
@@ -147,12 +148,19 @@ interface DslArtifacts {
   paramTemplates: Map<string, TemplateNode>;
   bodyTemplates: Map<string, TemplateNode>;
   usage: SymbolUsageIndex;
+  perFileData: FileIndexEntry[];
 }
 
 async function buildDslArtifacts(workspaceFolder: vscode.WorkspaceFolder, extensionUri: vscode.Uri, source: string): Promise<DslArtifacts> {
   const allSources = await collectAllDslSources(workspaceFolder, extensionUri, source);
-  const parsedList = allSources.map(parseDsl);
+  const parsedList = allSources.map((s) => parseDsl(s.source));
   const merged = mergeDsls(parsedList);
+
+  const perFileData: FileIndexEntry[] = allSources.map((s, i) => ({
+    relativePath: s.relativePath,
+    hash: hashSource(s.source),
+    root: parsedList[i].root
+  }));
 
   try {
     if (merged.diagnostics.length > 0) {
@@ -174,20 +182,20 @@ async function buildDslArtifacts(workspaceFolder: vscode.WorkspaceFolder, extens
       renderSource(module, symbols, templateSymbols, paramTemplates);
     }
 
-    return { root: merged.root, modules, symbols, templateSymbols, paramTemplates, bodyTemplates, usage };
+    return { root: merged.root, modules, symbols, templateSymbols, paramTemplates, bodyTemplates, usage, perFileData };
   } catch (e) {
-    throw new DslError(e instanceof Error ? e.message : String(e), merged.root);
+    throw new DslError(e instanceof Error ? e.message : String(e), merged.root, perFileData);
   }
 }
 
-export async function resolveDslUsage(workspaceFolder: vscode.WorkspaceFolder, extensionUri: vscode.Uri, source: string): Promise<{ root: SectionNode; usage: SymbolUsageIndex }> {
-  const { root, usage } = await buildDslArtifacts(workspaceFolder, extensionUri, source);
-  return { root, usage };
+export async function resolveDslUsage(workspaceFolder: vscode.WorkspaceFolder, extensionUri: vscode.Uri, source: string): Promise<{ root: SectionNode; usage: SymbolUsageIndex; perFileData: FileIndexEntry[] }> {
+  const { root, usage, perFileData } = await buildDslArtifacts(workspaceFolder, extensionUri, source);
+  return { root, usage, perFileData };
 }
 
-export async function generateDsl(workspaceFolder: vscode.WorkspaceFolder, extensionUri: vscode.Uri, source: string): Promise<{ files: string[]; root: SectionNode; usage: SymbolUsageIndex }> {
+export async function generateDsl(workspaceFolder: vscode.WorkspaceFolder, extensionUri: vscode.Uri, source: string): Promise<{ files: string[]; root: SectionNode; usage: SymbolUsageIndex; perFileData: FileIndexEntry[] }> {
   const config = await loadConfig(workspaceFolder);
-  const { root, modules, symbols, templateSymbols, paramTemplates, bodyTemplates, usage } = await buildDslArtifacts(workspaceFolder, extensionUri, source);
+  const { root, modules, symbols, templateSymbols, paramTemplates, bodyTemplates, usage, perFileData } = await buildDslArtifacts(workspaceFolder, extensionUri, source);
 
   const generated: string[] = [];
   const includeRoot = resolveWorkspacePath(workspaceFolder, config.build.include);
@@ -218,13 +226,13 @@ export async function generateDsl(workspaceFolder: vscode.WorkspaceFolder, exten
   }
 
   await runClangFormat(workspaceFolder, generated);
-  return { files: generated, root, usage };
+  return { files: generated, root, usage, perFileData };
 }
 
-async function collectAllDslSources(workspaceFolder: vscode.WorkspaceFolder, extensionUri: vscode.Uri, primarySource: string): Promise<string[]> {
+async function collectAllDslSources(workspaceFolder: vscode.WorkspaceFolder, extensionUri: vscode.Uri, primarySource: string): Promise<Array<{ relativePath: string | null; source: string }>> {
   const primaryFormatted = formatCgen(primarySource);
-  const sources: string[] = [primaryFormatted];
-  const seen = new Set<string>([primaryFormatted]);
+  const sources: Array<{ relativePath: string | null; source: string }> = [];
+  const seen = new Set<string>();
 
   const packagesUri = vscode.Uri.joinPath(extensionUri, 'packages');
   try {
@@ -237,7 +245,7 @@ async function collectAllDslSources(workspaceFolder: vscode.WorkspaceFolder, ext
       const builtinSource = formatCgen(Buffer.from(bytes).toString('utf8'));
       if (!seen.has(builtinSource)) {
         seen.add(builtinSource);
-        sources.push(builtinSource);
+        sources.push({ relativePath: null, source: builtinSource });
       }
     }
   } catch {
@@ -246,22 +254,23 @@ async function collectAllDslSources(workspaceFolder: vscode.WorkspaceFolder, ext
 
   const files = await vscode.workspace.findFiles(
     new vscode.RelativePattern(workspaceFolder, '**/*.cgen'),
-    '**/{node_modules,out,build,dist,releases,.cgen}/**',
+    '**/{node_modules,out,build,dist,releases}/**',
     256
   );
 
   for (const uri of files) {
-    const sourcePath = path.relative(workspaceFolder.uri.fsPath, uri.fsPath).replace(/\\/g, '/');
-    if (sourcePath.startsWith('.cgen/')) {
-      continue;
-    }
-
+    const relativePath = path.relative(workspaceFolder.uri.fsPath, uri.fsPath).replace(/\\/g, '/');
     const bytes = await vscode.workspace.fs.readFile(uri);
     const fileSource = formatCgen(Buffer.from(bytes).toString('utf8'));
     if (!seen.has(fileSource)) {
       seen.add(fileSource);
-      sources.push(fileSource);
+      sources.push({ relativePath, source: fileSource });
     }
+  }
+
+  // Add primary source only if it differs from what's already on disk (unsaved changes)
+  if (primaryFormatted && !seen.has(primaryFormatted)) {
+    sources.push({ relativePath: null, source: primaryFormatted });
   }
 
   return sources;
