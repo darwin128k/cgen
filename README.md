@@ -15,10 +15,18 @@ VS Code extension for a compact C generation DSL.
 | Command | Keybinding | Description |
 |---------|------------|-------------|
 | `CGen: Open Editor` | `Ctrl+Alt+G` | Opens the built-in DSL webview editor |
-| `CGen: Open DSL File` | — | Opens `.cgen/main.cgen` in the standard text editor |
+| `CGen: Open DSL File` | — | Creates `.cgen/main.cgen` if it does not exist, then opens it in the standard text editor |
 | `CGen: Generate From Current DSL File` | `Ctrl+Enter` | Generates C files from the active `.cgen` file |
 
 `CGen: Generate From Current DSL File` is available only when a `.cgen` file is active in the standard text editor. The CGen webview editor also supports `Ctrl+Enter` to generate.
+
+### Standard editor support
+
+`.cgen` files opened in the standard VS Code text editor have full language support:
+
+- **Completions** — context-aware suggestions for keywords, types, templates, and symbols (triggered on `.`, `@`, `(`, or `Ctrl+Space`)
+- **Diagnostics** — parse errors are shown as red underlines with hover messages; markers update automatically as the project index rebuilds
+- **Formatting** — document formatting (`Shift+Alt+F`) normalises indentation and spacing
 
 ### DSL editor
 
@@ -344,6 +352,47 @@ template pair:
 
 ```c
 #define lh_pair(T) T first; T second
+```
+
+### `@template(inline)`
+
+Marks a template as a compile-time helper — it is expanded at every call site but **never emitted** as a `#define` in any header. Use this for templates that only exist to build other declarations.
+
+```cgen
+@template(inline)
+template type(name):
+    use c.expr(name)
+
+alias byte as c.type(unsigned char)
+```
+
+```c
+/* c_type is never emitted */
+typedef unsigned char lh_byte_t;
+```
+
+### `@use(inline)` in structs
+
+Normally a `use expr` inside a struct generates a dependency on a field-template and expands to a macro call. With `@use(inline)` the referenced template's fields are copied directly into the containing struct — flat embedding without a wrapper type.
+
+```cgen
+template coords:
+    param T
+    field x as T
+    field y as T
+
+struct point:
+    field z as c.float
+    @use(inline)
+    use lh.coords(c.float)
+```
+
+```c
+typedef struct lh_point_t {
+  float z;
+  float x;
+  float y;
+} lh_point_t;
 ```
 
 ### Parameters
