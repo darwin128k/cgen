@@ -38,6 +38,7 @@ export interface FileIndexEntry {
   relativePath: string | null;
   hash: string;
   root: SectionNode;
+  diagnostics: string[];
 }
 
 interface StoredSection {

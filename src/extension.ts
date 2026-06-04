@@ -5,6 +5,7 @@ import * as vscode from 'vscode';
 import { generateDsl, resolveDslUsage, DslError } from './cgen';
 import { formatCgen } from './formatter';
 import { CgenProjectIndex } from './indexer';
+import { parseDsl } from './parser';
 import { createDslSuggestion } from './suggestions';
 
 interface ParsedDiagnostic {
@@ -16,6 +17,7 @@ let saveEditorFn: (() => Promise<void>) | undefined;
 let projectIndexPromise: Promise<CgenProjectIndex | undefined> | undefined;
 let postProgressMessage: ((active: boolean) => void) | undefined;
 let postDiagnosticsMessage: ((diagnostics: ParsedDiagnostic[]) => void) | undefined;
+let nativeDiagnostics: vscode.DiagnosticCollection | undefined;
 let currentEditorContent = '';
 
 interface FormatPolicy {
@@ -33,7 +35,21 @@ interface EditorFontConfig {
 }
 
 export function activate(context: vscode.ExtensionContext) {
+  nativeDiagnostics = vscode.languages.createDiagnosticCollection('cgen');
+  context.subscriptions.push(nativeDiagnostics);
+
   projectIndexPromise = initializeProjectIndex(context);
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeTextDocument((e) => {
+      if (e.document.languageId === 'cgen') { refreshNativeDiagnostics(e.document); }
+    }),
+    vscode.workspace.onDidCloseTextDocument((doc) => {
+      if (doc.languageId === 'cgen') { nativeDiagnostics?.delete(doc.uri); }
+    }),
+  );
+  for (const doc of vscode.workspace.textDocuments) {
+    if (doc.languageId === 'cgen') { refreshNativeDiagnostics(doc); }
+  }
   context.subscriptions.push(
     vscode.commands.registerCommand('cgen.openDslEditor', () => openDslEditor(context)),
     vscode.commands.registerCommand('cgen.saveEditor', () => saveEditorFn?.()),
@@ -537,11 +553,17 @@ async function initializeProjectIndex(context: vscode.ExtensionContext): Promise
           index.updateFromFiles(perFileData);
           index.updateSymbolUsage(usage);
           postDiagnosticsMessage?.([]);
+          nativeDiagnostics?.clear();
         } catch (error) {
           const msg = error instanceof Error ? error.message : String(error);
           postDiagnosticsMessage?.(parseErrorDiagnostics(msg));
           if (error instanceof DslError) {
             index.updateFromFiles(error.perFileData);
+            for (const file of error.perFileData) {
+              if (file.relativePath && file.diagnostics.length > 0) {
+                applyNativeDiagnostics(vscode.Uri.joinPath(workspaceFolder.uri, file.relativePath), file.diagnostics);
+              }
+            }
           }
         } finally {
           index.onBusyChange?.(false);
@@ -674,6 +696,34 @@ function escapeHtml(value: string): string {
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;');
+}
+
+function refreshNativeDiagnostics(document: vscode.TextDocument): void {
+  if (!nativeDiagnostics) { return; }
+  const { diagnostics } = parseDsl(formatCgen(document.getText()));
+  applyNativeDiagnostics(document.uri, diagnostics);
+}
+
+function applyNativeDiagnostics(uri: vscode.Uri, errors: string[]): void {
+  if (!nativeDiagnostics) { return; }
+  const items = parseErrorDiagnostics(errors.join('\n'));
+  if (items.length === 0) {
+    nativeDiagnostics.delete(uri);
+    return;
+  }
+  const doc = vscode.workspace.textDocuments.find((d) => d.uri.toString() === uri.toString());
+  nativeDiagnostics.set(uri, items.map(({ line, message }) => {
+    const lineIndex = Math.max(0, line - 1);
+    let range: vscode.Range;
+    if (doc) {
+      const safeLine = Math.min(lineIndex, doc.lineCount - 1);
+      const docLine = doc.lineAt(safeLine);
+      range = new vscode.Range(safeLine, docLine.firstNonWhitespaceCharacterIndex, safeLine, docLine.text.length);
+    } else {
+      range = new vscode.Range(lineIndex, 0, lineIndex, Number.MAX_SAFE_INTEGER);
+    }
+    return new vscode.Diagnostic(range, message, vscode.DiagnosticSeverity.Error);
+  }));
 }
 
 function kindToVscodeKind(kind: string): vscode.CompletionItemKind {

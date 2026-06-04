@@ -159,7 +159,8 @@ async function buildDslArtifacts(workspaceFolder: vscode.WorkspaceFolder, extens
   const perFileData: FileIndexEntry[] = allSources.map((s, i) => ({
     relativePath: s.relativePath,
     hash: hashSource(s.source),
-    root: parsedList[i].root
+    root: parsedList[i].root,
+    diagnostics: parsedList[i].diagnostics
   }));
 
   try {
