@@ -55,6 +55,7 @@ export const contextCandidates: Readonly<Record<string, readonly string[]>> = {
     '@pub(source)',
     '@pub(all)',
     '@package(inline)',
+    '@include("header.h")',
     '@enum(static)',
     '@enum(define)',
     '@enum(extern)',

@@ -157,11 +157,11 @@ scope c:
     @alias(define)                 # adds @alias(define); still inherits @alias(inline)
     alias void as c.type(void)
 
-    @header("stddef.h")            # adds @header; still inherits @alias(inline)
+    @include("stddef.h")           # adds @include; still inherits @alias(inline)
     alias size as c.type(size_t)
 
     scope fixed:                   # nested scope also inherits @alias(inline)
-        @header("stdint.h")
+        @include("stdint.h")
         alias i8 as c.type(int8_t)
 ```
 
@@ -177,29 +177,29 @@ module char:
 
 Guard: `LH_CHAR_H`. Type name: `lh_uchar_t` (not `lh_char_uchar_t`).
 
-### `@header("header.h")`
+### `@include("header.h")`
 
 Attaches to aliases and templates that depend on external C declarations. Specifies which C header to `#include` in any generated file that uses the declared name.
 
 ```cgen
 scope c:
-    @header("stddef.h")
+    @include("stddef.h")
     alias size as c.type(size_t)
 ```
 
 ## External C Symbols
 
-External C types, macros, and functions are represented with ordinary `alias` and `template` declarations, usually under a `scope c:` namespace. Use `c.type(...)` for C type spelling, `c.expr(...)` for literal C expressions, and `@header("...")` when generated files must include a C header.
+External C types, macros, and functions are represented with ordinary `alias` and `template` declarations, usually under a `scope c:` namespace. Use `c.type(...)` for C type spelling, `c.expr(...)` for literal C expressions, and `@include("...")` when generated files must include a C header.
 
 ```cgen
 scope c:
     alias char as c.type(char)
     alias uint as c.type(unsigned int)
 
-    @header("stddef.h")
+    @include("stddef.h")
     alias size as c.type(size_t)
 
-    @header("stdlib.h")
+    @include("stdlib.h")
     template malloc(size):
         use c.expr(malloc(${size}))
 ```

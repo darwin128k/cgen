@@ -721,9 +721,9 @@ function renderFieldDeclaration(field: TemplateField, typeName: string, template
   return `${prefix}${typeName} ${field.name}`;
 }
 
-function getHeaderArg(attributes: Attribute[]): string | undefined {
+function getIncludeArg(attributes: Attribute[]): string | undefined {
   for (const attr of attributes) {
-    if (attr.name === 'header' && attr.args.length > 0) {
+    if (attr.name === 'include' && attr.args.length > 0) {
       return attr.args[0].replace(/^"(.*)"$/, '$1');
     }
   }
@@ -752,7 +752,7 @@ function buildTypeSymbols(modules: ModuleArtifact[], templateSymbols: Map<string
         cName,
         moduleId: module.id,
         includePath: module.includePath,
-        externHeader: getHeaderArg(declaration.attributes) ?? undefined,
+        externHeader: getIncludeArg(declaration.attributes) ?? undefined,
         kind: declaration.kind,
         target: declaration.target,
         line: declaration.line,
@@ -998,7 +998,7 @@ function buildTemplateSymbols(modules: ModuleArtifact[]): Map<string, TemplateSy
         macroName,
         moduleId: module.id,
         includePath: module.includePath,
-        externHeader: getHeaderArg(template.attributes) ?? undefined,
+        externHeader: getIncludeArg(template.attributes) ?? undefined,
         inlineOnly: template.attributes.some((a) => a.name === 'template' && a.args.includes('inline')),
         defineOnly: template.attributes.some((a) => a.name === 'template' && a.args.includes('define')),
         ...(template.bodyRaw && template.body ? { rawBody: template.body, rawParams: template.params.map((p) => p.name) } : {})

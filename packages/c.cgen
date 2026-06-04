@@ -36,43 +36,43 @@ scope c:
     @alias(define)
     alias void as c.type(void)
 
-    @header("stddef.h")
+    @include("stddef.h")
     alias size as c.type(size_t)
 
-    @header("stddef.h")
+    @include("stddef.h")
     alias ptrdiff as c.type(ptrdiff_t)
 
-    @header("stddef.h")
+    @include("stddef.h")
     alias wchar as c.type(wchar_t)
 
     @alias(define)
-    @header("stddef.h")
+    @include("stddef.h")
     alias nullptr as c.type(NULL)
 
     scope fixed:
-        @header("stdint.h")
+        @include("stdint.h")
         alias i8 as c.type(int8_t)
-        @header("stdint.h")
+        @include("stdint.h")
         alias i16 as c.type(int16_t)
-        @header("stdint.h")
+        @include("stdint.h")
         alias i32 as c.type(int32_t)
-        @header("stdint.h")
+        @include("stdint.h")
         alias i64 as c.type(int64_t)
-        @header("stdint.h")
+        @include("stdint.h")
         alias u8 as c.type(uint8_t)
-        @header("stdint.h")
+        @include("stdint.h")
         alias u16 as c.type(uint16_t)
-        @header("stdint.h")
+        @include("stdint.h")
         alias u32 as c.type(uint32_t)
-        @header("stdint.h")
+        @include("stdint.h")
         alias u64 as c.type(uint64_t)
-        @header("stdint.h")
+        @include("stdint.h")
         alias imax as c.type(intmax_t)
-        @header("stdint.h")
+        @include("stdint.h")
         alias umax as c.type(uintmax_t)
-        @header("stdint.h")
+        @include("stdint.h")
         alias iptr as c.type(intptr_t)
-        @header("stdint.h")
+        @include("stdint.h")
         alias uptr as c.type(uintmax_t)
 
 
@@ -164,22 +164,22 @@ scope c:
             template set(a, b):
                 use c.expr("(${a} |= ${b})")
 
-    @header("stdlib.h")
+    @include("stdlib.h")
     template malloc(size):
         use c.expr("malloc(${size})")
 
-    @header("stdlib.h")
+    @include("stdlib.h")
     template calloc(count, size):
         use c.expr("calloc(${count}, ${size})")
 
-    @header("stdlib.h")
+    @include("stdlib.h")
     template free(ptr):
         use c.expr("free(${ptr})")
 
-    @header("string.h")
+    @include("string.h")
     template memcpy(dest, src, size):
         use c.expr("memcpy(${dest}, ${src}, ${size})")
 
-    @header("string.h")
+    @include("string.h")
     template memset(dest, value, size):
         use c.expr("memset(${dest}, ${value}, ${size})")
