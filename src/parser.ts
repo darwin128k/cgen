@@ -271,7 +271,7 @@ export function parseDsl(source: string): ParsedDsl {
     }
 
     if (currentStruct) {
-      const fnNode = parseFn(line, lineNumber);
+      const fnNode = parseFn(line, lineNumber, diagnostics);
       if (fnNode) {
         fnNode.attributes = [...parentFrame.inheritedAttributes, ...pendingAttributes];
         pendingAttributes = [];
@@ -339,7 +339,7 @@ export function parseDsl(source: string): ParsedDsl {
       return;
     }
 
-    const fnNode = parseFn(line, lineNumber);
+    const fnNode = parseFn(line, lineNumber, diagnostics);
     if (fnNode) {
       fnNode.attributes = [...parentFrame.inheritedAttributes, ...pendingAttributes];
       pendingAttributes = [];
@@ -466,7 +466,7 @@ function parseEnumMember(line: string, lineNumber: number): EnumMemberNode | und
   return { name: match[1], value: match[2], line: lineNumber };
 }
 
-function parseFn(line: string, lineNumber: number): FnNode | undefined {
+function parseFn(line: string, lineNumber: number, diagnostics?: string[]): FnNode | undefined {
   const startMatch = line.match(/^(mut\s+)?fn\s+([A-Za-z_][A-Za-z0-9_]*)\s*(\()?/);
   if (!startMatch) {
     return undefined;
@@ -492,7 +492,12 @@ function parseFn(line: string, lineNumber: number): FnNode | undefined {
     }
   }
 
-  const returnMatch = rest.match(/^(?:as\s+|->\s*)(.+?)\s*:\s*$/);
+  if (/^as\s+/.test(rest)) {
+    diagnostics?.push(`Line ${lineNumber}: use \`->\` instead of \`as\` to specify fn return type`);
+    return undefined;
+  }
+
+  const returnMatch = rest.match(/^->\s*(.+?)\s*:\s*$/);
   if (!returnMatch) {
     return undefined;
   }

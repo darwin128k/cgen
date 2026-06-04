@@ -76,7 +76,7 @@ export class CgenProjectIndex {
 
   static async create(context: vscode.ExtensionContext, workspaceFolder: vscode.WorkspaceFolder): Promise<CgenProjectIndex> {
     const sql = await initSqlJs({
-      locateFile: (file) => path.join(context.extensionPath, 'node_modules', 'sql.js', 'dist', file)
+      locateFile: (file) => path.join(context.extensionPath, 'out', 'sqljs', file)
     });
     const index = new CgenProjectIndex(sql, context, workspaceFolder);
     await index.initialize();

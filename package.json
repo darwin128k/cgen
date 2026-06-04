@@ -120,9 +120,9 @@
     }
   },
   "scripts": {
-    "compile": "node scripts/generate-grammar.js && tsc -p ./ && npm run build:webview",
+    "compile": "node scripts/generate-grammar.js && tsc -p ./ && npm run build:webview && node scripts/copy-sqljs.js",
     "build:webview": "esbuild media/src/dslEditor.ts --bundle --outfile=media/dslEditor.js --format=iife --target=es2020",
-    "package": "vsce package --allow-missing-repository --no-dependencies --out releases/cgen-vscode-${npm_package_version}.vsix && node scripts/include-sqljs-in-vsix.js releases/cgen-vscode-${npm_package_version}.vsix",
+    "package": "vsce package --allow-missing-repository --no-dependencies --out releases/cgen-vscode-${npm_package_version}.vsix",
     "watch": "tsc -watch -p ./",
     "vscode:prepublish": "npm run compile"
   },
