@@ -27,11 +27,14 @@ import { formatCgen } from './formatter';
 
 const execFile = util.promisify(cp.execFile);
 
+type ProjectType = 'auto' | 'executable' | 'static' | 'shared' | 'interface';
+
 export interface CgenConfig {
   project: {
     name: string;
     version: string;
     description: string;
+    type: ProjectType;
   };
   generate: {
     include: string;
@@ -147,12 +150,17 @@ export async function loadConfig(workspaceFolder: vscode.WorkspaceFolder): Promi
   if (!config.generate?.include || !config.generate?.source) {
     throw new Error('cgen.json must contain generate.include and generate.source');
   }
+  const projectType = config.project?.type ?? 'auto';
+  if (!['auto', 'executable', 'static', 'shared', 'interface'].includes(projectType)) {
+    throw new Error('cgen.json project.type must be auto, executable, static, shared, or interface');
+  }
 
   return {
     project: {
       name: config.project?.name ?? '',
       version: config.project?.version ?? '',
       description: config.project?.description ?? '',
+      type: projectType,
     },
     generate: {
       include: config.generate.include,
@@ -358,6 +366,16 @@ async function generateCMakeLists(workspaceFolder: vscode.WorkspaceFolder, confi
 
   const includePath = path.relative(wsPath, resolveWorkspacePath(workspaceFolder, config.generate.include)).replace(/\\/g, '/');
   const { name, version, description } = config.project;
+  const projectType = config.project.type === 'auto'
+    ? sourceFiles.length > 0 ? 'static' : 'interface'
+    : config.project.type;
+
+  if (projectType === 'interface' && sourceFiles.length > 0) {
+    throw new Error('project.type interface cannot contain generated .c source files');
+  }
+  if (projectType !== 'interface' && sourceFiles.length === 0) {
+    throw new Error(`project.type ${projectType} requires at least one generated .c source file`);
+  }
 
   const lines: string[] = [
     'cmake_minimum_required(VERSION 3.15)',
@@ -365,14 +383,17 @@ async function generateCMakeLists(workspaceFolder: vscode.WorkspaceFolder, confi
     '',
   ];
 
-  if (sourceFiles.length > 0) {
-    lines.push(`add_library(${name} STATIC`);
+  if (projectType !== 'interface') {
+    const target = projectType === 'executable'
+      ? `add_executable(${name}`
+      : `add_library(${name} ${projectType.toUpperCase()}`;
+    lines.push(target);
     for (const f of sourceFiles) {
       lines.push(`    ${f}`);
     }
     lines.push(')');
     lines.push('');
-    lines.push(`target_include_directories(${name} PUBLIC`);
+    lines.push(`target_include_directories(${name} ${projectType === 'executable' ? 'PRIVATE' : 'PUBLIC'}`);
     lines.push(`    ${includePath}`);
     lines.push(')');
   } else {

@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+
+- Webview file actions menu with Open, Save, and Save As
+- Webview run actions menu with Generate, Build, and Generate & Build
+- `project.type` support for executable, static, shared, interface, and auto CMake targets
+- Explicit `Ctrl+Shift+I` formatting shortcut for `.cgen` documents
+
+### Changed
+
+- Unbound webview sessions save to `.cgen/session.cgen` without opening Save As
+- Generation and build are independent operations
+
 ## [0.0.78] - 2026-06-04
 
 ### Added
@@ -38,7 +50,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Progress bar in the WebView editor during indexing/generation
 - Diagnostic bubble in the WebView editor with error icon and inline error display
 - Syntax formatting support in the WebView editor (`Ctrl+Enter` normalises before generate)
-- Document formatting in the standard text editor (`Shift+Alt+F`)
+- Document formatting in the standard text editor (`Ctrl+Shift+I`)
 - Context-aware completions in the standard text editor (triggered on `.`, `@`, `(`, `Ctrl+Space`)
 - Diagnostics (parse errors) shown as red underlines in the standard text editor
 - Per-file JSON index cache in `.cgen/cache/` — faster startup, hash-based invalidation
@@ -76,4 +88,3 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - `as` for function return type — use `->` instead
 - `extern c` namespace — replaced by `scope c`
 - sql.js runtime dependency
-

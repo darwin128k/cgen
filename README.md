@@ -17,6 +17,7 @@ VS Code extension for a compact C generation DSL.
 | `CGen: Open Editor` | `Ctrl+Alt+G` | Opens the built-in DSL webview editor |
 | `CGen: Open DSL File` | — | Creates `.cgen/main.cgen` if it does not exist, then opens it in the standard text editor |
 | `CGen: Generate From Current DSL File` | `Ctrl+Enter` | Generates C files from the active `.cgen` file |
+| `Format Document` | `Ctrl+Shift+I` | Formats the active `.cgen` file |
 
 `CGen: Generate From Current DSL File` is available only when a `.cgen` file is active in the standard text editor. The CGen webview editor also supports `Ctrl+Enter` to generate.
 
@@ -26,13 +27,38 @@ VS Code extension for a compact C generation DSL.
 
 - **Completions** — context-aware suggestions for keywords, types, templates, and symbols (triggered on `.`, `@`, `(`, or `Ctrl+Space`)
 - **Diagnostics** — parse errors are shown as red underlines with hover messages; markers update automatically as the project index rebuilds
-- **Formatting** — document formatting (`Shift+Alt+F`) normalises indentation and spacing
+- **Formatting** — document formatting (`Ctrl+Shift+I`) normalises indentation and spacing
 
 ### DSL editor
 
-The editor toolbar shows the current file name and a breadcrumb of the cursor's position in the DSL. The footer contains file actions and run actions menus. Run actions can generate files, build the project, or generate and build in sequence. The expand button in the toolbar toggles fullscreen mode.
+The editor toolbar shows the current file name and a breadcrumb of the cursor's position in the DSL. The expand button in the toolbar toggles fullscreen mode.
 
-The editor saves its state (content, cursor position, scroll offset, and bound file path) to `.cgen/session.json` in the workspace and restores it on next open. Until a file is bound, edits and `Ctrl+S` are written to `.cgen/session.cgen`; use `Ctrl+Shift+S` to save the session as a regular `.cgen` file.
+The footer contains two menus:
+
+| File action | Shortcut | Behaviour |
+|-------------|----------|-----------|
+| Open | — | Opens a `.cgen` file and binds the session to it |
+| Save | `Ctrl+S` | Saves to the bound file, or to `.cgen/session.cgen` while the session is unbound |
+| Save As | `Ctrl+Shift+S` | Saves to a selected `.cgen` file and binds the session to it |
+
+| Run action | Shortcut | Behaviour |
+|------------|----------|-----------|
+| Generate | `Ctrl+Enter` | Generates headers and sources without running the build system |
+| Build | — | Runs the configured build system without regenerating files |
+| Generate & Build | — | Generates files, prepares generated CMake when applicable, then runs the configured build system |
+
+Edits are automatically written to `.cgen/session.cgen`. Cursor position, scroll offset, and the bound file path are stored in `.cgen/session.json` and restored on next open.
+
+### Keyboard shortcuts
+
+| Shortcut | Context | Action |
+|----------|---------|--------|
+| `Ctrl+Alt+G` | Standard editor | Open the CGen webview editor |
+| `Ctrl+Space` | Any CGen editor | Show completions |
+| `Ctrl+Shift+I` | Standard `.cgen` editor | Format document |
+| `Ctrl+Enter` | Any CGen editor | Generate files |
+| `Ctrl+S` | CGen webview | Save current session or bound file |
+| `Ctrl+Shift+S` | CGen webview | Save as and bind a file |
 
 ## Config
 
@@ -43,7 +69,8 @@ The editor saves its state (content, cursor position, scroll offset, and bound f
   "project": {
     "name": "myproject",
     "version": "0.1.0",
-    "description": "My project description"
+    "description": "My project description",
+    "type": "executable"
   },
   "generate": {
     "include": "./include",
@@ -65,6 +92,26 @@ The editor saves its state (content, cursor position, scroll offset, and bound f
 | `name`        | Project name             |
 | `version`     | Version string           |
 | `description` | Short project description |
+| `type`        | `"auto"`, `"executable"`, `"static"`, `"shared"`, or `"interface"` (default: `"auto"`) |
+
+The target type controls generated CMake:
+
+- `"executable"` creates `add_executable`
+- `"static"` and `"shared"` create the corresponding library type
+- `"interface"` creates a header-only interface library
+- `"auto"` creates a static library when `.c` files exist, otherwise an interface library
+
+`"interface"` rejects generated `.c` files. The other explicit target types require at least one generated `.c` file.
+
+Generated CMake targets:
+
+| `project.type` | Generated target |
+|----------------|------------------|
+| `"executable"` | `add_executable(name ...)` with private include directories |
+| `"static"` | `add_library(name STATIC ...)` with public include directories |
+| `"shared"` | `add_library(name SHARED ...)` with public include directories |
+| `"interface"` | `add_library(name INTERFACE)` with interface include directories |
+| `"auto"` | Static when `.c` files exist, otherwise interface |
 
 ### `generate`
 
@@ -76,7 +123,7 @@ The editor saves its state (content, cursor position, scroll offset, and bound f
 
 ### `build` (optional)
 
-Configures an external build system to run after generation. Omit the section entirely if you only need code generation.
+Configures the external build system used by the **Build** and **Generate & Build** actions. Omit the section entirely if you only need code generation.
 
 | Field    | Values                                       | Description                              |
 |----------|----------------------------------------------|------------------------------------------|
@@ -88,6 +135,13 @@ CMake actions:
 - `"configure"` — runs `cmake -B <dir> -S .` to generate build files
 - `"build"` — runs `cmake --build <dir>` to compile
 - `"configure+build"` — runs both in sequence
+
+Meson actions:
+- `"configure"` — runs `meson setup <dir>`
+- `"build"` — runs `meson compile -C <dir>`
+- `"configure+build"` — runs both in sequence
+
+Build failures are written to the **CGen Build** output channel. **Build** requires existing build-system files; **Generate & Build** creates the generated CMake target first when CMake is configured.
 
 If `.clang-format` is present in the workspace root, all generated files are automatically formatted with `clang-format` after generation.
 

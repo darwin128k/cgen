@@ -2,7 +2,8 @@
   "project": {
     "name": "cgen",
     "version": "0.0.36",
-    "description": "CGen VS Code extension"
+    "description": "CGen VS Code extension",
+    "type": "interface"
   },
   "generate": {
     "include": "./include",

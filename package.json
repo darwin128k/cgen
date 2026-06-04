@@ -74,6 +74,11 @@
         "key": "ctrl+enter",
         "mac": "cmd+enter",
         "when": "editorTextFocus && editorLangId == cgen"
+      },
+      {
+        "command": "editor.action.formatDocument",
+        "key": "ctrl+shift+i",
+        "when": "editorTextFocus && editorLangId == cgen"
       }
     ],
     "menus": {
