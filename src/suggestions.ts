@@ -109,7 +109,7 @@ export async function createDslSuggestion(
     insertText: trimDot(matches[0].slice(sliceFrom)),
     replaceLeft: divergeAtDot ? 1 : 0,
     candidates: resolvedCandidates,
-    candidateKinds: resolvedCandidates.map((c) => resolveKindForCandidate(c, index)),
+    candidateKinds: resolvedCandidates.map((c) => contextKey === 'attribute' ? 'attribute' : resolveKindForCandidate(c, index)),
     contextKey,
     prefix
   };
@@ -413,9 +413,9 @@ function pickSuggestions(
   const indent = linePrefix.match(/^\s*/)?.[0] ?? '';
   const typed = linePrefix.trimStart();
   const candidates = rankCandidates(
-    getCandidates(typed, contextPath, currentTemplate, index),
+    uniqueInOrder(getCandidates(typed, contextPath, currentTemplate, index)),
     typed,
-    usage
+    typed.startsWith('@') ? [] : usage
   );
   return candidates
     .filter((candidate) => {
@@ -474,11 +474,7 @@ function getSuggestionContextKey(
 
 function getCandidates(typed: string, contextPath: string[], currentTemplate: CurrentTemplate, index: DslIndex): string[] {
   if (/^@/.test(typed)) {
-    const attrSnippets = [...contextCandidates['attribute']];
-    if (currentTemplate.insideStruct || currentTemplate.insideTemplate) {
-      return [...attrSnippets, '@expand'];
-    }
-    return attrSnippets;
+    return [...contextCandidates['attribute']];
   }
 
   if (currentTemplate.insideFn && /^(alias|enum|struct|(?:mutable\s+)?template|(?:mutable\s+)?fn|(?:mutable\s+)?field|param|case)\b/.test(typed)) {

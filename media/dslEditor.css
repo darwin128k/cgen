@@ -523,22 +523,48 @@ button:hover {
 .completion-list {
   position: absolute;
   z-index: 20;
-  --completion-icon-color: color-mix(in srgb, var(--vscode-editor-foreground, #cccccc) 92%, var(--vscode-editorSuggestWidget-background, #252526) 8%);
+  --completion-icon-color: color-mix(in srgb, var(--vscode-editor-foreground, #cccccc) 92%, var(--vscode-menu-background, #252526) 8%);
   --completion-icon-active-color: var(--vscode-editorSuggestWidget-selectedForeground, #ffffff);
+  box-sizing: border-box;
   min-width: 160px;
   max-width: 400px;
   max-height: 176px;
   padding: 4px 0;
-  background: var(--vscode-editorSuggestWidget-background, var(--vscode-editor-background));
-  border: 1px solid var(--vscode-editorSuggestWidget-border, var(--vscode-editorWidget-border, #454545));
+  border: 1px solid var(--vscode-menu-border, var(--vscode-editorWidget-border, var(--vscode-panel-border)));
   border-radius: 6px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+  color: var(--vscode-menu-foreground, var(--vscode-editorSuggestWidget-foreground, var(--vscode-editor-foreground)));
+  background: var(--vscode-menu-background, var(--vscode-editorSuggestWidget-background, var(--vscode-editor-background)));
+  box-shadow: 0 4px 16px rgb(0 0 0 / 35%);
   font-family: var(--cgen-editor-font-family, var(--vscode-editor-font-family, monospace));
   font-feature-settings: var(--cgen-editor-font-feature-settings, normal);
   font-size: var(--cgen-editor-font-size, var(--vscode-editor-font-size, 13px));
   font-variant-ligatures: var(--cgen-editor-font-variant-ligatures, normal);
   line-height: 1.4;
   overflow-y: auto;
+}
+
+.completion-list::-webkit-scrollbar {
+  width: 10px;
+}
+
+.completion-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.completion-list::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 6px;
+  background: var(--vscode-scrollbarSlider-background);
+  background-clip: content-box;
+}
+
+.completion-list::-webkit-scrollbar-thumb:hover {
+  background: var(--vscode-scrollbarSlider-hoverBackground);
+  background-clip: content-box;
+}
+
+.completion-list::-webkit-scrollbar-button {
+  display: none;
 }
 
 .completion-group {
@@ -561,7 +587,7 @@ button:hover {
 .completion-item {
   display: flex;
   align-items: stretch;
-  color: var(--vscode-editorSuggestWidget-foreground, var(--vscode-editor-foreground));
+  color: inherit;
   cursor: pointer;
   border-radius: 3px;
   margin: 1px 4px;
@@ -591,6 +617,7 @@ button:hover {
 }
 
 .ci-function,
+.ci-attribute,
 .ci-interface,
 .ci-enum,
 .ci-variable,
@@ -604,6 +631,10 @@ button:hover {
 
 .ci-keyword {
   --completion-icon-color: #c586c0;
+}
+
+.ci-attribute {
+  --completion-icon-color: #dcdcaa;
 }
 
 .ci-module {
@@ -631,8 +662,8 @@ button:hover {
 }
 
 .completion-item.active {
-  background: var(--vscode-editorSuggestWidget-selectedBackground, var(--vscode-list-activeSelectionBackground));
-  color: var(--vscode-editorSuggestWidget-selectedForeground, var(--vscode-list-activeSelectionForeground));
+  color: var(--vscode-menu-selectionForeground, var(--vscode-editorSuggestWidget-selectedForeground, var(--vscode-list-activeSelectionForeground)));
+  background: var(--vscode-menu-selectionBackground, var(--vscode-editorSuggestWidget-selectedBackground, var(--vscode-list-activeSelectionBackground)));
 }
 
 .completion-item.active .completion-icon-col {
@@ -647,6 +678,7 @@ body.vscode-high-contrast-light .completion-list {
 
 body.vscode-high-contrast-light .completion-icon-col,
 body.vscode-high-contrast-light .ci-function,
+body.vscode-high-contrast-light .ci-attribute,
 body.vscode-high-contrast-light .ci-interface,
 body.vscode-high-contrast-light .ci-enum,
 body.vscode-high-contrast-light .ci-variable,

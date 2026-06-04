@@ -486,6 +486,7 @@ function getCursorPixelPos(): { x: number; y: number } {
 
 function completionIconFor(kind: string): [string, string] {
   switch (kind) {
+    case 'attribute': return ['symbol-keyword', 'attribute'];
     case 'keyword': return ['symbol-keyword', 'keyword'];
     case 'package':
     case 'module':
@@ -504,6 +505,8 @@ function completionIconFor(kind: string): [string, string] {
 
 function completionGroupFor(kind: string): string {
   switch (kind) {
+    case 'attribute':
+      return 'Attributes';
     case 'keyword':
     case 'param':
     case 'field':

@@ -795,6 +795,7 @@ function applyNativeDiagnostics(uri: vscode.Uri, errors: string[]): void {
 
 function kindToVscodeKind(kind: string): vscode.CompletionItemKind {
   switch (kind) {
+    case 'attribute': return vscode.CompletionItemKind.Property;
     case 'keyword': return vscode.CompletionItemKind.Keyword;
     case 'alias': return vscode.CompletionItemKind.TypeParameter;
     case 'enum': return vscode.CompletionItemKind.Enum;
