@@ -51,6 +51,7 @@ export interface TemplateNode {
   bodyLine: number;
   bodyInline: boolean;
   bodyRaw: boolean;
+  mutable: boolean;
   attributes: Attribute[];
   line: number;
 }
@@ -197,7 +198,7 @@ export function parseDsl(source: string): ParsedDsl {
     if (currentFn) {
       const paramAttribute = pendingAttributes.find((a) => a.name === 'param');
       if (paramAttribute) {
-        diagnostics.push(`Line ${paramAttribute.line}: use \`mut name -> type\` or \`const name -> type\` for function parameters`);
+        diagnostics.push(`Line ${paramAttribute.line}: use \`mutable name -> type\` for function parameters`);
         pendingAttributes = [];
         return;
       }
@@ -259,7 +260,7 @@ export function parseDsl(source: string): ParsedDsl {
           currentTemplate.node.bodyLine = lineNumber;
           return;
         }
-        currentTemplate.node.bodyInline = pendingAttributes.some((a) => a.name === 'use' && a.args[0] === 'inline');
+        currentTemplate.node.bodyInline = pendingAttributes.some((a) => a.name === 'expand');
         pendingAttributes = [];
         currentTemplate.node.body = line;
         currentTemplate.node.bodyLine = lineNumber;
@@ -289,7 +290,7 @@ export function parseDsl(source: string): ParsedDsl {
         return;
       }
       if (/^use\s+/.test(line)) {
-        const inline = pendingAttributes.some((a) => a.name === 'use' && a.args[0] === 'inline');
+        const inline = pendingAttributes.some((a) => a.name === 'expand');
         pendingAttributes = [];
         currentStruct.node.uses.push({ expr: line.slice(4).trim(), inline, line: lineNumber });
         return;
@@ -343,6 +344,7 @@ export function parseDsl(source: string): ParsedDsl {
     const fnNode = parseFn(line, lineNumber, diagnostics);
     if (fnNode != null) {
       fnNode.attributes = [...parentFrame.inheritedAttributes, ...pendingAttributes];
+      fnNode.selfMutable = fnNode.attributes.some((a) => a.name === 'mutable');
       pendingAttributes = [];
       parent.fns.push(fnNode);
       currentFn = { indent, node: fnNode };
@@ -469,7 +471,7 @@ function parseEnumMember(line: string, lineNumber: number): EnumMemberNode | und
 }
 
 function parseFn(line: string, lineNumber: number, diagnostics?: string[]): FnNode | null | undefined {
-  const startMatch = line.match(/^(mut\s+)?fn\s+([A-Za-z_][A-Za-z0-9_]*)\s*(\()?/);
+  const startMatch = line.match(/^(mutable\s+)?fn\s+([A-Za-z_][A-Za-z0-9_]*)\s*(\()?/);
   if (!startMatch) {
     return undefined;
   }
@@ -509,10 +511,9 @@ function parseFn(line: string, lineNumber: number, diagnostics?: string[]): FnNo
 
 function parseFnParam(text: string, lineNumber: number, attributes: Attribute[] = []): FnParam | undefined {
   const trimmed = text.trim();
-  const modifierMatch = trimmed.match(/^(mut|const)\s+(.+)$/);
-  const modifier = modifierMatch?.[1];
+  const modifierMatch = trimmed.match(/^(mutable)\s+(.+)$/);
   const body = modifierMatch ? modifierMatch[2].trim() : trimmed;
-  const mutable = modifier === 'mut';
+  const mutable = !!modifierMatch;
 
   const variadicMatch = body.match(/^(?:param\s+)?\.\.\.(?:\s+as\s+|\s+->\s*)([A-Za-z_][A-Za-z0-9_]*)$/);
   if (variadicMatch) {
@@ -546,18 +547,19 @@ function splitByCommaBalanced(source: string): string[] {
 }
 
 function parseTemplate(line: string, lineNumber: number): TemplateNode | undefined {
-  const match = line.match(/^template\s+([A-Za-z_][A-Za-z0-9_]*)(?:\(([^)]*)\))?\s*:\s*$/);
+  const match = line.match(/^(mutable\s+)?template\s+([A-Za-z_][A-Za-z0-9_]*)(?:\(([^)]*)\))?\s*:\s*$/);
   if (!match) {
     return undefined;
   }
+  const mutable = !!match[1];
   const params: TemplateParam[] = [];
-  if (match[2]) {
-    for (const part of match[2].split(',')) {
+  if (match[3]) {
+    for (const part of match[3].split(',')) {
       const param = parseTemplateParam(part.trim(), lineNumber);
       if (param) { params.push(param); }
     }
   }
-  return { kind: 'template', name: match[1], params, fields: [], body: '', bodyLine: lineNumber, bodyInline: false, bodyRaw: false, attributes: [], line: lineNumber };
+  return { kind: 'template', name: match[2], params, fields: [], body: '', bodyLine: lineNumber, bodyInline: false, bodyRaw: false, mutable, attributes: [], line: lineNumber };
 }
 
 function parseStruct(line: string, lineNumber: number): StructNode | undefined {
@@ -581,7 +583,7 @@ function parseTemplateParam(line: string, lineNumber: number): TemplateParam | u
 }
 
 function parseTemplateField(line: string, lineNumber: number): TemplateField | undefined {
-  const match = line.match(/^(mut\s+)?field\s+([A-Za-z_][A-Za-z0-9_]*)(?:\s+as\s+|\s+->\s*)(.+)$/);
+  const match = line.match(/^(mutable\s+)?field\s+([A-Za-z_][A-Za-z0-9_]*)(?:\s+as\s+|\s+->\s*)(.+)$/);
   if (!match) {
     return undefined;
   }

@@ -1,11 +1,12 @@
-@package(inline)
+@abstract
 scope c:
-    @template(inline)
+    @abstract
     template type(name):
         use c.expr(name)
 
     scope ptr:
-        @template(inline, define)
+        @abstract
+        @define
         template of(type):
             use c.expr("${type} *")
 
@@ -33,7 +34,7 @@ scope c:
     alias double as c.type(double)
     alias bool as c.type(_Bool)
 
-    @alias(define)
+    @define
     alias void as c.type(void)
 
     @include("stddef.h")
@@ -45,7 +46,7 @@ scope c:
     @include("stddef.h")
     alias wchar as c.type(wchar_t)
 
-    @alias(define)
+    @define
     @include("stddef.h")
     alias nullptr as c.type(NULL)
 
@@ -76,91 +77,91 @@ scope c:
         alias uptr as c.type(uintmax_t)
 
 
-    @template(inline)
+    @abstract
     template cast(type, val):
         use c.expr("((${type})${val})")
 
-    @template(inline)
+    @abstract
     template call(fn, ... as args):
         use c.expr("${fn}(${args})")
 
-    @template(inline)
+    @abstract
     template initializer(... as values):
         use c.expr("{ ${values} }")
 
-    @template(inline)
+    @abstract
     template sel(cond, a, b):
         use c.expr("(${cond} ? ${a} : ${b})")
 
-    @template(inline)
+    @abstract
     template eq(a, b):
         use c.expr("(${a} == ${b})")
 
-    @template(inline)
+    @abstract
     template ne(a, b):
         use c.expr("(${a} != ${b})")
 
-    @template(inline)
+    @abstract
     template lt(a, b):
         use c.expr("(${a} < ${b})")
 
-    @template(inline)
+    @abstract
     template le(a, b):
         use c.expr("(${a} <= ${b})")
 
-    @template(inline)
+    @abstract
     template gt(a, b):
         use c.expr("(${a} > ${b})")
 
-    @template(inline)
+    @abstract
     template ge(a, b):
         use c.expr("(${a} >= ${b})")
 
     scope struct:
-        @template(inline)
+        @abstract
         template of(type):
             use c.expr("struct ${type}")
 
     scope math:
-        @template(inline)
+        @abstract
         template add(a, b):
             use c.expr("(${a} + ${b})")
-        @template(inline)
+        @abstract
         template sub(a, b):
             use c.expr("(${a} - ${b})")
-        @template(inline)
+        @abstract
         template mul(a, b):
             use c.expr("(${a} * ${b})")
-        @template(inline)
+        @abstract
         template div(a, b):
             use c.expr("(${a} / ${b})")
-        @template(inline)
+        @abstract
         template mod(a, b):
             use c.expr("(${a} % ${b})")
-        @template(inline)
+        @abstract
         template neg(a):
             use c.expr("(-${a})")
 
         scope bit:
-            @template(inline)
+            @abstract
             template and(a, b):
                 use c.expr("(${a} & ${b})")
-            @template(inline)
+            @abstract
             template or(a, b):
                 use c.expr("(${a} | ${b})")
-            @template(inline)
+            @abstract
             template xor(a, b):
                 use c.expr("(${a} ^ ${b})")
-            @template(inline)
+            @abstract
             template not(a):
                 use c.expr("(~${a})")
-            @template(inline)
+            @abstract
             template shl(a, b):
                 use c.expr("(${a} << ${b})")
-            @template(inline)
+            @abstract
             template shr(a, b):
                 use c.expr("(${a} >> ${b})")
-            @template(inline)
+            @abstract
             template set(a, b):
                 use c.expr("(${a} |= ${b})")
 

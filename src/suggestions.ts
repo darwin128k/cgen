@@ -293,7 +293,7 @@ function collectTrailingStructFields(textFromLine: string, structIndent: number)
 }
 
 function parseInlineFnParamNames(line: string): string[] | undefined {
-  const match = line.match(/^(?:mut\s+)?fn\s+[A-Za-z_][A-Za-z0-9_]*\(([^)]*)\)\s*(?:(?:as\s+|->\s*).+)?\s*[:;]\s*$/);
+  const match = line.match(/^(?:mutable\s+)?fn\s+[A-Za-z_][A-Za-z0-9_]*\(([^)]*)\)\s*(?:(?:as\s+|->\s*).+)?\s*[:;]\s*$/);
   if (!match) {
     return undefined;
   }
@@ -303,14 +303,14 @@ function parseInlineFnParamNames(line: string): string[] | undefined {
     .map((part) => {
       const trimmed = part.trim();
       const variadic = trimmed.match(/^(?:param\s+)?\.\.\.(?:\s+as\s+|\s+->\s*)([A-Za-z_][A-Za-z0-9_]*)$/);
-      const normal = trimmed.match(/^(?:mut|const)?\s*(?:param\s+)?([A-Za-z_][A-Za-z0-9_]*)(?:\s+as\s+|\s+->\s*)/);
+      const normal = trimmed.match(/^(?:mutable\s+)?(?:param\s+)?([A-Za-z_][A-Za-z0-9_]*)(?:\s+as\s+|\s+->\s*)/);
       return variadic?.[1] ?? normal?.[1] ?? '';
     })
     .filter(Boolean);
 }
 
 function getStructFieldNamesFromLine(line: string): string[] {
-  const fieldName = line.match(/^(?:mut\s+)?field\s+([A-Za-z_][A-Za-z0-9_]*)(?:\s+as\s+|\s+->\s*)/)?.[1];
+  const fieldName = line.match(/^(?:mutable\s+)?field\s+([A-Za-z_][A-Za-z0-9_]*)(?:\s+as\s+|\s+->\s*)/)?.[1];
   if (fieldName) {
     return [fieldName];
   }
@@ -463,7 +463,7 @@ function getSuggestionContextKey(
   if (/^return\s+/.test(typed)) return 'return.expression';
   if (/^(package|module|scope|group)\s+/.test(typed)) return 'section.name';
   if (/^template\s+[A-Za-z_][A-Za-z0-9_]*\(/.test(typed)) return 'template.param';
-  if (/^(?:mut\s+)?fn\s+[A-Za-z_][A-Za-z0-9_]*\(/.test(typed)) return 'fn.param';
+  if (/^(?:mutable\s+)?fn\s+[A-Za-z_][A-Za-z0-9_]*\(/.test(typed)) return 'fn.param';
   if (currentTemplate.insideFn) return 'fn.body';
   if (currentTemplate.insideStruct) return 'struct.body';
   if (currentTemplate.insideTemplate) return 'template.body';
@@ -476,12 +476,12 @@ function getCandidates(typed: string, contextPath: string[], currentTemplate: Cu
   if (/^@/.test(typed)) {
     const attrSnippets = [...contextCandidates['attribute']];
     if (currentTemplate.insideStruct || currentTemplate.insideTemplate) {
-      return [...attrSnippets, '@use(inline)'];
+      return [...attrSnippets, '@expand'];
     }
     return attrSnippets;
   }
 
-  if (currentTemplate.insideFn && /^(alias|enum|struct|template|(?:mut\s+)?fn|(?:mut\s+)?field|param|case)\b/.test(typed)) {
+  if (currentTemplate.insideFn && /^(alias|enum|struct|(?:mutable\s+)?template|(?:mutable\s+)?fn|(?:mutable\s+)?field|param|case)\b/.test(typed)) {
     return [];
   }
 
@@ -534,11 +534,11 @@ function getCandidates(typed: string, contextPath: string[], currentTemplate: Cu
     return getInlineParamCandidates(typed);
   }
 
-  if (/^(?:mut\s+)?fn\s+[A-Za-z_][A-Za-z0-9_]*\([^)]*\)\s*(?:as\s+|->\s*)/.test(typed)) {
+  if (/^(?:mutable\s+)?fn\s+[A-Za-z_][A-Za-z0-9_]*\([^)]*\)\s*(?:as\s+|->\s*)/.test(typed)) {
     return completeTail(typed, getTypeCandidates(typed, contextPath, index));
   }
 
-  if (/^(?:mut\s+)?fn\s+[A-Za-z_][A-Za-z0-9_]*\(/.test(typed)) {
+  if (/^(?:mutable\s+)?fn\s+[A-Za-z_][A-Za-z0-9_]*\(/.test(typed)) {
     return getInlineFnParamCandidates(typed, contextPath, index);
   }
 
@@ -581,7 +581,7 @@ function getInlineParamCandidates(typed: string): string[] {
   const currentFragment = typed.slice(separatorIdx + 1).trimStart();
   const head = typed.slice(0, typed.length - currentFragment.length);
 
-  const asMatch = currentFragment.match(/^(?:(?:mut|const)\s+)?(?:param\s+)?\S+(?:\s+as\s+|\s+->\s*)(\S*)$/);
+  const asMatch = currentFragment.match(/^(?:param\s+)?\S+(?:\s+as\s+|\s+->\s*)(\S*)$/);
   if (asMatch) {
     const typeFragment = asMatch[1];
     const typeHead = typed.slice(0, typed.length - typeFragment.length);
@@ -605,7 +605,7 @@ function getInlineFnParamCandidates(typed: string, contextPath: string[], index:
   const currentFragment = typed.slice(separatorIdx + 1).trimStart();
   const head = typed.slice(0, typed.length - currentFragment.length);
 
-  const asMatch = currentFragment.match(/^(?:param\s+)?\S+(?:\s+as\s+|\s+->\s*)(\S*)$/);
+  const asMatch = currentFragment.match(/^(?:mutable\s+)?(?:param\s+)?\S+(?:\s+as\s+|\s+->\s*)(\S*)$/);
   if (asMatch) {
     const typeFragment = asMatch[1];
     const typeHead = typed.slice(0, typed.length - typeFragment.length);
@@ -616,8 +616,7 @@ function getInlineFnParamCandidates(typed: string, contextPath: string[], index:
 
   return [
     'name -> type',
-    'mut name -> type',
-    'const name -> type',
+    'mutable name -> type',
     '... -> values'
   ]
     .filter((s) => s.startsWith(currentFragment))
@@ -952,8 +951,8 @@ function resolveKindForCandidate(candidate: string, index: DslIndex): string {
   if (/^enum\b/.test(candidate)) return 'enum';
   if (/^struct\b/.test(candidate)) return 'struct';
   if (/^template\b/.test(candidate)) return 'template';
-  if (/^(?:mut\s+)?fn\b/.test(candidate)) return 'fn';
-  if (/^(?:mut\s+)?field\b/.test(candidate)) return 'field';
+  if (/^(?:mutable\s+)?fn\b/.test(candidate)) return 'fn';
+  if (/^(?:mutable\s+)?field\b/.test(candidate)) return 'field';
   if (/^param\b/.test(candidate)) return 'param';
   if (/^self\./.test(candidate)) return 'field';
   if (candidate === 'self') return 'param';

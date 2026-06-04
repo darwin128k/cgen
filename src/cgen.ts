@@ -708,16 +708,9 @@ function hasAttr(attributes: Attribute[], name: string, arg?: string): boolean {
   });
 }
 
-function isTemplateMutable(template: TemplateNode): boolean {
-  return hasAttr(template.attributes, 'template', 'mutable');
-}
-
-function isFieldMutable(field: TemplateField, template?: TemplateNode): boolean {
-  return field.mutable || (template ? isTemplateMutable(template) : false);
-}
-
 function renderFieldDeclaration(field: TemplateField, typeName: string, template?: TemplateNode): string {
-  const prefix = isFieldMutable(field, template) ? '' : 'const ';
+  const mutable = field.mutable || !!template?.mutable;
+  const prefix = mutable ? '' : 'const ';
   return `${prefix}${typeName} ${field.name}`;
 }
 
@@ -757,7 +750,7 @@ function buildTypeSymbols(modules: ModuleArtifact[], templateSymbols: Map<string
         target: declaration.target,
         line: declaration.line,
         defineOnly: declaration.kind === 'alias' && declaration.attributes.some((a) => a.name === 'alias' && a.args[0] === 'define'),
-        inlineAlias: declaration.kind === 'alias' && declaration.attributes.some((a) => (a.name === 'alias' || a.name === 'package') && a.args.includes('inline')),
+        inlineAlias: declaration.kind === 'alias' && hasAttr(declaration.attributes, 'abstract'),
       });
     }
 
@@ -999,8 +992,8 @@ function buildTemplateSymbols(modules: ModuleArtifact[]): Map<string, TemplateSy
         moduleId: module.id,
         includePath: module.includePath,
         externHeader: getIncludeArg(template.attributes) ?? undefined,
-        inlineOnly: template.attributes.some((a) => a.name === 'template' && a.args.includes('inline')),
-        defineOnly: template.attributes.some((a) => a.name === 'template' && a.args.includes('define')),
+        inlineOnly: hasAttr(template.attributes, 'abstract'),
+        defineOnly: hasAttr(template.attributes, 'define'),
         ...(template.bodyRaw && template.body ? { rawBody: template.body, rawParams: template.params.map((p) => p.name) } : {})
       });
     }
@@ -1320,16 +1313,11 @@ function collectScopeFns(
 }
 
 function getFnSpecifiers(fn: FnNode): string {
-  const fnAttrs = fn.attributes.filter((a) => a.name === 'fn');
-  if (fnAttrs.length === 0) { return ''; }
-  const last = fnAttrs[fnAttrs.length - 1];
-  const valid = new Set(['static', 'extern', 'inline']);
-  for (const arg of last.args) {
-    if (!valid.has(arg)) {
-      throw new Error(`Line ${last.line}: @fn only supports static, extern, inline`);
-    }
-  }
-  return last.args.join(' ');
+  const parts: string[] = [];
+  if (hasAttr(fn.attributes, 'static')) { parts.push('static'); }
+  if (hasAttr(fn.attributes, 'extern')) { parts.push('extern'); }
+  if (hasAttr(fn.attributes, 'inline')) { parts.push('inline'); }
+  return parts.join(' ');
 }
 
 function getFnOutputTarget(fn: FnNode): OutputTarget {
@@ -1913,21 +1901,8 @@ function isDefineOnlyTypeExpression(
 }
 
 function getEnumConstMode(declaration: EnumNode): EnumConstMode {
-  const enumAttributes = declaration.attributes.filter((attribute) => attribute.name === 'enum');
-  if (enumAttributes.length === 0) {
-    return 'static';
-  }
-
-  for (const attribute of enumAttributes) {
-    if (attribute.args.length !== 1 || !['define', 'static', 'extern'].includes(attribute.args[0])) {
-      throw new Error(`Line ${attribute.line}: @enum only supports @enum(static), @enum(define), and @enum(extern)`);
-    }
-
-    if (attribute.args[0] === 'define' || attribute.args[0] === 'extern') {
-      return attribute.args[0];
-    }
-  }
-
+  if (hasAttr(declaration.attributes, 'define')) { return 'define'; }
+  if (hasAttr(declaration.attributes, 'extern')) { return 'extern'; }
   return 'static';
 }
 
