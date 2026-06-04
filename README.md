@@ -381,24 +381,35 @@ The bundled `packages/c.cgen` uses `@intrinsic` on `scope c`, so its C types and
 ```cgen
 struct point:
     field x as c.int
-    mut field y as c.int
+    mutable field y as c.int
 
     fn get_x() -> any:
         return self.x
 
-    mut fn set_x(value as c.int) -> c.void:
-        use c.expr(self->x = value)
+    mutable fn set_x(value as c.int) -> none:
+        self.x = value
 ```
 
-Inside a struct, `self` is the implicit first parameter — a const pointer to the struct type by default. Prefix a method with `mut` to get a non-const `self` pointer.
+Inside a struct, `self` is the implicit first parameter — a const pointer to the struct type by default. Prefix a method with `mutable` to get a non-const `self` pointer.
 
-Function parameters are const by default. Put `mut` before the parameter name when the generated C parameter should not be const:
+Function parameters are const by default. Put `mutable` before the parameter name when the generated C parameter should not be const:
 
 ```cgen
 fn get(value as c.int) -> c.int:
     return value
 
-fn set(mut value as c.int) -> c.void:
+fn set(mutable value as c.int) -> none:
+    use c.expr((void)value)
+```
+
+Parameters may be declared inline in the signature or as `param` lines before the executable body. Both forms produce the same function parameters:
+
+```cgen
+fn inline_form(value as c.int) -> none:
+    use c.expr((void)value)
+
+fn body_form() -> none:
+    param value as c.int
     use c.expr((void)value)
 ```
 
@@ -406,13 +417,31 @@ Function bodies support these statement forms:
 
 | DSL                    | C output         |
 |------------------------|------------------|
+| `param name -> T`      | Function parameter |
 | `let name -> T = expr` | `T name = expr;` |
+| `self.field = expr`    | `self->field = expr;` |
 | `return expr`          | `return expr;`   |
 | `use c.expr(...)`      | literal C line   |
 
 `expr` in a `let` or `return` statement may be a plain identifier, a field access (`self.field`), or a built-in template call such as `c.cast(type, val)` — it is expanded the same way as a template argument.
 
-When a struct method has `-> any` as its return type and a single `return self.field` body, the type is inferred from the field's declared type.
+`none` is the DSL spelling for no return value and generates C `void`.
+
+When a struct method has `-> any`, CGen infers the return type from a single `return self.field`. If the method has no `return`, `any` resolves to `none`.
+
+Struct methods receive a const `self` pointer by default, so assigning to `self.field` is rejected. Prefix the method with `mutable` to allow field assignment:
+
+```cgen
+struct version:
+    mutable field major -> c.int
+
+    mutable fn set_major(value as c.int) -> none:
+        self.major = value
+```
+
+This generates a `void` method with a mutable `version_t *self` parameter and a mutable field. The same body in a non-mutable `fn` is an error. Assigning to an ordinary const `field` is also an error, even from a mutable method.
+
+Use `mutable template` when every field produced by a field-template should be mutable.
 
 ### Visibility
 
@@ -560,7 +589,8 @@ typedef struct lh_point_t {
 | `param name as template` | Callable parameter — `name(args)` in the `use` body expands as a raw C call |
 | `param ... as name`      | Variadic — `name` becomes `__VA_ARGS__` in output. The `...` form without `as` is a parse error. |
 | `field name as type`     | Struct field; cannot mix with `param` or `use` in the same template |
-| `mut field name as type` | Mutable struct field |
+| `mutable field name as type` | Mutable struct field |
+| `mutable template name` | Field-template whose generated fields are mutable |
 
 ### Built-in template operations
 

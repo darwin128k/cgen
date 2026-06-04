@@ -32,7 +32,9 @@ export const contextCandidates: Readonly<Record<string, readonly string[]>> = {
     'scope name:',
   ],
   'fn.body': [
+    'param name -> type',
     'let name -> type = value',
+    'self.field = value',
     'return ',
     'use c.expr("")',
   ],
@@ -40,8 +42,10 @@ export const contextCandidates: Readonly<Record<string, readonly string[]>> = {
     'field name -> type',
     'mutable field name -> type',
     'use c.ptr(value)',
-    'fn name() -> type:',
-    'mutable fn name() -> type:',
+    'fn name() -> none:',
+    'fn name(value -> type) -> none:',
+    'mutable fn name() -> none:',
+    'mutable fn name(value -> type) -> none:',
   ],
   'template.body': [
     'name',

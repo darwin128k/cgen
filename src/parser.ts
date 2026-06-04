@@ -551,7 +551,6 @@ function parseTemplate(line: string, lineNumber: number): TemplateNode | undefin
   if (!match) {
     return undefined;
   }
-  const mutable = !!match[1];
   const params: TemplateParam[] = [];
   if (match[3]) {
     for (const part of match[3].split(',')) {
@@ -559,7 +558,7 @@ function parseTemplate(line: string, lineNumber: number): TemplateNode | undefin
       if (param) { params.push(param); }
     }
   }
-  return { kind: 'template', name: match[2], params, fields: [], body: '', bodyLine: lineNumber, bodyInline: false, bodyRaw: false, mutable, attributes: [], line: lineNumber };
+  return { kind: 'template', name: match[2], params, fields: [], body: '', bodyLine: lineNumber, bodyInline: false, bodyRaw: false, mutable: !!match[1], attributes: [], line: lineNumber };
 }
 
 function parseStruct(line: string, lineNumber: number): StructNode | undefined {

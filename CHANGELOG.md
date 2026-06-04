@@ -21,6 +21,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - `@extern` enum cases emit external declarations without generated source definitions
 - `@public` enum cases emit declarations in headers and definitions in sources
 - `@intrinsic` marks aliases and templates that resolve without direct C emission
+- `none` return type maps to C `void`; struct method `any` resolves to `none` when no value is returned
+- Function bodies support checked `self.field = value` assignment, restricted to mutable methods
+- Assignment requires both a `mutable fn` receiver and a `mutable field` or `mutable template`
+- Function parameters can be declared inline in the signature or as leading `param` lines in the body
 
 ## [0.0.78] - 2026-06-04
 
@@ -28,9 +32,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - `let name -> T = expr` statement in function bodies (`let name = expr` with inferred type also supported)
 - `scope` keyword — virtual namespace that contributes to guard/path but not to C symbol names
-- `mut field name as type` — mutable struct fields
-- `mut fn` — struct method with non-const `self` pointer
-- `mut` / `const` parameter modifiers on `fn` parameters
+- `mutable fn` — struct method with non-const `self` pointer
+- `mutable` parameter modifier on `fn` parameters
 - `struct` keyword for declaring struct types with methods
 - Struct methods with implicit `self` parameter (const pointer by default)
 - Auto-return type inference for `-> any` when the body is a single `return self.field`

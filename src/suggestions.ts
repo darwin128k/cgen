@@ -204,7 +204,7 @@ function findCurrentTemplate(textBeforeLine: string, currentIndent?: number, tex
       currentStruct.fields.push(...getStructFieldNamesFromLine(line));
     }
 
-    const templateMatch = line.match(/^template\s+([A-Za-z_][A-Za-z0-9_]*)(?:\(([^)]*)\))?\s*:\s*$/);
+    const templateMatch = line.match(/^(?:mutable\s+)?template\s+([A-Za-z_][A-Za-z0-9_]*)(?:\(([^)]*)\))?\s*:\s*$/);
     if (templateMatch) {
       const params: string[] = [];
       const callableParams: string[] = [];
@@ -531,7 +531,7 @@ function getCandidates(typed: string, contextPath: string[], currentTemplate: Cu
   }
 
   if (/^(?:mutable\s+)?fn\s+[A-Za-z_][A-Za-z0-9_]*\([^)]*\)\s*(?:as\s+|->\s*)/.test(typed)) {
-    return completeTail(typed, getTypeCandidates(typed, contextPath, index));
+    return completeTail(typed, uniqueInOrder(['none', 'any', ...getTypeCandidates(typed, contextPath, index)]));
   }
 
   if (/^(?:mutable\s+)?fn\s+[A-Za-z_][A-Za-z0-9_]*\(/.test(typed)) {

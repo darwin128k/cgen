@@ -120,6 +120,11 @@ interface LetStatement {
   expr: string;
 }
 
+interface AssignmentStatement {
+  target: string;
+  expr: string;
+}
+
 type TypeDeclaration = AliasNode | EnumNode;
 
 interface ScopedTypeDeclaration {
@@ -743,8 +748,7 @@ function hasAttr(attributes: Attribute[], name: string, arg?: string): boolean {
 }
 
 function renderFieldDeclaration(field: TemplateField, typeName: string, template?: TemplateNode): string {
-  const mutable = field.mutable || !!template?.mutable;
-  const prefix = mutable ? '' : 'const ';
+  const prefix = field.mutable || template?.mutable ? '' : 'const ';
   return `${prefix}${typeName} ${field.name}`;
 }
 
@@ -995,7 +999,7 @@ function expandStructUse(
   return template.fields.map((field) => ({
     name: field.name,
     target: paramMap.get(field.target) ?? field.target,
-    mutable: field.mutable,
+    mutable: field.mutable || template.mutable,
     attributes: field.attributes,
     line: field.line
   }));
@@ -1139,6 +1143,8 @@ function resolveModuleDependencies(
         }
       }
       for (const fn of struct.fns) {
+        validateStructMethodBody(fn, struct, paramTemplates);
+        validateFnReturnBody(fn);
         for (const p of fn.params) {
           if (p.variadic) { continue; }
           for (const symbol of getTypeExpressionSymbols(p.type, p.line, symbols, templateSymbols)) {
@@ -1158,6 +1164,7 @@ function resolveModuleDependencies(
     }
 
     for (const { fn } of collectScopeFns(module.section, [])) {
+      validateFnReturnBody(fn);
       for (const p of fn.params) {
         if (p.variadic) { continue; }
         for (const symbol of getTypeExpressionSymbols(p.type, p.line, symbols, templateSymbols)) {
@@ -1257,6 +1264,12 @@ function addFnBodyDependencies(
 
     if (/^return\s+/.test(line)) {
       addFnExpressionDependencies(module, line.slice('return '.length).trim(), fn.line, templateSymbols);
+      continue;
+    }
+
+    const assignment = parseAssignmentStatement(line);
+    if (assignment) {
+      addFnExpressionDependencies(module, assignment.expr, fn.line, templateSymbols);
       continue;
     }
 
@@ -1408,6 +1421,9 @@ function resolveFnReturnType(
   symbols: Map<string, TypeSymbol>,
   templateSymbols: Map<string, TemplateSymbol>
 ): string {
+  if (fn.returnType === 'none') {
+    return 'void';
+  }
   if (fn.returnType !== 'any') {
     return resolveTypeExpression(fn.returnType, fn.line, symbols, templateSymbols);
   }
@@ -1450,11 +1466,17 @@ function resolveStructMethodReturnType(
   symbols: Map<string, TypeSymbol>,
   templateSymbols: Map<string, TemplateSymbol>
 ): string {
+  if (fn.returnType === 'none') {
+    return 'void';
+  }
   if (fn.returnType !== 'any') {
     return resolveTypeExpression(fn.returnType, fn.line, symbols, templateSymbols);
   }
 
   const fieldName = inferReturnedSelfField(fn);
+  if (!hasReturnStatement(fn)) {
+    return 'void';
+  }
   if (!fieldName) {
     throw new Error(`Line ${fn.bodyLine || fn.line}: cannot infer any return type`);
   }
@@ -1472,6 +1494,9 @@ function inferStructMethodReturnTargets(
   struct: StructNode,
   paramTemplates: Map<string, TemplateNode>
 ): string[] {
+  if (!hasReturnStatement(fn)) {
+    return [];
+  }
   const fieldName = inferReturnedSelfField(fn);
   if (!fieldName) {
     throw new Error(`Line ${fn.bodyLine || fn.line}: cannot infer any return type`);
@@ -1486,8 +1511,38 @@ function inferStructMethodReturnTargets(
 }
 
 function inferReturnedSelfField(fn: FnNode): string | undefined {
-  if (fn.body.length !== 1) { return undefined; }
-  return fn.body[0].match(/^return\s+self\.([A-Za-z_][A-Za-z0-9_]*)$/)?.[1];
+  const returns = fn.body.filter((line) => /^return\s+/.test(line));
+  if (returns.length !== 1) { return undefined; }
+  return returns[0].match(/^return\s+self\.([A-Za-z_][A-Za-z0-9_]*)$/)?.[1];
+}
+
+function hasReturnStatement(fn: FnNode): boolean {
+  return fn.body.some((line) => /^return(?:\s+|$)/.test(line));
+}
+
+function validateStructMethodBody(fn: FnNode, struct: StructNode, paramTemplates: Map<string, TemplateNode>): void {
+  const fields = new Map(getStructFields(struct, paramTemplates).map((field) => [field.name, field]));
+  for (const line of fn.body) {
+    const assignment = parseAssignmentStatement(line);
+    if (!assignment?.target.startsWith('self.')) { continue; }
+    const fieldName = assignment.target.slice('self.'.length);
+    const field = fields.get(fieldName);
+    if (!field) {
+      throw new Error(`Line ${fn.bodyLine || fn.line}: unknown self field "${assignment.target}"`);
+    }
+    if (!fn.selfMutable) {
+      throw new Error(`Line ${fn.bodyLine || fn.line}: cannot assign to "${assignment.target}" in a const method; use mutable fn`);
+    }
+    if (!field.mutable) {
+      throw new Error(`Line ${fn.bodyLine || fn.line}: cannot assign to const field "${assignment.target}"; use mutable field or mutable template`);
+    }
+  }
+}
+
+function validateFnReturnBody(fn: FnNode): void {
+  if (fn.returnType === 'none' && hasReturnStatement(fn)) {
+    throw new Error(`Line ${fn.bodyLine || fn.line}: none function cannot return a value`);
+  }
 }
 
 function getStructFields(struct: StructNode, paramTemplates: Map<string, TemplateNode>): TemplateField[] {
@@ -1533,6 +1588,17 @@ function renderFnBodyLine(
     return `  return ${expanded};`;
   }
 
+  const assignment = parseAssignmentStatement(line);
+  if (assignment) {
+    if (assignment.target.startsWith('self.') && !methodSelfPointer) {
+      throw new Error(`Line ${fnLine}: self assignment is only supported in struct methods`);
+    }
+    const target = renderFnExpression(assignment.target, methodSelfPointer);
+    const expr = renderFnExpression(assignment.expr, methodSelfPointer);
+    const expanded = expandTemplateArgument(expr, fnLine, templateSymbols, new Set());
+    return `  ${target} = ${expanded};`;
+  }
+
   if (/^use\s+/.test(line)) {
     const expression = parseUseExpression(renderFnExpression(line, methodSelfPointer), fnLine);
     const args = expression.args.map((arg) => expandTemplateArgument(arg, fnLine, templateSymbols, new Set()));
@@ -1540,7 +1606,7 @@ function renderFnBodyLine(
     return `  ${expanded};`;
   }
 
-  throw new Error(`Line ${fnLine}: function bodies only support \`let name -> type = expr\`, \`return expr\`, and \`use c.expr(...)\``);
+  throw new Error(`Line ${fnLine}: function bodies only support declarations, assignments, returns, and use expressions`);
 }
 
 function parseLetStatement(line: string): LetStatement | undefined {
@@ -1554,6 +1620,11 @@ function parseLetStatement(line: string): LetStatement | undefined {
     type: match[2].trim(),
     expr: match[3].trim()
   };
+}
+
+function parseAssignmentStatement(line: string): AssignmentStatement | undefined {
+  const match = line.match(/^((?:self\.)?[A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.+)$/);
+  return match ? { target: match[1], expr: match[2].trim() } : undefined;
 }
 
 function parseFnExprArgument(arg: string): string {
@@ -1857,6 +1928,7 @@ function resolveTypeExpression(
   symbols: Map<string, TypeSymbol>,
   templateSymbols: Map<string, TemplateSymbol>
 ): string {
+  if (target === 'none') { return 'void'; }
   const expr = parseExprOf(target);
   if (expr !== undefined) { return expr; }
 
@@ -1888,6 +1960,7 @@ function getTypeExpressionSymbols(
   symbols: Map<string, TypeSymbol>,
   templateSymbols: Map<string, TemplateSymbol>
 ): TypeSymbol[] {
+  if (target === 'none') { return []; }
   if (parseExprOf(target) !== undefined) { return []; }
 
   const expression = parseCallExpression(target, line);
