@@ -1,4 +1,4 @@
-@abstract
+@intrinsic
 scope c:
     template type(name):
         use c.expr(name)

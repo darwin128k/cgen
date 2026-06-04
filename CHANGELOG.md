@@ -17,6 +17,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Unbound webview sessions save to `.cgen/session.cgen` without opening Save As
 - Generation and build are independent operations
+- Function visibility now uses `@public`, `@private`, and `@inline`; argument-based `@public(header|source|all)` is removed
+- `@extern` enum cases emit external declarations without generated source definitions
+- `@public` enum cases emit declarations in headers and definitions in sources
+- `@intrinsic` marks aliases and templates that resolve without direct C emission
 
 ## [0.0.78] - 2026-06-04
 
@@ -33,7 +37,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - `return expr` statement in function bodies (replaces `c.ret`)
 - `c.expr(...)` — literal C expression (replaces `c.raw`)
 - `@pub(header|source|all)` attribute for controlling function visibility/emission
-- `@enum(static|define|extern)` modes for enum case emission
+- `@static`, `@define`, and `@extern` modes for enum case emission
 - `@template(inline)` — marks a template as a compile-time helper; emitted at call sites but never as a standalone `#define`
 - `@use(inline)` in structs — copies a field-template's fields directly into the containing struct (flat embedding)
 - `@header("file.h")` syntax (double-quoted; replaces the old `@header(<file.h>)` angle-bracket form)

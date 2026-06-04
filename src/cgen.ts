@@ -94,7 +94,7 @@ interface TypeSymbol {
   target?: string;
   line: number;
   defineOnly: boolean;
-  inlineAlias: boolean;
+  intrinsicAlias: boolean;
 }
 
 interface TemplateSymbol {
@@ -103,7 +103,7 @@ interface TemplateSymbol {
   moduleId: string;
   includePath: string;
   externHeader?: string;
-  inlineOnly: boolean;
+  intrinsicOnly: boolean;
   defineOnly: boolean;
   rawBody?: string;
   rawParams?: string[];
@@ -784,7 +784,7 @@ function buildTypeSymbols(modules: ModuleArtifact[], templateSymbols: Map<string
         target: declaration.target,
         line: declaration.line,
         defineOnly: declaration.kind === 'alias' && declaration.attributes.some((a) => a.name === 'alias' && a.args[0] === 'define'),
-        inlineAlias: declaration.kind === 'alias' && hasAttr(declaration.attributes, 'abstract'),
+        intrinsicAlias: declaration.kind === 'alias' && hasAttr(declaration.attributes, 'intrinsic'),
       });
     }
 
@@ -805,7 +805,7 @@ function buildTypeSymbols(modules: ModuleArtifact[], templateSymbols: Map<string
         kind: 'template',
         line: template.line,
         defineOnly: false,
-        inlineAlias: false,
+        intrinsicAlias: false,
       });
     }
 
@@ -826,7 +826,7 @@ function buildTypeSymbols(modules: ModuleArtifact[], templateSymbols: Map<string
         kind: 'struct',
         line: struct.line,
         defineOnly: false,
-        inlineAlias: false,
+        intrinsicAlias: false,
       });
     }
   }
@@ -1026,7 +1026,7 @@ function buildTemplateSymbols(modules: ModuleArtifact[]): Map<string, TemplateSy
         moduleId: module.id,
         includePath: module.includePath,
         externHeader: getIncludeArg(template.attributes) ?? undefined,
-        inlineOnly: hasAttr(template.attributes, 'abstract'),
+        intrinsicOnly: hasAttr(template.attributes, 'intrinsic'),
         defineOnly: hasAttr(template.attributes, 'define'),
         ...(template.bodyRaw && template.body ? { rawBody: template.body, rawParams: template.params.map((p) => p.name) } : {})
       });
@@ -1226,7 +1226,7 @@ function collectUsedTemplateSymbols(
     if (!symbol) {
       throw new Error(`Line ${line}: unknown template "${expression.callee}"`);
     }
-    if (!symbol.rawBody && !symbol.inlineOnly) {
+    if (!symbol.rawBody && !symbol.intrinsicOnly) {
       result.push(symbol);
     }
   }
@@ -1347,21 +1347,40 @@ function collectScopeFns(
 }
 
 function getFnSpecifiers(fn: FnNode): string {
-  const parts: string[] = [];
-  if (hasAttr(fn.attributes, 'static')) { parts.push('static'); }
-  if (hasAttr(fn.attributes, 'extern')) { parts.push('extern'); }
-  if (hasAttr(fn.attributes, 'inline')) { parts.push('inline'); }
-  return parts.join(' ');
+  validateFnVisibility(fn);
+  if (hasAttr(fn.attributes, 'private')) { return 'static'; }
+  if (hasAttr(fn.attributes, 'inline')) { return 'static inline'; }
+  return '';
 }
 
 function getFnOutputTarget(fn: FnNode): OutputTarget {
-  const pubAttrs = fn.attributes.filter((a) => a.name === 'public');
-  if (pubAttrs.length === 0) { return fn.body.length > 0 ? 'both' : 'header'; }
-  const last = pubAttrs[pubAttrs.length - 1];
-  if (last.args.length !== 1 || !['header', 'source', 'all'].includes(last.args[0])) {
-    throw new Error(`Line ${last.line}: @public only supports @public(header), @public(source), and @public(all)`);
+  validateFnVisibility(fn);
+  if (hasAttr(fn.attributes, 'private')) { return 'source'; }
+  if (hasAttr(fn.attributes, 'inline')) { return 'header'; }
+  return fn.body.length > 0 ? 'both' : 'header';
+}
+
+function validateFnVisibility(fn: FnNode): void {
+  for (const attribute of fn.attributes.filter((candidate) => ['public', 'private', 'inline'].includes(candidate.name))) {
+    if (attribute.args.length > 0) {
+      throw new Error(`Line ${attribute.line}: @${attribute.name} does not accept arguments`);
+    }
   }
-  return last.args[0] === 'all' ? 'both' : last.args[0] as OutputTarget;
+
+  const isPrivate = hasAttr(fn.attributes, 'private');
+  const isInline = hasAttr(fn.attributes, 'inline');
+  if (hasAttr(fn.attributes, 'public') && isPrivate) {
+    throw new Error(`Line ${fn.line}: fn cannot be both @public and @private`);
+  }
+  if (isPrivate && isInline) {
+    throw new Error(`Line ${fn.line}: fn cannot be both @private and @inline`);
+  }
+  if ((isPrivate || isInline) && fn.body.length === 0) {
+    throw new Error(`Line ${fn.line}: @${isPrivate ? 'private' : 'inline'} fn requires a body`);
+  }
+  if (hasAttr(fn.attributes, 'static') || hasAttr(fn.attributes, 'extern')) {
+    throw new Error(`Line ${fn.line}: use @private or @inline instead of @static/@extern on fn`);
+  }
 }
 
 function makeFnSignature(
@@ -1588,6 +1607,9 @@ function renderHeader(
   for (const { declaration, symbolParts } of collectScopeTypeDeclarations(module.section, [])) {
     const allSymbolParts = [...module.symbolParts, ...symbolParts];
     if (declaration.kind === 'alias') {
+      if (hasAttr(declaration.attributes, 'intrinsic')) {
+        continue;
+      }
       const type = resolveTypeExpression(declaration.target, declaration.line, symbols, templateSymbols);
       const cName = makeTypedefName(allSymbolParts, declaration.name);
       const aliasKey = makeTypeKey([...module.typeParts, ...symbolParts], declaration.name);
@@ -1643,7 +1665,7 @@ function renderHeader(
 
     const typeKeyParts = [...module.typeParts, ...symbolParts];
     if (typeKeyParts[typeKeyParts.length - 1] !== template.name) { typeKeyParts.push(template.name); }
-    if (templateSymbols.get(typeKeyParts.join('.'))?.inlineOnly) { continue; }
+    if (templateSymbols.get(typeKeyParts.join('.'))?.intrinsicOnly) { continue; }
 
     const paramList = template.params.map((p) => (p.variadic ? '...' : p.name)).join(', ');
     const body = template.bodyInline
@@ -1682,7 +1704,14 @@ function renderHeader(
       const target = getFnOutputTarget(fn);
       if (target === 'source') { continue; }
       const fnCName = makeStructMethodCName(module, symbolParts, struct.name, fn.name);
-      lines.push(`${makeStructMethodSignature(fn, fnCName, symbols, templateSymbols, typedefName, struct, paramTemplates)};`);
+      const signature = makeStructMethodSignature(fn, fnCName, symbols, templateSymbols, typedefName, struct, paramTemplates);
+      if (hasAttr(fn.attributes, 'inline')) {
+        lines.push(`${signature} {`);
+        lines.push(...renderFnBody(fn, symbols, templateSymbols, true));
+        lines.push('}');
+      } else {
+        lines.push(`${signature};`);
+      }
     }
   }
 
@@ -1690,7 +1719,14 @@ function renderHeader(
     const target = getFnOutputTarget(fn);
     if (target === 'source') { continue; }
     const fnCName = makeFnCName(module, extraParts, fn.name);
-    lines.push(`${makeFnSignature(fn, fnCName, symbols, templateSymbols)};`);
+    const signature = makeFnSignature(fn, fnCName, symbols, templateSymbols);
+    if (hasAttr(fn.attributes, 'inline')) {
+      lines.push(`${signature} {`);
+      lines.push(...renderFnBody(fn, symbols, templateSymbols));
+      lines.push('}');
+    } else {
+      lines.push(`${signature};`);
+    }
   }
 
   lines.push('', `#endif // ${module.guard}`, '');
@@ -1839,7 +1875,7 @@ function resolveTypeExpression(
     throw new Error(`Line ${line}: unknown type "${target}"`);
   }
 
-  if (symbol.inlineAlias && symbol.target) {
+  if (symbol.intrinsicAlias && symbol.target) {
     return resolveTypeExpression(symbol.target, line, symbols, templateSymbols);
   }
 
@@ -1936,25 +1972,23 @@ function isDefineOnlyTypeExpression(
 
 function getEnumConstMode(declaration: EnumNode): EnumConstMode {
   if (hasAttr(declaration.attributes, 'define')) { return 'define'; }
-  if (hasAttr(declaration.attributes, 'extern')) { return 'extern'; }
+  if (hasAttr(declaration.attributes, 'extern') || hasAttr(declaration.attributes, 'public')) { return 'extern'; }
   return 'static';
 }
 
 function getEnumOutputTarget(declaration: EnumNode): OutputTarget {
-  const pubAttrs = declaration.attributes.filter((a) => a.name === 'public');
-  if (pubAttrs.length === 0) { return 'header'; }
-  const last = pubAttrs[pubAttrs.length - 1];
-  if (last.args.length !== 1 || !['header', 'source', 'all'].includes(last.args[0])) {
-    throw new Error(`Line ${last.line}: @public only supports @public(header), @public(source), and @public(all)`);
-  }
-  if (last.args[0] === 'all') {
-    const mode = getEnumConstMode(declaration);
-    if (mode === 'static' || mode === 'define') {
-      throw new Error(`Line ${last.line}: @enum(${mode}) cannot use @public(all), only @public(header)`);
+  for (const attribute of declaration.attributes.filter((candidate) => ['public', 'private', 'inline'].includes(candidate.name))) {
+    if (attribute.args.length > 0) {
+      throw new Error(`Line ${attribute.line}: @${attribute.name} does not accept arguments`);
     }
-    return 'both';
+    if (attribute.name !== 'public') {
+      throw new Error(`Line ${attribute.line}: @${attribute.name} is only supported on fn`);
+    }
   }
-  return last.args[0] as OutputTarget;
+  if (hasAttr(declaration.attributes, 'intrinsic')) {
+    throw new Error(`Line ${declaration.line}: @intrinsic is only supported on alias and template declarations`);
+  }
+  return hasAttr(declaration.attributes, 'public') ? 'both' : 'header';
 }
 
 function collectScopeTypeDeclarations(section: SectionNode, extraParts: string[]): ScopedTypeDeclaration[] {

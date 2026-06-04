@@ -318,17 +318,17 @@ case true  = 1
 
 ### Enum modes
 
-| Attribute       | Header output                        | Source output |
-|-----------------|--------------------------------------|---------------|
-| `@enum(static)` | `static const T name = value;`       | —             |
-| `@enum(define)` | `#define name ((T)value)`            | —             |
-| `@enum(extern)` | `extern const T name;`               | optional      |
+| Attribute | Header output                  | Source output |
+|-----------|--------------------------------|---------------|
+| `@static` | `static const T name = value;` | —             |
+| `@define` | `#define name ((T)value)`      | —             |
+| `@extern` | `extern const T name;`         | —             |
+| `@public` | `extern const T name;`         | definition    |
 
-Example with source emission:
+Use `@public` when CGen owns and emits the public enum constants:
 
 ```cgen
-@public(all)
-@enum(extern)
+@public
 enum bool as lh.byte:
     case false
     case true
@@ -349,6 +349,30 @@ Source:
 const lh_bool_t lh_bool_false = 0;
 const lh_bool_t lh_bool_true  = 1;
 ```
+
+Use `@extern` when external C code provides the definitions and CGen should emit declarations only:
+
+```cgen
+@extern
+enum status as c.int:
+    case ok
+    case error
+```
+
+`@intrinsic` is unrelated to linkage. It marks aliases and templates as DSL-level primitives that are resolved and expanded but not emitted directly.
+
+For an intrinsic alias, CGen substitutes the target C type instead of generating an intermediate typedef. For an intrinsic template, CGen expands its body at use sites instead of generating a standalone macro.
+
+```cgen
+@intrinsic
+scope c:
+    template type(name):
+        use c.expr(name)
+
+    alias int as c.type(int)
+```
+
+The bundled `packages/c.cgen` uses `@intrinsic` on `scope c`, so its C types and helper templates do not create unnecessary `c_*` typedefs or macros.
 
 ## Functions
 
@@ -392,13 +416,31 @@ When a struct method has `-> any` as its return type and a single `return self.f
 
 ### Visibility
 
-| Attribute       | Header (.h) | Source (.c) |
-|-----------------|-------------|-------------|
-| `@public(header)`  | declaration | —           |
-| `@public(source)`  | —           | definition  |
-| `@public(all)`     | declaration | definition  |
+| Attribute | Requirement | Header (.h) | Source (.c) |
+|-----------|-------------|-------------|-------------|
+| `@public` | any function | declaration when needed | definition when a body exists |
+| `@private` | body required | — | `static` definition |
+| `@inline` | body required | `static inline` definition | — |
 
-Default when `@public` is absent: `@public(all)` if the function has a body, `@public(header)` if it does not.
+When no visibility attribute is present, CGen uses the same automatic behaviour as `@public`: a function with a body gets a header declaration and source definition; a function without a body gets only a header declaration.
+
+Visibility attributes do not accept arguments. `@public(header|source|all)` is not supported.
+
+```cgen
+@public
+fn api() -> c.int:
+    return 1
+
+@private
+fn helper() -> c.int:
+    return 2
+
+@inline
+fn fast() -> c.int:
+    return 3
+```
+
+This generates a public `api` declaration and source definition, a source-only `static helper`, and a header-only `static inline fast`.
 
 ## Templates
 
