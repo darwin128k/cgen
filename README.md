@@ -273,7 +273,7 @@ case true  = 1
 Example with source emission:
 
 ```cgen
-@pub(all)
+@public(all)
 @enum(extern)
 enum bool as lh.byte:
     case false
@@ -340,11 +340,11 @@ When a struct method has `-> any` as its return type and a single `return self.f
 
 | Attribute       | Header (.h) | Source (.c) |
 |-----------------|-------------|-------------|
-| `@pub(header)`  | declaration | —           |
-| `@pub(source)`  | —           | definition  |
-| `@pub(all)`     | declaration | definition  |
+| `@public(header)`  | declaration | —           |
+| `@public(source)`  | —           | definition  |
+| `@public(all)`     | declaration | definition  |
 
-Default when `@pub` is absent: `@pub(all)` if the function has a body, `@pub(header)` if it does not.
+Default when `@public` is absent: `@public(all)` if the function has a body, `@public(header)` if it does not.
 
 ## Templates
 

@@ -1333,11 +1333,11 @@ function getFnSpecifiers(fn: FnNode): string {
 }
 
 function getFnOutputTarget(fn: FnNode): OutputTarget {
-  const pubAttrs = fn.attributes.filter((a) => a.name === 'pub');
+  const pubAttrs = fn.attributes.filter((a) => a.name === 'public');
   if (pubAttrs.length === 0) { return fn.body.length > 0 ? 'both' : 'header'; }
   const last = pubAttrs[pubAttrs.length - 1];
   if (last.args.length !== 1 || !['header', 'source', 'all'].includes(last.args[0])) {
-    throw new Error(`Line ${last.line}: @pub only supports @pub(header), @pub(source), and @pub(all)`);
+    throw new Error(`Line ${last.line}: @public only supports @public(header), @public(source), and @public(all)`);
   }
   return last.args[0] === 'all' ? 'both' : last.args[0] as OutputTarget;
 }
@@ -1932,16 +1932,16 @@ function getEnumConstMode(declaration: EnumNode): EnumConstMode {
 }
 
 function getEnumOutputTarget(declaration: EnumNode): OutputTarget {
-  const pubAttrs = declaration.attributes.filter((a) => a.name === 'pub');
+  const pubAttrs = declaration.attributes.filter((a) => a.name === 'public');
   if (pubAttrs.length === 0) { return 'header'; }
   const last = pubAttrs[pubAttrs.length - 1];
   if (last.args.length !== 1 || !['header', 'source', 'all'].includes(last.args[0])) {
-    throw new Error(`Line ${last.line}: @pub only supports @pub(header), @pub(source), and @pub(all)`);
+    throw new Error(`Line ${last.line}: @public only supports @public(header), @public(source), and @public(all)`);
   }
   if (last.args[0] === 'all') {
     const mode = getEnumConstMode(declaration);
     if (mode === 'static' || mode === 'define') {
-      throw new Error(`Line ${last.line}: @enum(${mode}) cannot use @pub(all), only @pub(header)`);
+      throw new Error(`Line ${last.line}: @enum(${mode}) cannot use @public(all), only @public(header)`);
     }
     return 'both';
   }

@@ -51,9 +51,9 @@ export const contextCandidates: Readonly<Record<string, readonly string[]>> = {
     'use c.ptr(value)',
   ],
   'attribute': [
-    '@pub(header)',
-    '@pub(source)',
-    '@pub(all)',
+    '@public(header)',
+    '@public(source)',
+    '@public(all)',
     '@package(inline)',
     '@include("header.h")',
     '@enum(static)',
