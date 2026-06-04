@@ -40,14 +40,54 @@ The editor saves its state (content, cursor position, scroll offset, and bound f
 
 ```json
 {
-  "build": {
+  "project": {
+    "name": "myproject",
+    "version": "0.1.0",
+    "description": "My project description"
+  },
+  "generate": {
     "include": "./include",
-    "source": "./src"
+    "source": "./src",
+    "clean": true
+  },
+  "build": {
+    "system": "cmake",
+    "action": "configure+build",
+    "dir": "./build"
   }
 }
 ```
 
-Headers are generated under `build.include`. Source files are generated under `build.source` only when a declaration asks for source emission.
+### `project`
+
+| Field         | Description              |
+|---------------|--------------------------|
+| `name`        | Project name             |
+| `version`     | Version string           |
+| `description` | Short project description |
+
+### `generate`
+
+| Field     | Description                                                                 |
+|-----------|-----------------------------------------------------------------------------|
+| `include` | Directory where generated `.h` headers are written                          |
+| `source`  | Directory where generated `.c` source files are written                     |
+| `clean`   | When `true` (default), wipes `include` and `source` before each generation |
+
+### `build` (optional)
+
+Configures an external build system to run after generation. Omit the section entirely if you only need code generation.
+
+| Field    | Values                                       | Description                              |
+|----------|----------------------------------------------|------------------------------------------|
+| `system` | `"cmake"`, `"meson"`                         | Build system to use                      |
+| `action` | `"configure"`, `"build"`, `"configure+build"` | Steps to execute                        |
+| `dir`    | path string                                  | Build directory (default: `"./build"`)   |
+
+CMake actions:
+- `"configure"` — runs `cmake -B <dir> -S .` to generate build files
+- `"build"` — runs `cmake --build <dir>` to compile
+- `"configure+build"` — runs both in sequence
 
 If `.clang-format` is present in the workspace root, all generated files are automatically formatted with `clang-format` after generation.
 

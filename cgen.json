@@ -1,6 +1,12 @@
 {
-  "build": {
+  "project": {
+    "name": "cgen",
+    "version": "0.0.36",
+    "description": "CGen VS Code extension"
+  },
+  "generate": {
     "include": "./include",
-    "source": "./src"
+    "source": "./src",
+    "clean": true
   }
 }

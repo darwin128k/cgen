@@ -2,6 +2,8 @@ import * as cp from 'child_process';
 import * as path from 'path';
 import * as util from 'util';
 import * as vscode from 'vscode';
+
+const buildOutput = vscode.window.createOutputChannel('CGen Build');
 import { hashSource, type FileIndexEntry } from './indexer';
 import {
   type SectionKind,
@@ -26,9 +28,20 @@ import { formatCgen } from './formatter';
 const execFile = util.promisify(cp.execFile);
 
 export interface CgenConfig {
-  build: {
+  project: {
+    name: string;
+    version: string;
+    description: string;
+  };
+  generate: {
     include: string;
     source: string;
+    clean: boolean;
+  };
+  build?: {
+    system: 'cmake' | 'meson';
+    action: 'configure' | 'build' | 'configure+build';
+    dir: string;
   };
 }
 
@@ -73,10 +86,12 @@ interface TypeSymbol {
   cName: string;
   moduleId: string;
   includePath: string;
+  externHeader?: string;
   kind: 'alias' | 'enum' | 'template' | 'struct';
   target?: string;
   line: number;
   defineOnly: boolean;
+  inlineAlias: boolean;
 }
 
 interface TemplateSymbol {
@@ -84,6 +99,7 @@ interface TemplateSymbol {
   macroName: string;
   moduleId: string;
   includePath: string;
+  externHeader?: string;
   inlineOnly: boolean;
   defineOnly: boolean;
   rawBody?: string;
@@ -128,15 +144,28 @@ export async function loadConfig(workspaceFolder: vscode.WorkspaceFolder): Promi
   }
 
   const config = parsed as Partial<CgenConfig>;
-  if (!config.build?.include || !config.build?.source) {
-    throw new Error('cgen.json must contain build.include and build.source');
+  if (!config.generate?.include || !config.generate?.source) {
+    throw new Error('cgen.json must contain generate.include and generate.source');
   }
 
   return {
-    build: {
-      include: config.build.include,
-      source: config.build.source
-    }
+    project: {
+      name: config.project?.name ?? '',
+      version: config.project?.version ?? '',
+      description: config.project?.description ?? '',
+    },
+    generate: {
+      include: config.generate.include,
+      source: config.generate.source,
+      clean: config.generate.clean !== false,
+    },
+    ...(config.build && {
+      build: {
+        system: config.build.system,
+        action: config.build.action,
+        dir: config.build.dir ?? './build',
+      }
+    }),
   };
 }
 
@@ -199,8 +228,13 @@ export async function generateDsl(workspaceFolder: vscode.WorkspaceFolder, exten
   const { root, modules, symbols, templateSymbols, paramTemplates, bodyTemplates, usage, perFileData } = await buildDslArtifacts(workspaceFolder, extensionUri, source);
 
   const generated: string[] = [];
-  const includeRoot = resolveWorkspacePath(workspaceFolder, config.build.include);
-  const sourceRoot = resolveWorkspacePath(workspaceFolder, config.build.source);
+  const includeRoot = resolveWorkspacePath(workspaceFolder, config.generate.include);
+  const sourceRoot = resolveWorkspacePath(workspaceFolder, config.generate.source);
+
+  if (config.generate.clean) {
+    await cleanDirectory(includeRoot);
+    await cleanDirectory(sourceRoot);
+  }
 
   for (const module of modules) {
     if (module.headerPathParts.length === 0) { continue; }
@@ -227,6 +261,12 @@ export async function generateDsl(workspaceFolder: vscode.WorkspaceFolder, exten
   }
 
   await runClangFormat(workspaceFolder, generated);
+
+  if (config.build) {
+    await generateCMakeLists(workspaceFolder, config, generated);
+    await runBuildSystem(workspaceFolder, config.build);
+  }
+
   return { files: generated, root, usage, perFileData };
 }
 
@@ -291,6 +331,94 @@ function mergeDsls(parsedList: ParsedDsl[]): ParsedDsl {
   }
 
   return { root, diagnostics };
+}
+
+async function generateCMakeLists(workspaceFolder: vscode.WorkspaceFolder, config: CgenConfig, generatedFiles: string[]): Promise<void> {
+  const wsPath = workspaceFolder.uri.fsPath;
+  const sourceFiles = generatedFiles
+    .filter((f) => f.endsWith('.c'))
+    .map((f) => path.relative(wsPath, f).replace(/\\/g, '/'))
+    .sort();
+
+  const includePath = path.relative(wsPath, resolveWorkspacePath(workspaceFolder, config.generate.include)).replace(/\\/g, '/');
+  const { name, version, description } = config.project;
+
+  const lines: string[] = [
+    'cmake_minimum_required(VERSION 3.15)',
+    `project(${name} VERSION ${version} DESCRIPTION "${description}")`,
+    '',
+  ];
+
+  if (sourceFiles.length > 0) {
+    lines.push(`add_library(${name} STATIC`);
+    for (const f of sourceFiles) {
+      lines.push(`    ${f}`);
+    }
+    lines.push(')');
+    lines.push('');
+    lines.push(`target_include_directories(${name} PUBLIC`);
+    lines.push(`    ${includePath}`);
+    lines.push(')');
+  } else {
+    lines.push(`add_library(${name} INTERFACE)`);
+    lines.push('');
+    lines.push(`target_include_directories(${name} INTERFACE`);
+    lines.push(`    ${includePath}`);
+    lines.push(')');
+  }
+
+  lines.push('');
+  const content = lines.join('\n');
+  const cmakePath = path.join(wsPath, 'CMakeLists.txt');
+  await vscode.workspace.fs.writeFile(vscode.Uri.file(cmakePath), Buffer.from(content, 'utf8'));
+}
+
+async function runBuildSystem(workspaceFolder: vscode.WorkspaceFolder, build: NonNullable<CgenConfig['build']>): Promise<void> {
+  const wsPath = workspaceFolder.uri.fsPath;
+
+  const run = async (cmd: string, args: string[], label: string): Promise<boolean> => {
+    try {
+      await execFile(cmd, args, { cwd: wsPath, maxBuffer: 10 * 1024 * 1024 });
+      return true;
+    } catch (error) {
+      const e = error as { stdout?: string; stderr?: string };
+      buildOutput.clear();
+      buildOutput.appendLine(`> ${cmd} ${args.join(' ')}`);
+      if (e.stdout) { buildOutput.append(e.stdout); }
+      if (e.stderr) { buildOutput.append(e.stderr); }
+      buildOutput.appendLine(`\n${label}: failed`);
+      buildOutput.show(false);
+      return false;
+    }
+  };
+
+  if (build.system === 'cmake') {
+    if (build.action === 'configure' || build.action === 'configure+build') {
+      const ok = await run('cmake', ['-B', build.dir, '-S', '.'], 'cmake configure');
+      if (!ok) { return; }
+    }
+    if (build.action === 'build' || build.action === 'configure+build') {
+      await run('cmake', ['--build', build.dir], 'cmake build');
+    }
+  } else if (build.system === 'meson') {
+    if (build.action === 'configure' || build.action === 'configure+build') {
+      const ok = await run('meson', ['setup', build.dir], 'meson setup');
+      if (!ok) { return; }
+    }
+    if (build.action === 'build' || build.action === 'configure+build') {
+      await run('meson', ['compile', '-C', build.dir], 'meson compile');
+    }
+  }
+}
+
+async function cleanDirectory(dirPath: string): Promise<void> {
+  const uri = vscode.Uri.file(dirPath);
+  try {
+    await vscode.workspace.fs.delete(uri, { recursive: true, useTrash: false });
+  } catch {
+    // Directory doesn't exist — nothing to clean.
+  }
+  await vscode.workspace.fs.createDirectory(uri);
 }
 
 async function runClangFormat(workspaceFolder: vscode.WorkspaceFolder, files: string[]): Promise<void> {
@@ -624,10 +752,12 @@ function buildTypeSymbols(modules: ModuleArtifact[], templateSymbols: Map<string
         cName,
         moduleId: module.id,
         includePath: module.includePath,
+        externHeader: getHeaderArg(declaration.attributes) ?? undefined,
         kind: declaration.kind,
         target: declaration.target,
         line: declaration.line,
-        defineOnly: declaration.kind === 'alias' && declaration.attributes.some((a) => a.name === 'alias' && a.args[0] === 'define')
+        defineOnly: declaration.kind === 'alias' && declaration.attributes.some((a) => a.name === 'alias' && a.args[0] === 'define'),
+        inlineAlias: declaration.kind === 'alias' && declaration.attributes.some((a) => a.name === 'alias' && a.args.includes('inline')),
       });
     }
 
@@ -647,7 +777,8 @@ function buildTypeSymbols(modules: ModuleArtifact[], templateSymbols: Map<string
         includePath: module.includePath,
         kind: 'template',
         line: template.line,
-        defineOnly: false
+        defineOnly: false,
+        inlineAlias: false,
       });
     }
 
@@ -667,7 +798,8 @@ function buildTypeSymbols(modules: ModuleArtifact[], templateSymbols: Map<string
         includePath: module.includePath,
         kind: 'struct',
         line: struct.line,
-        defineOnly: false
+        defineOnly: false,
+        inlineAlias: false,
       });
     }
   }
@@ -866,6 +998,7 @@ function buildTemplateSymbols(modules: ModuleArtifact[]): Map<string, TemplateSy
         macroName,
         moduleId: module.id,
         includePath: module.includePath,
+        externHeader: getHeaderArg(template.attributes) ?? undefined,
         inlineOnly: template.attributes.some((a) => a.name === 'template' && a.args.includes('inline')),
         defineOnly: template.attributes.some((a) => a.name === 'template' && a.args.includes('define')),
         ...(template.bodyRaw && template.body ? { rawBody: template.body, rawParams: template.params.map((p) => p.name) } : {})
@@ -886,6 +1019,12 @@ function addSymbolRef(module: ModuleArtifact, symbolKey: string): void {
   module.symbolRefs.set(symbolKey, (module.symbolRefs.get(symbolKey) ?? 0) + 1);
 }
 
+function addSymbolDep(module: ModuleArtifact, symbol: TypeSymbol | TemplateSymbol): void {
+  addDep(module, symbol.moduleId);
+  addSymbolRef(module, symbol.key);
+  if (symbol.externHeader) { module.externHeaders.add(symbol.externHeader); }
+}
+
 function resolveModuleDependencies(
   modules: ModuleArtifact[],
   symbols: Map<string, TypeSymbol>,
@@ -894,25 +1033,18 @@ function resolveModuleDependencies(
 ): void {
   for (const module of modules) {
     for (const { declaration } of collectScopeTypeDeclarations(module.section, [])) {
-      const header = getHeaderArg(declaration.attributes);
-      if (header) { module.externHeaders.add(header); }
       for (const symbol of getTypeExpressionSymbols(declaration.target, declaration.line, symbols, templateSymbols)) {
-        addDep(module, symbol.moduleId);
-        addSymbolRef(module, symbol.key);
+        addSymbolDep(module, symbol);
       }
     }
 
     for (const { template } of collectScopeTemplates(module.section, [])) {
-      const header = getHeaderArg(template.attributes);
-      if (header) { module.externHeaders.add(header); }
-
       if (template.fields.length > 0 && template.params.length > 0) {
         const paramNames = new Set(template.params.map((p) => p.name));
         for (const field of template.fields) {
           if (paramNames.has(field.target)) { continue; }
           for (const symbol of getTypeExpressionSymbols(field.target, field.line, symbols, templateSymbols)) {
-            addDep(module, symbol.moduleId);
-            addSymbolRef(module, symbol.key);
+            addSymbolDep(module, symbol);
           }
         }
         continue;
@@ -921,8 +1053,7 @@ function resolveModuleDependencies(
       if (template.fields.length > 0) {
         for (const field of template.fields) {
           for (const symbol of getTypeExpressionSymbols(field.target, field.line, symbols, templateSymbols)) {
-            addDep(module, symbol.moduleId);
-            addSymbolRef(module, symbol.key);
+            addSymbolDep(module, symbol);
           }
         }
         continue;
@@ -943,8 +1074,7 @@ function resolveModuleDependencies(
             const mappedTarget = innerParamMap.get(field.target) ?? field.target;
             if (outerParamNames.has(mappedTarget)) { continue; }
             for (const sym of getTypeExpressionSymbols(mappedTarget, field.line, symbols, templateSymbols)) {
-              addDep(module, sym.moduleId);
-              addSymbolRef(module, sym.key);
+              addSymbolDep(module, sym);
             }
           }
         }
@@ -952,24 +1082,21 @@ function resolveModuleDependencies(
       }
 
       for (const usedTemplate of getUsedTemplateSymbols(template, templateSymbols)) {
-        addDep(module, usedTemplate.moduleId);
-        addSymbolRef(module, usedTemplate.key);
+        addSymbolDep(module, usedTemplate);
       }
     }
 
     for (const { struct } of collectScopeStructs(module.section, [])) {
       for (const field of struct.fields) {
         for (const symbol of getTypeExpressionSymbols(field.target, field.line, symbols, templateSymbols)) {
-          addDep(module, symbol.moduleId);
-          addSymbolRef(module, symbol.key);
+          addSymbolDep(module, symbol);
         }
       }
       for (const use of (struct.uses ?? [])) {
         if (use.inline) {
           for (const field of expandStructUse(use.expr, struct.line, paramTemplates)) {
             for (const sym of getTypeExpressionSymbols(field.target, field.line, symbols, templateSymbols)) {
-              addDep(module, sym.moduleId);
-              addSymbolRef(module, sym.key);
+              addSymbolDep(module, sym);
             }
           }
           continue;
@@ -977,11 +1104,10 @@ function resolveModuleDependencies(
         const call = parseCallExpression(use.expr, struct.line);
         if (!call) { continue; }
         const tmpl = templateSymbols.get(call.callee);
-        if (tmpl) { addDep(module, tmpl.moduleId); addSymbolRef(module, tmpl.key); }
+        if (tmpl) { addSymbolDep(module, tmpl); }
         for (const arg of call.args) {
           for (const sym of getTypeExpressionSymbols(arg, struct.line, symbols, templateSymbols)) {
-            addDep(module, sym.moduleId);
-            addSymbolRef(module, sym.key);
+            addSymbolDep(module, sym);
           }
         }
       }
@@ -989,8 +1115,7 @@ function resolveModuleDependencies(
         for (const p of fn.params) {
           if (p.variadic) { continue; }
           for (const symbol of getTypeExpressionSymbols(p.type, p.line, symbols, templateSymbols)) {
-            addDep(module, symbol.moduleId);
-            addSymbolRef(module, symbol.key);
+            addSymbolDep(module, symbol);
           }
         }
         const returnTargets = fn.returnType === 'any'
@@ -998,8 +1123,7 @@ function resolveModuleDependencies(
           : [fn.returnType];
         for (const returnTarget of returnTargets) {
           for (const symbol of getTypeExpressionSymbols(returnTarget, fn.line, symbols, templateSymbols)) {
-            addDep(module, symbol.moduleId);
-            addSymbolRef(module, symbol.key);
+            addSymbolDep(module, symbol);
           }
         }
         addFnBodyDependencies(module, fn, symbols, templateSymbols);
@@ -1010,16 +1134,14 @@ function resolveModuleDependencies(
       for (const p of fn.params) {
         if (p.variadic) { continue; }
         for (const symbol of getTypeExpressionSymbols(p.type, p.line, symbols, templateSymbols)) {
-          addDep(module, symbol.moduleId);
-          addSymbolRef(module, symbol.key);
+          addSymbolDep(module, symbol);
         }
       }
       if (fn.returnType === 'any') {
         throw new Error(`Line ${fn.line}: any return type is only supported for struct methods`);
       }
       for (const symbol of getTypeExpressionSymbols(fn.returnType, fn.line, symbols, templateSymbols)) {
-        addDep(module, symbol.moduleId);
-        addSymbolRef(module, symbol.key);
+        addSymbolDep(module, symbol);
       }
       addFnBodyDependencies(module, fn, symbols, templateSymbols);
     }
@@ -1100,8 +1222,7 @@ function addFnBodyDependencies(
     const letStatement = parseLetStatement(line);
     if (letStatement) {
       for (const symbol of getTypeExpressionSymbols(letStatement.type, fn.line, symbols, templateSymbols)) {
-        addDep(module, symbol.moduleId);
-        addSymbolRef(module, symbol.key);
+        addSymbolDep(module, symbol);
       }
       addFnExpressionDependencies(module, letStatement.expr, fn.line, templateSymbols);
       continue;
@@ -1143,8 +1264,7 @@ function addFnUseExpressionDependencies(
   const used: TemplateSymbol[] = [];
   collectUsedTemplateSymbols(expression, line, templateSymbols, used, new Set());
   for (const symbol of used) {
-    addDep(module, symbol.moduleId);
-    addSymbolRef(module, symbol.key);
+    addSymbolDep(module, symbol);
   }
 }
 
@@ -1695,6 +1815,10 @@ function resolveTypeExpression(
   const symbol = symbols.get(target);
   if (!symbol) {
     throw new Error(`Line ${line}: unknown type "${target}"`);
+  }
+
+  if (symbol.inlineAlias && symbol.target) {
+    return resolveTypeExpression(symbol.target, line, symbols, templateSymbols);
   }
 
   return symbol.cName;
