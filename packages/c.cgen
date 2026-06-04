@@ -1,11 +1,9 @@
 @abstract
 scope c:
-    @abstract
     template type(name):
         use c.expr(name)
 
     scope ptr:
-        @abstract
         @define
         template of(type):
             use c.expr("${type} *")
@@ -77,91 +75,67 @@ scope c:
         alias uptr as c.type(uintmax_t)
 
 
-    @abstract
     template cast(type, val):
         use c.expr("((${type})${val})")
 
-    @abstract
     template call(fn, ... as args):
         use c.expr("${fn}(${args})")
 
-    @abstract
     template initializer(... as values):
         use c.expr("{ ${values} }")
 
-    @abstract
     template sel(cond, a, b):
         use c.expr("(${cond} ? ${a} : ${b})")
 
-    @abstract
     template eq(a, b):
         use c.expr("(${a} == ${b})")
 
-    @abstract
     template ne(a, b):
         use c.expr("(${a} != ${b})")
 
-    @abstract
     template lt(a, b):
         use c.expr("(${a} < ${b})")
 
-    @abstract
     template le(a, b):
         use c.expr("(${a} <= ${b})")
 
-    @abstract
     template gt(a, b):
         use c.expr("(${a} > ${b})")
 
-    @abstract
     template ge(a, b):
         use c.expr("(${a} >= ${b})")
 
     scope struct:
-        @abstract
         template of(type):
             use c.expr("struct ${type}")
 
     scope math:
-        @abstract
         template add(a, b):
             use c.expr("(${a} + ${b})")
-        @abstract
         template sub(a, b):
             use c.expr("(${a} - ${b})")
-        @abstract
         template mul(a, b):
             use c.expr("(${a} * ${b})")
-        @abstract
         template div(a, b):
             use c.expr("(${a} / ${b})")
-        @abstract
         template mod(a, b):
             use c.expr("(${a} % ${b})")
-        @abstract
         template neg(a):
             use c.expr("(-${a})")
 
         scope bit:
-            @abstract
             template and(a, b):
                 use c.expr("(${a} & ${b})")
-            @abstract
             template or(a, b):
                 use c.expr("(${a} | ${b})")
-            @abstract
             template xor(a, b):
                 use c.expr("(${a} ^ ${b})")
-            @abstract
             template not(a):
                 use c.expr("(~${a})")
-            @abstract
             template shl(a, b):
                 use c.expr("(${a} << ${b})")
-            @abstract
             template shr(a, b):
                 use c.expr("(${a} >> ${b})")
-            @abstract
             template set(a, b):
                 use c.expr("(${a} |= ${b})")
 
