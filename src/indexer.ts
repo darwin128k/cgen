@@ -65,7 +65,6 @@ interface FileCacheEntry {
 type SuggestionUsageMap = Record<string, SuggestionUsageRecord & { contextKey: string; prefix: string }>;
 
 const ANON_PREFIX = '\0anon\0';
-const ERROR_KEY = '\0anon\0error';
 
 const builtinTypes = [
   'c.bool',
@@ -205,13 +204,6 @@ export class CgenProjectIndex {
         this.deleteCacheFile(key).catch(() => undefined);
       }
     }
-  }
-
-  updateFromMergedRoot(root: SectionNode): void {
-    for (const key of [...this.fileCache.keys()]) {
-      if (key.startsWith(ANON_PREFIX)) { this.fileCache.delete(key); }
-    }
-    this.fileCache.set(ERROR_KEY, { relativePath: '', hash: '', ...extractFromRoot(root) });
   }
 
   updateSymbolUsage(usage: SymbolUsageIndex): void {

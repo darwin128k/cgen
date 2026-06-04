@@ -231,7 +231,10 @@ async function openDslEditor(context: vscode.ExtensionContext) {
     void panel.webview.postMessage({ type: 'error', diagnostics });
   };
   projectIndexPromise?.then((index) => {
-    if (index) { index.onBusyChange = postProgressMessage; }
+    if (index) {
+      index.onBusyChange = postProgressMessage;
+      index.onSourceChanged?.();
+    }
   });
   const configDisposable = vscode.workspace.onDidChangeConfiguration((event) => {
     if (event.affectsConfiguration('editor.formatOnSave') || event.affectsConfiguration('editor.formatOnPaste')) {
@@ -539,7 +542,6 @@ async function initializeProjectIndex(context: vscode.ExtensionContext): Promise
           postDiagnosticsMessage?.(parseErrorDiagnostics(msg));
           if (error instanceof DslError) {
             index.updateFromFiles(error.perFileData);
-            index.updateFromMergedRoot(error.root);
           }
         } finally {
           index.onBusyChange?.(false);
