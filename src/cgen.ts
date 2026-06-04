@@ -223,8 +223,16 @@ export async function resolveDslUsage(workspaceFolder: vscode.WorkspaceFolder, e
   return { root, usage, perFileData };
 }
 
-export async function generateDsl(workspaceFolder: vscode.WorkspaceFolder, extensionUri: vscode.Uri, source: string): Promise<{ files: string[]; root: SectionNode; usage: SymbolUsageIndex; perFileData: FileIndexEntry[] }> {
+export async function generateDsl(
+  workspaceFolder: vscode.WorkspaceFolder,
+  extensionUri: vscode.Uri,
+  source: string,
+  options: { build?: boolean } = {}
+): Promise<{ files: string[]; root: SectionNode; usage: SymbolUsageIndex; perFileData: FileIndexEntry[] }> {
   const config = await loadConfig(workspaceFolder);
+  if (options.build && !config.build) {
+    throw new Error('cgen.json must contain build settings to generate and build');
+  }
   const { root, modules, symbols, templateSymbols, paramTemplates, bodyTemplates, usage, perFileData } = await buildDslArtifacts(workspaceFolder, extensionUri, source);
 
   const generated: string[] = [];
@@ -262,12 +270,20 @@ export async function generateDsl(workspaceFolder: vscode.WorkspaceFolder, exten
 
   await runClangFormat(workspaceFolder, generated);
 
-  if (config.build) {
+  if (options.build && config.build) {
     await generateCMakeLists(workspaceFolder, config, generated);
     await runBuildSystem(workspaceFolder, config.build);
   }
 
   return { files: generated, root, usage, perFileData };
+}
+
+export async function buildProject(workspaceFolder: vscode.WorkspaceFolder): Promise<void> {
+  const config = await loadConfig(workspaceFolder);
+  if (!config.build) {
+    throw new Error('cgen.json must contain build settings to run a build');
+  }
+  await runBuildSystem(workspaceFolder, config.build);
 }
 
 async function collectAllDslSources(workspaceFolder: vscode.WorkspaceFolder, extensionUri: vscode.Uri, primarySource: string): Promise<Array<{ relativePath: string | null; source: string }>> {
@@ -376,10 +392,9 @@ async function generateCMakeLists(workspaceFolder: vscode.WorkspaceFolder, confi
 async function runBuildSystem(workspaceFolder: vscode.WorkspaceFolder, build: NonNullable<CgenConfig['build']>): Promise<void> {
   const wsPath = workspaceFolder.uri.fsPath;
 
-  const run = async (cmd: string, args: string[], label: string): Promise<boolean> => {
+  const run = async (cmd: string, args: string[], label: string): Promise<void> => {
     try {
       await execFile(cmd, args, { cwd: wsPath, maxBuffer: 10 * 1024 * 1024 });
-      return true;
     } catch (error) {
       const e = error as { stdout?: string; stderr?: string };
       buildOutput.clear();
@@ -388,22 +403,20 @@ async function runBuildSystem(workspaceFolder: vscode.WorkspaceFolder, build: No
       if (e.stderr) { buildOutput.append(e.stderr); }
       buildOutput.appendLine(`\n${label}: failed`);
       buildOutput.show(false);
-      return false;
+      throw new Error(`${label} failed. See CGen Build output for details.`);
     }
   };
 
   if (build.system === 'cmake') {
     if (build.action === 'configure' || build.action === 'configure+build') {
-      const ok = await run('cmake', ['-B', build.dir, '-S', '.'], 'cmake configure');
-      if (!ok) { return; }
+      await run('cmake', ['-B', build.dir, '-S', '.'], 'cmake configure');
     }
     if (build.action === 'build' || build.action === 'configure+build') {
       await run('cmake', ['--build', build.dir], 'cmake build');
     }
   } else if (build.system === 'meson') {
     if (build.action === 'configure' || build.action === 'configure+build') {
-      const ok = await run('meson', ['setup', build.dir], 'meson setup');
-      if (!ok) { return; }
+      await run('meson', ['setup', build.dir], 'meson setup');
     }
     if (build.action === 'build' || build.action === 'configure+build') {
       await run('meson', ['compile', '-C', build.dir], 'meson compile');

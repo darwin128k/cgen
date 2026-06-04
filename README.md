@@ -30,9 +30,9 @@ VS Code extension for a compact C generation DSL.
 
 ### DSL editor
 
-The editor toolbar shows the current file name and a breadcrumb of the cursor's position in the DSL. The footer has load, save, and generate (▶) buttons. The expand button in the toolbar toggles fullscreen mode.
+The editor toolbar shows the current file name and a breadcrumb of the cursor's position in the DSL. The footer contains file actions and run actions menus. Run actions can generate files, build the project, or generate and build in sequence. The expand button in the toolbar toggles fullscreen mode.
 
-The editor saves its state (content, cursor position, scroll offset, and bound file path) to `.cgen/session.json` in the workspace and restores it on next open. Unsaved content is also written to `.cgen/session.cgen`.
+The editor saves its state (content, cursor position, scroll offset, and bound file path) to `.cgen/session.json` in the workspace and restores it on next open. Until a file is bound, edits and `Ctrl+S` are written to `.cgen/session.cgen`; use `Ctrl+Shift+S` to save the session as a regular `.cgen` file.
 
 ## Config
 

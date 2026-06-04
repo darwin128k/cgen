@@ -23,8 +23,15 @@ const stripes = document.getElementById('stripes')!;
 const errorLines = document.getElementById('errorLines')!;
 const activeLine = document.getElementById('activeLine')!;
 const generate = document.getElementById('generate')!;
+const build = document.getElementById('build')!;
+const generateBuild = document.getElementById('generateBuild')!;
 const save = document.getElementById('save')!;
+const saveAs = document.getElementById('saveAs')!;
 const load = document.getElementById('load')!;
+const fileActions = document.getElementById('fileActions')!;
+const fileMenu = document.getElementById('fileMenu')!;
+const runActions = document.getElementById('runActions')!;
+const runMenu = document.getElementById('runMenu')!;
 const expand = document.getElementById('expand')!;
 const progressBar = document.getElementById('progressBar')!;
 const diagnosticBubble = document.getElementById('diagnosticBubble')!;
@@ -354,9 +361,10 @@ function renderStripeMarkers(): void {
   });
 }
 
-function generateNow(): void {
+function runAction(action: 'generate' | 'build' | 'generateBuild'): void {
   clearDiagnostics();
-  vscode.postMessage({ type: 'generate', text: source.value });
+  vscode.postMessage({ type: 'run', action, text: source.value });
+  closeActionMenus();
 }
 
 function applyFormattedSource(text = source.value): void {
@@ -1074,7 +1082,7 @@ source.addEventListener('keydown', (event) => {
 
   if ((event.ctrlKey || event.metaKey) && (event.key === 'Enter' || event.code === 'NumpadEnter')) {
     event.preventDefault();
-    generateNow();
+    runAction('generate');
     return;
   }
 
@@ -1167,14 +1175,77 @@ window.addEventListener('keyup', (event) => {
   }
 });
 window.addEventListener('blur', clearNavigationHover);
-generate.addEventListener('click', generateNow);
-save.addEventListener('click', () => {
+
+function closeActionMenus(): void {
+  fileMenu.hidden = true;
+  runMenu.hidden = true;
+  fileActions.setAttribute('aria-expanded', 'false');
+  runActions.setAttribute('aria-expanded', 'false');
+}
+
+function sendSave(type: 'save' | 'saveAs'): void {
   if (formatPolicy.formatOnSave) {
     applyFormattedSource();
   }
-  vscode.postMessage({ type: 'save', text: source.value });
+  vscode.postMessage({ type, text: source.value });
+  closeActionMenus();
+}
+
+fileActions.addEventListener('click', (event) => {
+  event.stopPropagation();
+  const opening = fileMenu.hidden;
+  closeActionMenus();
+  fileMenu.hidden = !opening;
+  fileActions.setAttribute('aria-expanded', String(opening));
+  if (opening) {
+    (fileMenu.querySelector('[role="menuitem"]') as HTMLButtonElement | null)?.focus();
+  }
 });
-load.addEventListener('click', () => vscode.postMessage({ type: 'load' }));
+runActions.addEventListener('click', (event) => {
+  event.stopPropagation();
+  const opening = runMenu.hidden;
+  closeActionMenus();
+  runMenu.hidden = !opening;
+  runActions.setAttribute('aria-expanded', String(opening));
+  if (opening) {
+    (runMenu.querySelector('[role="menuitem"]') as HTMLButtonElement | null)?.focus();
+  }
+});
+
+function handleMenuKeydown(event: KeyboardEvent): void {
+  if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') {
+    return;
+  }
+  event.preventDefault();
+  const menu = event.currentTarget as HTMLElement;
+  const items = Array.from(menu.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'));
+  const current = items.indexOf(document.activeElement as HTMLButtonElement);
+  const delta = event.key === 'ArrowDown' ? 1 : -1;
+  items[(current + delta + items.length) % items.length]?.focus();
+}
+
+fileMenu.addEventListener('click', (event) => event.stopPropagation());
+runMenu.addEventListener('click', (event) => event.stopPropagation());
+fileMenu.addEventListener('keydown', handleMenuKeydown);
+runMenu.addEventListener('keydown', handleMenuKeydown);
+save.addEventListener('click', () => sendSave('save'));
+saveAs.addEventListener('click', () => sendSave('saveAs'));
+generate.addEventListener('click', () => runAction('generate'));
+build.addEventListener('click', () => runAction('build'));
+generateBuild.addEventListener('click', () => runAction('generateBuild'));
+load.addEventListener('click', () => {
+  vscode.postMessage({ type: 'load' });
+  closeActionMenus();
+});
+document.addEventListener('click', closeActionMenus);
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && (!fileMenu.hidden || !runMenu.hidden)) {
+    event.preventDefault();
+    const trigger = fileMenu.hidden ? runActions : fileActions;
+    closeActionMenus();
+    trigger.focus();
+  }
+});
 const filename = document.getElementById('filename')!;
 const breadcrumb = document.getElementById('breadcrumb')!;
 window.addEventListener('message', (event: MessageEvent) => {
@@ -1194,6 +1265,15 @@ window.addEventListener('message', (event: MessageEvent) => {
       formatOnSave: !!event.data.policy?.formatOnSave,
       formatOnPaste: !!event.data.policy?.formatOnPaste
     };
+  }
+  if (event.data.type === 'requestSave' || event.data.type === 'requestSaveAs') {
+    if (formatPolicy.formatOnSave) {
+      applyFormattedSource();
+    }
+    vscode.postMessage({
+      type: event.data.type === 'requestSaveAs' ? 'saveAs' : 'save',
+      text: source.value
+    });
   }
   if (event.data.type === 'title') {
     filename.textContent = ` — ${event.data.text}`;

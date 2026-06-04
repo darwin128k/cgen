@@ -2,7 +2,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import * as childProcess from 'child_process';
 import * as vscode from 'vscode';
-import { generateDsl, resolveDslUsage, DslError } from './cgen';
+import { buildProject, generateDsl, resolveDslUsage, DslError } from './cgen';
 import { formatCgen } from './formatter';
 import { CgenProjectIndex } from './indexer';
 import { parseDsl } from './parser';
@@ -14,6 +14,7 @@ interface ParsedDiagnostic {
 }
 
 let saveEditorFn: (() => Promise<void>) | undefined;
+let saveEditorAsFn: (() => Promise<void>) | undefined;
 let projectIndexPromise: Promise<CgenProjectIndex | undefined> | undefined;
 let postProgressMessage: ((active: boolean) => void) | undefined;
 let postDiagnosticsMessage: ((diagnostics: ParsedDiagnostic[]) => void) | undefined;
@@ -53,6 +54,7 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.commands.registerCommand('cgen.openDslEditor', () => openDslEditor(context)),
     vscode.commands.registerCommand('cgen.saveEditor', () => saveEditorFn?.()),
+    vscode.commands.registerCommand('cgen.saveEditorAs', () => saveEditorAsFn?.()),
     vscode.commands.registerCommand('cgen.openScratchFile', openScratchFile),
     vscode.commands.registerCommand('cgen.generateFromFile', () => generateFromCurrentFile(context)),
     vscode.commands.registerCommand('cgen.internalSuggestionAccepted', async (contextKey: string, prefix: string, label: string, kind: string) => {
@@ -195,43 +197,49 @@ async function openDslEditor(context: vscode.ExtensionContext) {
     return currentFilePath ? vscode.Uri.file(currentFilePath) : undefined;
   }
 
+  async function writeContentTo(targetUri: vscode.Uri) {
+    if (getFormatPolicy(targetUri).formatOnSave) {
+      currentContent = formatCgen(currentContent);
+      await panel.webview.postMessage({ type: 'format', text: currentContent });
+    }
+    await vscode.workspace.fs.writeFile(targetUri, Buffer.from(currentContent, 'utf8'));
+  }
+
   async function saveToFile() {
     postProgressMessage?.(true);
     try {
-      let targetUri = currentFileUri();
-      if (currentFilePath) {
-        targetUri = vscode.Uri.file(currentFilePath);
-      } else {
-        const uri = await vscode.window.showSaveDialog({
-          filters: { 'CGen DSL': ['cgen'] },
-          defaultUri: vscode.Uri.joinPath(workspaceFolder!.uri, 'main.cgen')
-        });
-        if (uri) {
-          currentFilePath = uri.fsPath;
-          targetUri = uri;
-          const name = path.basename(uri.fsPath);
-          panel.title = `CGen — ${name}`;
-          await panel.webview.postMessage({ type: 'title', text: name });
-          await postFormatPolicy();
-          await saveSession(0, 0);
-        }
-      }
+      await vscode.workspace.fs.createDirectory(vscode.Uri.joinPath(workspaceFolder!.uri, '.cgen'));
+      await writeContentTo(currentFileUri() ?? scratchUri);
+    } finally {
+      postProgressMessage?.(false);
+    }
+  }
 
-      if (!targetUri) {
-        return;
-      }
+  async function saveToFileAs() {
+    const uri = await vscode.window.showSaveDialog({
+      filters: { 'CGen DSL': ['cgen'] },
+      defaultUri: currentFileUri() ?? vscode.Uri.joinPath(workspaceFolder!.uri, 'main.cgen')
+    });
+    if (!uri) {
+      return;
+    }
 
-      if (getFormatPolicy(targetUri).formatOnSave) {
-        currentContent = formatCgen(currentContent);
-        await panel.webview.postMessage({ type: 'format', text: currentContent });
-      }
-      await vscode.workspace.fs.writeFile(targetUri, Buffer.from(currentContent, 'utf8'));
+    postProgressMessage?.(true);
+    try {
+      currentFilePath = uri.fsPath;
+      const name = path.basename(uri.fsPath);
+      panel.title = `CGen — ${name}`;
+      await panel.webview.postMessage({ type: 'title', text: name });
+      await postFormatPolicy();
+      await saveSession(0, 0);
+      await writeContentTo(uri);
     } finally {
       postProgressMessage?.(false);
     }
   }
 
   async function saveSession(cursor: number, scrollTop: number) {
+    await vscode.workspace.fs.createDirectory(vscode.Uri.joinPath(workspaceFolder!.uri, '.cgen'));
     await vscode.workspace.fs.writeFile(stateUri, Buffer.from(JSON.stringify({
       cursor,
       scrollTop,
@@ -239,7 +247,8 @@ async function openDslEditor(context: vscode.ExtensionContext) {
     }), 'utf8'));
   }
 
-  saveEditorFn = saveToFile;
+  saveEditorFn = async () => { await panel.webview.postMessage({ type: 'requestSave' }); };
+  saveEditorAsFn = async () => { await panel.webview.postMessage({ type: 'requestSaveAs' }); };
   postProgressMessage = (active) => {
     void panel.webview.postMessage({ type: 'progress', active });
   };
@@ -259,6 +268,7 @@ async function openDslEditor(context: vscode.ExtensionContext) {
   });
   panel.onDidDispose(() => {
     saveEditorFn = undefined;
+    saveEditorAsFn = undefined;
     postProgressMessage = undefined;
     postDiagnosticsMessage = undefined;
     projectIndexPromise?.then((index) => {
@@ -324,6 +334,12 @@ async function openDslEditor(context: vscode.ExtensionContext) {
       return;
     }
 
+    if (message.type === 'saveAs') {
+      if (typeof message.text === 'string') { currentContent = message.text; }
+      await saveToFileAs();
+      return;
+    }
+
     if (message.type === 'load') {
       postProgressMessage?.(true);
       try {
@@ -348,22 +364,45 @@ async function openDslEditor(context: vscode.ExtensionContext) {
       return;
     }
 
-if (message.type !== 'generate' || typeof message.text !== 'string') {
+    if (
+      message.type !== 'run'
+      || !['generate', 'build', 'generateBuild'].includes(message.action ?? '')
+      || typeof message.text !== 'string'
+    ) {
       return;
     }
 
+    postProgressMessage?.(true);
     try {
       currentContent = message.text;
-      const { files, perFileData, usage } = await generateDsl(workspaceFolder, context.extensionUri, message.text);
+      if (message.action === 'build') {
+        await buildProject(workspaceFolder);
+        vscode.window.showInformationMessage('CGen build completed.');
+        return;
+      }
+
+      const shouldBuild = message.action === 'generateBuild';
+      const { files, perFileData, usage } = await generateDsl(
+        workspaceFolder,
+        context.extensionUri,
+        message.text,
+        { build: shouldBuild }
+      );
       const projectIndex = await getProjectIndex(context, workspaceFolder);
       projectIndex?.updateFromFiles(perFileData);
       projectIndex?.updateSymbolUsage(usage);
       await panel.webview.postMessage({ type: 'error', diagnostics: [], jump: true });
-      vscode.window.showInformationMessage(`CGen generated ${files.length} file(s).`);
+      vscode.window.showInformationMessage(
+        shouldBuild
+          ? `CGen generated ${files.length} file(s) and completed the build.`
+          : `CGen generated ${files.length} file(s).`
+      );
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       await panel.webview.postMessage({ type: 'error', diagnostics: parseErrorDiagnostics(msg), jump: true });
       vscode.window.showErrorMessage(msg);
+    } finally {
+      postProgressMessage?.(false);
     }
   });
 }
@@ -641,15 +680,43 @@ function getWebviewHtml(
       <textarea id="source" wrap="off" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="off">${escapeHtml(value)}</textarea>
     </div>
     <div class="footer">
-      <button id="load" class="icon-btn" type="button" title="Load from file" aria-label="Load from file">
+      <button id="fileActions" class="icon-btn" type="button" title="File actions" aria-label="File actions" aria-haspopup="menu" aria-expanded="false">
         <i class="codicon codicon-folder-opened" aria-hidden="true"></i>
       </button>
-      <button id="save" class="icon-btn" type="button" title="Save to file" aria-label="Save to file">
-        <i class="codicon codicon-save" aria-hidden="true"></i>
+      <div id="fileMenu" class="action-menu" role="menu" hidden>
+        <button id="load" class="action-menu-item" type="button" role="menuitem">
+          <i class="codicon codicon-folder-opened" aria-hidden="true"></i>
+          <span>Open</span>
+        </button>
+        <button id="save" class="action-menu-item" type="button" role="menuitem">
+          <i class="codicon codicon-save" aria-hidden="true"></i>
+          <span>Save</span>
+          <kbd>Ctrl+S</kbd>
+        </button>
+        <button id="saveAs" class="action-menu-item" type="button" role="menuitem">
+          <i class="codicon codicon-save-as" aria-hidden="true"></i>
+          <span>Save As</span>
+          <kbd>Ctrl+Shift+S</kbd>
+        </button>
+      </div>
+      <button id="runActions" class="icon-btn" type="button" title="Run actions" aria-label="Run actions" aria-haspopup="menu" aria-expanded="false">
+        <i class="codicon codicon-play" aria-hidden="true"></i>
       </button>
-      <button id="generate" class="icon-btn generate-btn" type="button" title="Generate C files (Ctrl+Enter)" aria-label="Generate C files">
-        <span aria-hidden="true">▶</span>
-      </button>
+      <div id="runMenu" class="action-menu run-menu" role="menu" hidden>
+        <button id="generate" class="action-menu-item" type="button" role="menuitem">
+          <i class="codicon codicon-symbol-file" aria-hidden="true"></i>
+          <span>Generate</span>
+          <kbd>Ctrl+Enter</kbd>
+        </button>
+        <button id="build" class="action-menu-item" type="button" role="menuitem">
+          <i class="codicon codicon-tools" aria-hidden="true"></i>
+          <span>Build</span>
+        </button>
+        <button id="generateBuild" class="action-menu-item" type="button" role="menuitem">
+          <i class="codicon codicon-run-all" aria-hidden="true"></i>
+          <span>Generate &amp; Build</span>
+        </button>
+      </div>
     </div>
   </main>
   <script nonce="${nonce}">

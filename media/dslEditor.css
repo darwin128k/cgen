@@ -14,7 +14,12 @@
 }
 
 .codicon-save::before { content: "\eb4b"; }
+.codicon-save-as::before { content: "\eb4d"; }
 .codicon-folder-opened::before { content: "\eaf7"; }
+.codicon-play::before { content: "\eb2c"; }
+.codicon-symbol-file::before { content: "\eb60"; }
+.codicon-tools::before { content: "\eb6d"; }
+.codicon-run-all::before { content: "\eb9e"; }
 .codicon-error::before { content: "\ea87"; }
 .codicon-close::before { content: "\ea76"; }
 .codicon-symbol-function::before { content: "\eb63"; }
@@ -164,18 +169,8 @@ button:hover {
   background: var(--vscode-toolbar-hoverBackground);
 }
 
-.generate-btn {
-  margin-left: auto;
-  border: 1px solid var(--vscode-button-border, transparent);
-  color: var(--vscode-button-foreground);
-  background: var(--vscode-button-background);
-}
-
-.generate-btn:hover {
-  background: var(--vscode-button-hoverBackground);
-}
-
 .footer {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 4px;
@@ -183,6 +178,67 @@ button:hover {
   padding: 4px 8px 4px 8px;
   border-top: 1px solid var(--vscode-panel-border);
   background: var(--vscode-sideBar-background);
+}
+
+.action-menu {
+  position: absolute;
+  bottom: 31px;
+  left: 8px;
+  z-index: 30;
+  box-sizing: border-box;
+  min-width: 220px;
+  padding: 4px;
+  border: 1px solid var(--vscode-menu-border, var(--vscode-editorWidget-border, var(--vscode-panel-border)));
+  border-radius: 6px;
+  color: var(--vscode-menu-foreground, var(--vscode-editor-foreground));
+  background: var(--vscode-menu-background, var(--vscode-editorWidget-background, var(--vscode-editor-background)));
+  box-shadow: 0 4px 16px rgb(0 0 0 / 35%);
+}
+
+.action-menu[hidden] {
+  display: none;
+}
+
+.action-menu-item {
+  display: grid;
+  grid-template-columns: 20px 1fr auto;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  height: 26px;
+  padding: 0 7px;
+  border: none;
+  border-radius: 3px;
+  color: inherit;
+  background: transparent;
+  text-align: left;
+}
+
+.action-menu-item:hover,
+.action-menu-item:focus-visible {
+  outline: none;
+  color: var(--vscode-menu-selectionForeground, var(--vscode-list-activeSelectionForeground));
+  background: var(--vscode-menu-selectionBackground, var(--vscode-list-activeSelectionBackground));
+}
+
+.action-menu-item .codicon {
+  justify-self: center;
+}
+
+.action-menu-item kbd {
+  color: var(--vscode-menu-foreground, var(--vscode-editor-foreground));
+  font: inherit;
+  font-size: 11px;
+  opacity: 0.6;
+}
+
+.action-menu-item:hover kbd,
+.action-menu-item:focus-visible kbd {
+  color: inherit;
+}
+
+.run-menu {
+  left: 36px;
 }
 
 .title {
