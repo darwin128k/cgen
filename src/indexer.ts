@@ -1,6 +1,8 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
-import initSqlJs, { Database, SqlJsStatic } from 'sql.js';
+import type { Database, SqlJsStatic } from 'sql.js';
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const initSqlJs: (config?: object) => Promise<SqlJsStatic> = require(require('path').join(__dirname, 'sqljs', 'sql-wasm.js'));
 import { makePublicPath, type SectionKind, type SectionNode } from './parser';
 import type { SymbolUsageIndex } from './cgen';
 
@@ -76,7 +78,7 @@ export class CgenProjectIndex {
 
   static async create(context: vscode.ExtensionContext, workspaceFolder: vscode.WorkspaceFolder): Promise<CgenProjectIndex> {
     const sql = await initSqlJs({
-      locateFile: (file) => path.join(context.extensionPath, 'out', 'sqljs', file)
+      locateFile: (file: string) => path.join(__dirname, 'sqljs', file)
     });
     const index = new CgenProjectIndex(sql, context, workspaceFolder);
     await index.initialize();
