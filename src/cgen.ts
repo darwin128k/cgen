@@ -757,7 +757,7 @@ function buildTypeSymbols(modules: ModuleArtifact[], templateSymbols: Map<string
         target: declaration.target,
         line: declaration.line,
         defineOnly: declaration.kind === 'alias' && declaration.attributes.some((a) => a.name === 'alias' && a.args[0] === 'define'),
-        inlineAlias: declaration.kind === 'alias' && declaration.attributes.some((a) => a.name === 'alias' && a.args.includes('inline')),
+        inlineAlias: declaration.kind === 'alias' && declaration.attributes.some((a) => (a.name === 'alias' || a.name === 'package') && a.args.includes('inline')),
       });
     }
 

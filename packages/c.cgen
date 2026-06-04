@@ -1,4 +1,4 @@
-@alias(inline)
+@package(inline)
 scope c:
     @template(inline)
     template type(name):
