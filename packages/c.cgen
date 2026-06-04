@@ -1,11 +1,13 @@
 @intrinsic
 scope c:
-    template type(name):
+    template type:
+        param name
         use c.expr(name)
 
     scope ptr:
         @define
-        template of(type):
+        template of:
+            param type
             use c.expr("${type} *")
 
     alias char as c.type(char)
@@ -75,86 +77,141 @@ scope c:
         alias uptr as c.type(uintmax_t)
 
 
-    template cast(type, val):
+    template cast:
+        param type
+        param val
         use c.expr("((${type})${val})")
 
-    template call(fn, ... as args):
+    template call:
+        param fn
+        param ... as args
         use c.expr("${fn}(${args})")
 
-    template initializer(... as values):
+    template initializer:
+        param ... as values
         use c.expr("{ ${values} }")
 
-    template sel(cond, a, b):
+    template sel:
+        param cond
+        param a
+        param b
         use c.expr("(${cond} ? ${a} : ${b})")
 
-    template eq(a, b):
+    template eq:
+        param a
+        param b
         use c.expr("(${a} == ${b})")
 
-    template ne(a, b):
+    template ne:
+        param a
+        param b
         use c.expr("(${a} != ${b})")
 
-    template lt(a, b):
+    template lt:
+        param a
+        param b
         use c.expr("(${a} < ${b})")
 
-    template le(a, b):
+    template le:
+        param a
+        param b
         use c.expr("(${a} <= ${b})")
 
-    template gt(a, b):
+    template gt:
+        param a
+        param b
         use c.expr("(${a} > ${b})")
 
-    template ge(a, b):
+    template ge:
+        param a
+        param b
         use c.expr("(${a} >= ${b})")
 
     scope struct:
-        template of(type):
+        template of:
+            param type
             use c.expr("struct ${type}")
 
     scope math:
-        template add(a, b):
+        template add:
+            param a
+            param b
             use c.expr("(${a} + ${b})")
-        template sub(a, b):
+        template sub:
+            param a
+            param b
             use c.expr("(${a} - ${b})")
-        template mul(a, b):
+        template mul:
+            param a
+            param b
             use c.expr("(${a} * ${b})")
-        template div(a, b):
+        template div:
+            param a
+            param b
             use c.expr("(${a} / ${b})")
-        template mod(a, b):
+        template mod:
+            param a
+            param b
             use c.expr("(${a} % ${b})")
-        template neg(a):
+        template neg:
+            param a
             use c.expr("(-${a})")
 
         scope bit:
-            template and(a, b):
+            template and:
+                param a
+                param b
                 use c.expr("(${a} & ${b})")
-            template or(a, b):
+            template or:
+                param a
+                param b
                 use c.expr("(${a} | ${b})")
-            template xor(a, b):
+            template xor:
+                param a
+                param b
                 use c.expr("(${a} ^ ${b})")
-            template not(a):
+            template not:
+                param a
                 use c.expr("(~${a})")
-            template shl(a, b):
+            template shl:
+                param a
+                param b
                 use c.expr("(${a} << ${b})")
-            template shr(a, b):
+            template shr:
+                param a
+                param b
                 use c.expr("(${a} >> ${b})")
-            template set(a, b):
+            template set:
+                param a
+                param b
                 use c.expr("(${a} |= ${b})")
 
     @include("stdlib.h")
-    template malloc(size):
+    template malloc:
+        param size
         use c.expr("malloc(${size})")
 
     @include("stdlib.h")
-    template calloc(count, size):
+    template calloc:
+        param count
+        param size
         use c.expr("calloc(${count}, ${size})")
 
     @include("stdlib.h")
-    template free(ptr):
+    template free:
+        param ptr
         use c.expr("free(${ptr})")
 
     @include("string.h")
-    template memcpy(dest, src, size):
+    template memcpy:
+        param dest
+        param src
+        param size
         use c.expr("memcpy(${dest}, ${src}, ${size})")
 
     @include("string.h")
-    template memset(dest, value, size):
+    template memset:
+        param dest
+        param value
+        param size
         use c.expr("memset(${dest}, ${value}, ${size})")

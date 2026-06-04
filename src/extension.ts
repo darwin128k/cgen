@@ -89,7 +89,7 @@ export function activate(context: vscode.ExtensionContext) {
 
           return result.candidates.map((label, i) => {
             const item = new vscode.CompletionItem(label, kindToVscodeKind(result.candidateKinds[i]));
-            item.insertText = label;
+            item.insertText = makeCompletionInsertText(label);
             item.range = range;
             item.command = {
               command: 'cgen.internalSuggestionAccepted',
@@ -103,6 +103,19 @@ export function activate(context: vscode.ExtensionContext) {
       '.', '@', '('
     )
   );
+}
+
+function makeCompletionInsertText(label: string): string | vscode.SnippetString {
+  if (!label.trimStart().startsWith('@doc("')) {
+    return label;
+  }
+
+  const snippet = new vscode.SnippetString();
+  const placeholder = label.indexOf('...');
+  snippet.appendText(label.slice(0, placeholder));
+  snippet.appendPlaceholder('...');
+  snippet.appendText(label.slice(placeholder + 3));
+  return snippet;
 }
 
 export function deactivate() {

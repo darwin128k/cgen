@@ -194,38 +194,32 @@ function findCurrentTemplate(textBeforeLine: string, currentIndent?: number, tex
       continue;
     }
 
-    const fnParams = parseInlineFnParamNames(line);
-    if (fnParams) {
-      currentFn = { indent, params: fnParams };
+    if (/^(?:mutable\s+)?fn\s+[A-Za-z_][A-Za-z0-9_]*\s*->\s*.+:\s*$/.test(line)) {
+      currentFn = { indent, params: [] };
       continue;
+    }
+
+    if (currentFn) {
+      const paramName = line.match(/^(?:mutable\s+)?param\s+([A-Za-z_][A-Za-z0-9_]*)\s+(?:as|->)\s+/)?.[1]
+        ?? line.match(/^(?:mutable\s+)?param\s+\.\.\.\s+(?:as|->)\s+([A-Za-z_][A-Za-z0-9_]*)$/)?.[1];
+      if (paramName) {
+        currentFn.params.push(paramName);
+        continue;
+      }
     }
 
     if (currentStruct) {
       currentStruct.fields.push(...getStructFieldNamesFromLine(line));
     }
 
-    const templateMatch = line.match(/^(?:mutable\s+)?template\s+([A-Za-z_][A-Za-z0-9_]*)(?:\(([^)]*)\))?\s*:\s*$/);
+    const templateMatch = line.match(/^(?:mutable\s+)?template\s+([A-Za-z_][A-Za-z0-9_]*)\s*:\s*$/);
     if (templateMatch) {
-      const params: string[] = [];
-      const callableParams: string[] = [];
-      if (templateMatch[2]) {
-        for (const part of templateMatch[2].split(',')) {
-          const trimmed = part.trim();
-          const variadicM = trimmed.match(/^(?:param\s+)?\.\.\.(?:\s+as\s+|\s+->\s*)([A-Za-z_][A-Za-z0-9_]*)$/);
-          const normalM = trimmed.match(/^(?:param\s+)?([A-Za-z_][A-Za-z0-9_]*)(?:(?:\s+as\s+|\s+->\s*)(\S+))?$/);
-          const paramName = variadicM?.[1] ?? normalM?.[1];
-          if (paramName) {
-            params.push(paramName);
-            if (normalM?.[2] === 'template') { callableParams.push(paramName); }
-          }
-        }
-      }
       currentTemplate = {
         indent,
         name: templateMatch[1],
         path: [...sectionStack[sectionStack.length - 1].path, templateMatch[1]],
-        params,
-        callableParams
+        params: [],
+        callableParams: []
       };
       continue;
     }
@@ -290,23 +284,6 @@ function collectTrailingStructFields(textFromLine: string, structIndent: number)
   }
 
   return fields;
-}
-
-function parseInlineFnParamNames(line: string): string[] | undefined {
-  const match = line.match(/^(?:mutable\s+)?fn\s+[A-Za-z_][A-Za-z0-9_]*\(([^)]*)\)\s*(?:(?:as\s+|->\s*).+)?\s*[:;]\s*$/);
-  if (!match) {
-    return undefined;
-  }
-
-  return match[1]
-    .split(',')
-    .map((part) => {
-      const trimmed = part.trim();
-      const variadic = trimmed.match(/^(?:param\s+)?\.\.\.(?:\s+as\s+|\s+->\s*)([A-Za-z_][A-Za-z0-9_]*)$/);
-      const normal = trimmed.match(/^(?:mutable\s+)?(?:param\s+)?([A-Za-z_][A-Za-z0-9_]*)(?:\s+as\s+|\s+->\s*)/);
-      return variadic?.[1] ?? normal?.[1] ?? '';
-    })
-    .filter(Boolean);
 }
 
 function getStructFieldNamesFromLine(line: string): string[] {
@@ -462,8 +439,6 @@ function getSuggestionContextKey(
   if (/^use\s+/.test(typed)) return isUseArgumentPosition(typed) ? 'use.argument' : 'use.template';
   if (/^return\s+/.test(typed)) return 'return.expression';
   if (/^(package|module|scope|group)\s+/.test(typed)) return 'section.name';
-  if (/^template\s+[A-Za-z_][A-Za-z0-9_]*\(/.test(typed)) return 'template.param';
-  if (/^(?:mutable\s+)?fn\s+[A-Za-z_][A-Za-z0-9_]*\(/.test(typed)) return 'fn.param';
   if (currentTemplate.insideFn) return 'fn.body';
   if (currentTemplate.insideStruct) return 'struct.body';
   if (currentTemplate.insideTemplate) return 'template.body';
@@ -526,18 +501,6 @@ function getCandidates(typed: string, contextPath: string[], currentTemplate: Cu
     return ['case name'];
   }
 
-  if (/^template\s+[A-Za-z_][A-Za-z0-9_]*\(/.test(typed)) {
-    return getInlineParamCandidates(typed);
-  }
-
-  if (/^(?:mutable\s+)?fn\s+[A-Za-z_][A-Za-z0-9_]*\([^)]*\)\s*(?:as\s+|->\s*)/.test(typed)) {
-    return completeTail(typed, uniqueInOrder(['none', 'any', ...getTypeCandidates(typed, contextPath, index)]));
-  }
-
-  if (/^(?:mutable\s+)?fn\s+[A-Za-z_][A-Za-z0-9_]*\(/.test(typed)) {
-    return getInlineFnParamCandidates(typed, contextPath, index);
-  }
-
   if (/^struct\b/.test(typed)) {
     return getDeclarationSnippetsForContext(contextPath, currentTemplate, index);
   }
@@ -570,53 +533,6 @@ function getContextSnippets(contextPath: string[], currentTemplate: CurrentTempl
 
 function getDeclarationSnippetsForContext(contextPath: string[], currentTemplate: CurrentTemplate, index: DslIndex): string[] {
   return getContextSnippets(contextPath, currentTemplate, index);
-}
-
-function getInlineParamCandidates(typed: string): string[] {
-  const separatorIdx = Math.max(typed.lastIndexOf('('), typed.lastIndexOf(','));
-  const currentFragment = typed.slice(separatorIdx + 1).trimStart();
-  const head = typed.slice(0, typed.length - currentFragment.length);
-
-  const asMatch = currentFragment.match(/^(?:param\s+)?\S+(?:\s+as\s+|\s+->\s*)(\S*)$/);
-  if (asMatch) {
-    const typeFragment = asMatch[1];
-    const typeHead = typed.slice(0, typed.length - typeFragment.length);
-    return ['any', 'template']
-      .filter((t) => t.startsWith(typeFragment))
-      .map((t) => `${typeHead}${t}`);
-  }
-
-  return [
-    '... -> values',
-    'name -> template',
-    'name -> any',
-    'name'
-  ]
-    .filter((s) => s.startsWith(currentFragment))
-    .map((s) => `${head}${s}`);
-}
-
-function getInlineFnParamCandidates(typed: string, contextPath: string[], index: DslIndex): string[] {
-  const separatorIdx = Math.max(typed.lastIndexOf('('), typed.lastIndexOf(','));
-  const currentFragment = typed.slice(separatorIdx + 1).trimStart();
-  const head = typed.slice(0, typed.length - currentFragment.length);
-
-  const asMatch = currentFragment.match(/^(?:mutable\s+)?(?:param\s+)?\S+(?:\s+as\s+|\s+->\s*)(\S*)$/);
-  if (asMatch) {
-    const typeFragment = asMatch[1];
-    const typeHead = typed.slice(0, typed.length - typeFragment.length);
-    return getDottedCandidates(typeFragment, contextPath, index, getTypeCandidatePool(contextPath, index))
-      .filter((candidate) => candidate.startsWith(typeFragment))
-      .map((candidate) => `${typeHead}${candidate}`);
-  }
-
-  return [
-    'name -> type',
-    'mutable name -> type',
-    '... -> values'
-  ]
-    .filter((s) => s.startsWith(currentFragment))
-    .map((s) => `${head}${s}`);
 }
 
 function getTypeCandidatePool(contextPath: string[], index: DslIndex): string[] {

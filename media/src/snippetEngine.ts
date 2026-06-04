@@ -29,10 +29,12 @@ export class SnippetEngine {
   }
 
   tabStopRegex(global?: boolean): RegExp {
-    const words = this.tabStopWords.length > 0
-      ? this.tabStopWords.map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')
-      : 'NAME|name|type|value|values';
-    return new RegExp(`\\b(${words})\\b`, global ? 'g' : '');
+    const flags = global ? 'g' : '';
+    if (this.tabStopWords.length > 0) {
+      const words = this.tabStopWords.map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
+      return new RegExp(`\\b(${words})\\b`, flags);
+    }
+    return new RegExp('(?:\\b(NAME|name|type|value|values)\\b|\\.\\.\\.)', flags);
   }
 
   extractTabStopWords(text: string): string[] {

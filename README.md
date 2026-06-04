@@ -254,7 +254,8 @@ scope c:
     alias size as c.type(size_t)
 
     @include("stdlib.h")
-    template malloc(size):
+    template malloc:
+        param size
         use c.expr(malloc(${size}))
 ```
 
@@ -366,13 +367,46 @@ For an intrinsic alias, CGen substitutes the target C type instead of generating
 ```cgen
 @intrinsic
 scope c:
-    template type(name):
+    template type:
+        param name
         use c.expr(name)
 
     alias int as c.type(int)
 ```
 
 The bundled `packages/c.cgen` uses `@intrinsic` on `scope c`, so its C types and helper templates do not create unnecessary `c_*` typedefs or macros.
+
+### `@doc("text")`
+
+Attaches documentation to the next declaration and emits it as a Doxygen comment in generated C headers:
+
+```cgen
+@doc("Current application version.")
+struct version:
+    @doc("Major version component.")
+    field major -> c.uint
+
+    @doc("Updates the major version.")
+    mutable fn set_major -> none:
+        @doc("New major version.")
+        param value as c.uint
+        self.major = value
+```
+
+`@doc` applies only to the declaration immediately following it and is not inherited by nested declarations. Commas, parentheses, escaped quotes, and `\n` line breaks are supported inside the quoted text.
+
+For functions, CGen automatically adds missing Doxygen tags for every parameter and for non-`none` return values. Struct methods also receive a `@param self` tag. Missing tags are emitted without invented descriptions, while tags already written explicitly inside `@doc` are not duplicated. The `@doc("...")` completion selects `...` so its text can be entered immediately.
+
+```cgen
+@doc("Finds an item.")
+fn find -> c.ptr.of(c.void):
+    @doc("Item identifier.")
+    param id as c.uint
+    @doc("Found item.")
+    return c.null
+```
+
+Documentation attached to a parameter becomes its Doxygen `@param` description. Documentation attached to a `return` statement becomes the function's `@return` description.
 
 ## Functions
 
@@ -383,10 +417,11 @@ struct point:
     field x as c.int
     mutable field y as c.int
 
-    fn get_x() -> any:
+    fn get_x -> any:
         return self.x
 
-    mutable fn set_x(value as c.int) -> none:
+    mutable fn set_x -> none:
+        param value as c.int
         self.x = value
 ```
 
@@ -395,20 +430,20 @@ Inside a struct, `self` is the implicit first parameter — a const pointer to t
 Function parameters are const by default. Put `mutable` before the parameter name when the generated C parameter should not be const:
 
 ```cgen
-fn get(value as c.int) -> c.int:
+fn get -> c.int:
+    param value as c.int
     return value
 
-fn set(mutable value as c.int) -> none:
+fn set -> none:
+    mutable param value as c.int
     use c.expr((void)value)
 ```
 
-Parameters may be declared inline in the signature or as `param` lines before the executable body. Both forms produce the same function parameters:
+Function parameters are declared as leading `param` lines before the executable body. Functions intentionally have one block-oriented form:
 
 ```cgen
-fn inline_form(value as c.int) -> none:
-    use c.expr((void)value)
-
-fn body_form() -> none:
+fn consume -> none:
+    @doc("Value to consume.")
     param value as c.int
     use c.expr((void)value)
 ```
@@ -435,7 +470,8 @@ Struct methods receive a const `self` pointer by default, so assigning to `self.
 struct version:
     mutable field major -> c.int
 
-    mutable fn set_major(value as c.int) -> none:
+    mutable fn set_major -> none:
+        param value as c.int
         self.major = value
 ```
 
@@ -457,15 +493,15 @@ Visibility attributes do not accept arguments. `@public(header|source|all)` is n
 
 ```cgen
 @public
-fn api() -> c.int:
+fn api -> c.int:
     return 1
 
 @private
-fn helper() -> c.int:
+fn helper -> c.int:
     return 2
 
 @inline
-fn fast() -> c.int:
+fn fast -> c.int:
     return 3
 ```
 
@@ -476,6 +512,8 @@ This generates a public `api` declaration and source definition, a source-only `
 Templates generate function-like macros (`#define`). The body must be a single
 `use X(...)` expression. `X` can be a built-in operation such as `c.math.add` or
 another generated template such as `lh.math.add`.
+
+Template parameters are declared as leading `param` lines. Like functions, template declarations intentionally use one block-oriented form; parentheses are reserved for calls.
 
 ```cgen
 template add:
@@ -545,7 +583,8 @@ Marks a template as a compile-time helper — it is expanded at every call site 
 
 ```cgen
 @template(inline)
-template type(name):
+template type:
+    param name
     use c.expr(name)
 
 alias byte as c.type(unsigned char)

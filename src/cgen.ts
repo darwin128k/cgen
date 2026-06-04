@@ -747,6 +747,82 @@ function hasAttr(attributes: Attribute[], name: string, arg?: string): boolean {
   });
 }
 
+interface DocTag {
+  command: 'param' | 'return';
+  name?: string;
+  description?: string;
+}
+
+function pushDoc(lines: string[], attributes: Attribute[], indent = '', tags: DocTag[] = []): void {
+  const texts = readDocTexts(attributes);
+  if (texts.length > 0) {
+    pushDocBlock(lines, texts.join('\n'), indent, tags);
+  }
+}
+
+function pushFnDoc(lines: string[], fn: FnNode, returnType: string, includeSelf: boolean): void {
+  const text = readDocTexts(fn.attributes).join('\n');
+  const tags: DocTag[] = [
+    ...(includeSelf ? [{ command: 'param' as const, name: 'self' }] : []),
+    ...fn.params.map((param) => ({
+      command: 'param' as const,
+      name: param.name,
+      description: readDocTexts(param.attributes).join(' ').replace(/\s+/g, ' ').trim()
+    })),
+    ...(returnType === 'void' ? [] : [{
+      command: 'return' as const,
+      description: readDocTexts(fn.returnAttributes).join(' ').replace(/\s+/g, ' ').trim()
+    }])
+  ];
+  if (text.length > 0 || tags.some((tag) => tag.description)) {
+    pushDocBlock(lines, text, '', tags);
+  }
+}
+
+function readDocTexts(attributes: Attribute[]): string[] {
+  return attributes
+    .filter((candidate) => candidate.name === 'doc')
+    .map((attribute) => {
+      if (attribute.args.length !== 1) {
+        throw new Error(`Line ${attribute.line}: @doc requires exactly one quoted string`);
+      }
+      let text: unknown;
+      try {
+        text = JSON.parse(attribute.args[0]);
+      } catch {
+        throw new Error(`Line ${attribute.line}: @doc requires a valid double-quoted string`);
+      }
+      if (typeof text !== 'string') {
+        throw new Error(`Line ${attribute.line}: @doc requires a quoted string`);
+      }
+      return text;
+    });
+}
+
+function pushDocBlock(lines: string[], text: string, indent: string, tags: DocTag[]): void {
+  const missingTags = tags.filter((tag) => {
+    const pattern = tag.command === 'param'
+      ? new RegExp(`(?:^|\\n)\\s*[@\\\\]param\\s+${escapeRegex(tag.name ?? '')}\\b`)
+      : /(?:^|\n)\s*[@\\]return\b/;
+    return !pattern.test(text);
+  });
+  lines.push(`${indent}/**`);
+  if (text.length > 0) {
+    for (const line of text.split(/\r?\n/)) {
+      lines.push(`${indent} * ${line.replace(/\*\//g, '* /')}`);
+    }
+  }
+  if (text.length > 0 && missingTags.length > 0) {
+    lines.push(`${indent} *`);
+  }
+  for (const tag of missingTags) {
+    const name = tag.name ? ` ${tag.name}` : '';
+    const description = tag.description ? ` ${tag.description}` : '';
+    lines.push(`${indent} * @${tag.command}${name}${description}`);
+  }
+  lines.push(`${indent} */`);
+}
+
 function renderFieldDeclaration(field: TemplateField, typeName: string, template?: TemplateNode): string {
   const prefix = field.mutable || template?.mutable ? '' : 'const ';
   return `${prefix}${typeName} ${field.name}`;
@@ -1657,11 +1733,13 @@ function renderHeader(
   paramTemplates: Map<string, TemplateNode>,
   bodyTemplates: Map<string, TemplateNode>
 ): string {
-  const lines = [
+  const lines: string[] = [];
+  pushDoc(lines, module.section.attributes);
+  lines.push(
     `#ifndef ${module.guard}`,
     `#define ${module.guard}`,
     ''
-  ];
+  );
 
   for (const header of [...module.externHeaders].sort()) {
     lines.push(`#include <${header}>`);
@@ -1681,6 +1759,7 @@ function renderHeader(
       if (hasAttr(declaration.attributes, 'intrinsic')) {
         continue;
       }
+      pushDoc(lines, declaration.attributes);
       const type = resolveTypeExpression(declaration.target, declaration.line, symbols, templateSymbols);
       const cName = makeTypedefName(allSymbolParts, declaration.name);
       const aliasKey = makeTypeKey([...module.typeParts, ...symbolParts], declaration.name);
@@ -1691,6 +1770,7 @@ function renderHeader(
 
     const type = resolveTypeExpression(declaration.target, declaration.line, symbols, templateSymbols);
     const cName = makeTypedefName(allSymbolParts, declaration.name);
+    pushDoc(lines, declaration.attributes);
     lines.push(`typedef ${type} ${cName};`);
 
     if (declaration.members.length > 0) {
@@ -1702,6 +1782,7 @@ function renderHeader(
       const target = getEnumOutputTarget(declaration);
 
       if (shouldOutputHeaderCase(mode, target)) {
+        pushDoc(lines, member.attributes);
         lines.push(renderEnumCaseForHeader(allSymbolParts, declaration, member, index, cName, mode));
       }
     });
@@ -1719,15 +1800,18 @@ function renderHeader(
         const semi = index < template.fields.length - 1 ? ';' : '';
         return `${renderFieldDeclaration(field, typeName, template)}${semi}`;
       }).join(' ');
+      pushDoc(lines, template.attributes);
       lines.push(`#define ${makeMacroName(allSymbolParts, template.name)}(${paramList}) ${fieldDefs}`);
       continue;
     }
 
     if (template.fields.length > 0) {
       const cName = makeTypedefName(allSymbolParts, template.name);
+      pushDoc(lines, template.attributes);
       lines.push(`typedef struct ${cName} {`);
       for (const field of template.fields) {
         const typeName = resolveTypeExpression(field.target, field.line, symbols, templateSymbols);
+        pushDoc(lines, field.attributes, '  ');
         lines.push(`  ${renderFieldDeclaration(field, typeName, template)};`);
       }
       lines.push(`} ${cName};`);
@@ -1742,6 +1826,7 @@ function renderHeader(
     const body = template.bodyInline
       ? expandTemplateBodyInline(template, templateSymbols, bodyTemplates)
       : expandTemplateBody(template, templateSymbols);
+    pushDoc(lines, template.attributes);
     lines.push(`#define ${makeMacroName(allSymbolParts, template.name)}(${paramList}) ${body}`);
   }
 
@@ -1749,15 +1834,18 @@ function renderHeader(
     const allSymbolParts = [...module.symbolParts, ...symbolParts];
     const tagName = makeStructTagName(allSymbolParts, struct.name);
     const typedefName = makeTypedefName(allSymbolParts, struct.name);
+    pushDoc(lines, struct.attributes);
     lines.push(`typedef struct ${tagName} {`);
     for (const field of struct.fields) {
       const typeName = resolveTypeExpression(field.target, field.line, symbols, templateSymbols);
+      pushDoc(lines, field.attributes, '  ');
       lines.push(`  ${renderFieldDeclaration(field, typeName)};`);
     }
     for (const use of (struct.uses ?? [])) {
       if (use.inline) {
         for (const field of expandStructUse(use.expr, struct.line, paramTemplates)) {
           const typeName = resolveTypeExpression(field.target, field.line, symbols, templateSymbols);
+          pushDoc(lines, field.attributes, '  ');
           lines.push(`  ${renderFieldDeclaration(field, typeName)};`);
         }
         continue;
@@ -1776,6 +1864,7 @@ function renderHeader(
       if (target === 'source') { continue; }
       const fnCName = makeStructMethodCName(module, symbolParts, struct.name, fn.name);
       const signature = makeStructMethodSignature(fn, fnCName, symbols, templateSymbols, typedefName, struct, paramTemplates);
+      pushFnDoc(lines, fn, resolveStructMethodReturnType(fn, struct, paramTemplates, symbols, templateSymbols), true);
       if (hasAttr(fn.attributes, 'inline')) {
         lines.push(`${signature} {`);
         lines.push(...renderFnBody(fn, symbols, templateSymbols, true));
@@ -1791,6 +1880,7 @@ function renderHeader(
     if (target === 'source') { continue; }
     const fnCName = makeFnCName(module, extraParts, fn.name);
     const signature = makeFnSignature(fn, fnCName, symbols, templateSymbols);
+    pushFnDoc(lines, fn, resolveFnReturnType(fn, symbols, templateSymbols), false);
     if (hasAttr(fn.attributes, 'inline')) {
       lines.push(`${signature} {`);
       lines.push(...renderFnBody(fn, symbols, templateSymbols));
@@ -1839,6 +1929,7 @@ function renderSource(
     const target = getFnOutputTarget(fn);
     if (target !== 'source' && target !== 'both') { continue; }
     const fnCName = makeFnCName(module, extraParts, fn.name);
+    if (target === 'source') { pushFnDoc(lines, fn, resolveFnReturnType(fn, symbols, templateSymbols), false); }
     lines.push(`${makeFnSignature(fn, fnCName, symbols, templateSymbols)} {`);
     lines.push(...renderFnBody(fn, symbols, templateSymbols));
     lines.push('}');
@@ -1852,6 +1943,9 @@ function renderSource(
       const target = getFnOutputTarget(fn);
       if (target !== 'source' && target !== 'both') { continue; }
       const fnCName = makeStructMethodCName(module, symbolParts, struct.name, fn.name);
+      if (target === 'source') {
+        pushFnDoc(lines, fn, resolveStructMethodReturnType(fn, struct, paramTemplates, symbols, templateSymbols), true);
+      }
       lines.push(`${makeStructMethodSignature(fn, fnCName, symbols, templateSymbols, typedefName, struct, paramTemplates)} {`);
       lines.push(...renderFnBody(fn, symbols, templateSymbols, true));
       lines.push('}');

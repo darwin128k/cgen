@@ -22,6 +22,7 @@ export interface FnNode {
   returnType: string;
   body: string[];
   bodyLine: number;
+  returnAttributes: Attribute[];
   attributes: Attribute[];
   selfMutable: boolean;
   line: number;
@@ -92,6 +93,7 @@ export interface EnumNode {
 export interface EnumMemberNode {
   name: string;
   value?: string;
+  attributes: Attribute[];
   line: number;
 }
 
@@ -210,6 +212,11 @@ export function parseDsl(source: string): ParsedDsl {
         return;
       }
 
+      if (/^return(?:\s|$)/.test(line) && pendingAttributes.length > 0) {
+        currentFn.node.returnAttributes.push(...pendingAttributes);
+        pendingAttributes = [];
+      }
+
       if (currentFn.node.body.length === 0) { currentFn.node.bodyLine = lineNumber; }
       currentFn.node.body.push(line);
       return;
@@ -218,6 +225,8 @@ export function parseDsl(source: string): ParsedDsl {
     if (currentEnum) {
       const member = parseEnumMember(line, lineNumber);
       if (member) {
+        member.attributes = [...pendingAttributes];
+        pendingAttributes = [];
         currentEnum.node.members.push(member);
         return;
       }
@@ -302,7 +311,7 @@ export function parseDsl(source: string): ParsedDsl {
       section.attributes = [...parentFrame.inheritedAttributes, ...pendingAttributes];
       pendingAttributes = [];
       parent.children.push(section);
-      stack.push({ indent, section, inheritedAttributes: [...section.attributes] });
+      stack.push({ indent, section, inheritedAttributes: section.attributes.filter((a) => a.name !== 'doc') });
       return;
     }
 
@@ -323,14 +332,15 @@ export function parseDsl(source: string): ParsedDsl {
       return;
     }
 
-    const templateNode = parseTemplate(line, lineNumber);
-    if (templateNode) {
+    const templateNode = parseTemplate(line, lineNumber, diagnostics);
+    if (templateNode != null) {
       templateNode.attributes = [...parentFrame.inheritedAttributes, ...pendingAttributes];
       pendingAttributes = [];
       parent.templates.push(templateNode);
       currentTemplate = { indent, node: templateNode };
       return;
     }
+    if (templateNode === null) { return; }
 
     const structNode = parseStruct(line, lineNumber);
     if (structNode) {
@@ -414,15 +424,47 @@ function countIndent(line: string, diagnostics: string[], lineNumber: number): n
 }
 
 function parseAttribute(line: string, lineNumber: number): Attribute | undefined {
-  const match = line.match(/^@([A-Za-z_][A-Za-z0-9_]*)(?:\(([^)]*)\))?$/);
+  const match = line.match(/^@([A-Za-z_][A-Za-z0-9_]*)(?:\((.*)\))?$/);
   if (!match) {
     return undefined;
   }
   return {
     name: match[1],
-    args: match[2] ? match[2].split(',').map((value) => value.trim()).filter(Boolean) : [],
+    args: match[2] ? splitAttributeArgs(match[2]) : [],
     line: lineNumber
   };
+}
+
+function splitAttributeArgs(source: string): string[] {
+  const parts: string[] = [];
+  let start = 0;
+  let quote = '';
+  let escaped = false;
+  for (let index = 0; index < source.length; index += 1) {
+    const char = source[index];
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (char === '\\' && quote) {
+      escaped = true;
+      continue;
+    }
+    if (quote) {
+      if (char === quote) { quote = ''; }
+      continue;
+    }
+    if (char === '"' || char === "'") {
+      quote = char;
+      continue;
+    }
+    if (char === ',') {
+      parts.push(source.slice(start, index).trim());
+      start = index + 1;
+    }
+  }
+  parts.push(source.slice(start).trim());
+  return parts.filter(Boolean);
 }
 
 function parseSection(line: string, lineNumber: number): SectionNode | undefined {
@@ -467,33 +509,21 @@ function parseEnumMember(line: string, lineNumber: number): EnumMemberNode | und
   if (!match) {
     return undefined;
   }
-  return { name: match[1], value: match[2], line: lineNumber };
+  return { name: match[1], value: match[2], attributes: [], line: lineNumber };
 }
 
 function parseFn(line: string, lineNumber: number, diagnostics?: string[]): FnNode | null | undefined {
-  const startMatch = line.match(/^(mutable\s+)?fn\s+([A-Za-z_][A-Za-z0-9_]*)\s*(\()?/);
+  const startMatch = line.match(/^(mutable\s+)?fn\s+([A-Za-z_][A-Za-z0-9_]*)\s*/);
   if (!startMatch) {
     return undefined;
   }
 
   const selfMutable = !!startMatch[1];
   const name = startMatch[2];
-  let rest = line.slice(startMatch[0].length);
-  const params: FnParam[] = [];
-
-  if (startMatch[3]) {
-    let depth = 1;
-    let i = 0;
-    for (; i < rest.length; i++) {
-      if (rest[i] === '(') { depth++; } else if (rest[i] === ')') { depth--; if (depth === 0) { break; } }
-    }
-    if (depth !== 0) { return undefined; }
-    const paramStr = rest.slice(0, i);
-    rest = rest.slice(i + 1).trim();
-    for (const part of splitByCommaBalanced(paramStr)) {
-      const p = parseFnParam(part.trim(), lineNumber);
-      if (p) { params.push(p); }
-    }
+  const rest = line.slice(startMatch[0].length);
+  if (rest.startsWith('(')) {
+    diagnostics?.push(`Line ${lineNumber}: fn parameters must be declared as indented \`param\` lines`);
+    return null;
   }
 
   if (/^as\s+/.test(rest)) {
@@ -506,7 +536,18 @@ function parseFn(line: string, lineNumber: number, diagnostics?: string[]): FnNo
     return undefined;
   }
 
-  return { kind: 'fn', name, params, returnType: returnMatch[1].trim(), body: [], bodyLine: 0, attributes: [], selfMutable, line: lineNumber };
+  return {
+    kind: 'fn',
+    name,
+    params: [],
+    returnType: returnMatch[1].trim(),
+    body: [],
+    bodyLine: 0,
+    returnAttributes: [],
+    attributes: [],
+    selfMutable,
+    line: lineNumber
+  };
 }
 
 function parseFnParam(text: string, lineNumber: number, attributes: Attribute[] = []): FnParam | undefined {
@@ -534,31 +575,20 @@ function parseFnParam(text: string, lineNumber: number, attributes: Attribute[] 
   return undefined;
 }
 
-function splitByCommaBalanced(source: string): string[] {
-  if (!source.trim()) { return []; }
-  const parts: string[] = [];
-  let depth = 0;
-  let start = 0;
-  for (let i = 0; i < source.length; i++) {
-    if (source[i] === '(') { depth++; } else if (source[i] === ')') { depth--; } else if (source[i] === ',' && depth === 0) { parts.push(source.slice(start, i)); start = i + 1; }
-  }
-  parts.push(source.slice(start));
-  return parts;
-}
-
-function parseTemplate(line: string, lineNumber: number): TemplateNode | undefined {
-  const match = line.match(/^(mutable\s+)?template\s+([A-Za-z_][A-Za-z0-9_]*)(?:\(([^)]*)\))?\s*:\s*$/);
+function parseTemplate(line: string, lineNumber: number, diagnostics?: string[]): TemplateNode | null | undefined {
+  const match = line.match(/^(mutable\s+)?template\s+([A-Za-z_][A-Za-z0-9_]*)(.*)$/);
   if (!match) {
     return undefined;
   }
-  const params: TemplateParam[] = [];
-  if (match[3]) {
-    for (const part of match[3].split(',')) {
-      const param = parseTemplateParam(part.trim(), lineNumber);
-      if (param) { params.push(param); }
-    }
+  const rest = match[3].trim();
+  if (rest.startsWith('(')) {
+    diagnostics?.push(`Line ${lineNumber}: template parameters must be declared as indented \`param\` lines`);
+    return null;
   }
-  return { kind: 'template', name: match[2], params, fields: [], body: '', bodyLine: lineNumber, bodyInline: false, bodyRaw: false, mutable: !!match[1], attributes: [], line: lineNumber };
+  if (rest !== ':') {
+    return undefined;
+  }
+  return { kind: 'template', name: match[2], params: [], fields: [], body: '', bodyLine: lineNumber, bodyInline: false, bodyRaw: false, mutable: !!match[1], attributes: [], line: lineNumber };
 }
 
 function parseStruct(line: string, lineNumber: number): StructNode | undefined {

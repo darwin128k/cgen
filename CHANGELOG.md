@@ -24,7 +24,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - `none` return type maps to C `void`; struct method `any` resolves to `none` when no value is returned
 - Function bodies support checked `self.field = value` assignment, restricted to mutable methods
 - Assignment requires both a `mutable fn` receiver and a `mutable field` or `mutable template`
-- Function parameters can be declared inline in the signature or as leading `param` lines in the body
+- Functions use a single block form; parameters are declared as leading `param` lines in the body
+- Templates use a single block form; parameters are declared as leading `param` lines
+- `@doc("text")` emits Doxygen documentation comments for generated declarations
+- Function documentation automatically includes missing Doxygen `@param`, `@param self`, and `@return` tags without invented descriptions
+- Body parameter documentation is collected into the function's Doxygen `@param` tags
+- Documentation attached to `return` statements is collected into the function's Doxygen `@return` tag
+- Simplified `@doc` completion to a selected `@doc("...")` placeholder
 
 ## [0.0.78] - 2026-06-04
 
