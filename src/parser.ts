@@ -198,13 +198,6 @@ export function parseDsl(source: string): ParsedDsl {
     }
 
     if (currentFn) {
-      const paramAttribute = pendingAttributes.find((a) => a.name === 'param');
-      if (paramAttribute) {
-        diagnostics.push(`Line ${paramAttribute.line}: use \`mutable name -> type\` for function parameters`);
-        pendingAttributes = [];
-        return;
-      }
-
       const param = parseFnParam(line, lineNumber, pendingAttributes);
       if (param) {
         pendingAttributes = [];
@@ -233,7 +226,7 @@ export function parseDsl(source: string): ParsedDsl {
     }
 
     if (currentTemplate) {
-      if (/^(?:param\s+)?\.\.\.$/.test(line)) {
+      if (/^param\s+\.\.\.$/.test(line)) {
         diagnostics.push(`Line ${lineNumber}: variadic param must have an alias: use \`param ... as name\``);
         return;
       }
@@ -520,14 +513,11 @@ function parseFn(line: string, lineNumber: number, diagnostics?: string[]): FnNo
 
   const selfMutable = !!startMatch[1];
   const name = startMatch[2];
-  const rest = line.slice(startMatch[0].length);
-  if (rest.startsWith('(')) {
+  let rest = line.slice(startMatch[0].length);
+  if (rest.startsWith('()')) {
+    rest = rest.slice(2).trimStart();
+  } else if (rest.startsWith('(')) {
     diagnostics?.push(`Line ${lineNumber}: fn parameters must be declared as indented \`param\` lines`);
-    return null;
-  }
-
-  if (/^as\s+/.test(rest)) {
-    diagnostics?.push(`Line ${lineNumber}: use \`->\` instead of \`as\` to specify fn return type`);
     return null;
   }
 
@@ -556,12 +546,12 @@ function parseFnParam(text: string, lineNumber: number, attributes: Attribute[] 
   const body = modifierMatch ? modifierMatch[2].trim() : trimmed;
   const mutable = !!modifierMatch;
 
-  const variadicMatch = body.match(/^(?:param\s+)?\.\.\.(?:\s+as\s+|\s+->\s*)([A-Za-z_][A-Za-z0-9_]*)$/);
+  const variadicMatch = body.match(/^param\s+\.\.\.(?:\s+as\s+|\s+->\s*)([A-Za-z_][A-Za-z0-9_]*)$/);
   if (variadicMatch) {
     return { name: variadicMatch[1], type: '...', variadic: true, mutable: true, attributes, line: lineNumber };
   }
 
-  const normalMatch = body.match(/^(?:param\s+)?([A-Za-z_][A-Za-z0-9_]*)(?:\s+as\s+|\s+->\s*)(.+)$/);
+  const normalMatch = body.match(/^param\s+([A-Za-z_][A-Za-z0-9_]*)(?:\s+as\s+|\s+->\s*)(.+)$/);
   if (normalMatch) {
     return {
       name: normalMatch[1],
@@ -600,11 +590,11 @@ function parseStruct(line: string, lineNumber: number): StructNode | undefined {
 }
 
 function parseTemplateParam(line: string, lineNumber: number): TemplateParam | undefined {
-  const variadicMatch = line.match(/^(?:param\s+)?\.\.\.(?:\s+as\s+|\s+->\s*)([A-Za-z_][A-Za-z0-9_]*)$/);
+  const variadicMatch = line.match(/^param\s+\.\.\.(?:\s+as\s+|\s+->\s*)([A-Za-z_][A-Za-z0-9_]*)$/);
   if (variadicMatch) {
     return { variadic: true, callable: false, name: variadicMatch[1], line: lineNumber };
   }
-  const normalMatch = line.match(/^(?:param\s+)?([A-Za-z_][A-Za-z0-9_]*)(?:(?:\s+as\s+|\s+->\s*)(\S+))?$/);
+  const normalMatch = line.match(/^param\s+([A-Za-z_][A-Za-z0-9_]*)(?:(?:\s+as\s+|\s+->\s*)(\S+))?$/);
   if (normalMatch) {
     return { variadic: false, callable: normalMatch[2] === 'template', name: normalMatch[1], line: lineNumber };
   }

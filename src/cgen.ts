@@ -20,7 +20,6 @@ import {
   type EnumMemberNode,
   type ParsedDsl,
   parseDsl,
-  expandInlineDsl,
   createSection,
 } from './parser';
 import { formatCgen } from './formatter';
