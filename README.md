@@ -142,8 +142,28 @@ Before generating, CGen merges the current DSL with all `.cgen` files found in t
 
 ## Attributes
 
-Attributes start with `@`, attach to the declaration that follows them, and are
-inherited by that declaration's nested declarations.
+Attributes start with `@` and attach to the declaration that follows them.
+
+### Inheritance
+
+Attributes placed on a `package`, `module`, or `scope` are inherited by every declaration nested inside — directly or through further nesting. A child that specifies the same attribute name uses its own value; attributes with different names accumulate.
+
+```cgen
+@alias(inline)
+scope c:
+    alias char as c.type(char)     # inherits @alias(inline)
+    alias schar as c.type(signed char) # inherits @alias(inline)
+
+    @alias(define)                 # adds @alias(define); still inherits @alias(inline)
+    alias void as c.type(void)
+
+    @header("stddef.h")            # adds @header; still inherits @alias(inline)
+    alias size as c.type(size_t)
+
+    scope fixed:                   # nested scope also inherits @alias(inline)
+        @header("stdint.h")
+        alias i8 as c.type(int8_t)
+```
 
 ### `@scope(guard)`
 
