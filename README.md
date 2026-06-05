@@ -651,21 +651,21 @@ typedef struct lh_point_t {
 |--------------------------|---------|
 | `param name`             | Regular parameter |
 | `param name as any`      | Same — `any` is an explicit "untyped" annotation, DSL-level only |
-| `%t{name}` inside `c.expr("...")` | Renders parameter `name` as a DSL type (`c.int` becomes `int`) |
+| `${name}` inside `c.expr("...")` | Substitutes `name`; DSL type arguments render as C types (`c.int` becomes `int`) |
 | `param ... as name`      | Variadic — `name` becomes `__VA_ARGS__` in output. The `...` form without `as` is a parse error. |
 | `field name as type`     | Struct field |
 | `@mutable` before `field name as type` | Mutable struct field |
 | `@mutable` before parameterized `struct` | Field macro whose generated fields are mutable |
 
-Use `%t{name}` inside `c.expr("...")` when a raw C interpolation should be rendered through the DSL type resolver:
+`c.expr` substitutions are type-aware: if a parameter receives a DSL type argument, `${name}` renders the C spelling of that type.
 
 ```cgen
 fn sizeof:
     param T
-    return c.expr("sizeof(%t{T})") as c.size
+    return c.expr("sizeof(${T})") as c.size
 ```
 
-Calling `sizeof(c.int)` renders `sizeof(int)`. If the argument is already raw C type text, it is left unchanged. A positional `%t` with extra `c.expr` arguments is also accepted for printf-style helpers.
+Calling `sizeof(c.int)` renders `sizeof(int)`. If the argument is already raw C type text, it is left unchanged.
 
 ### Built-in compile-time operations
 

@@ -14,7 +14,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Explicit `Ctrl+Shift+I` formatting shortcut for `.cgen` documents
 - Module-level `let name as T = expr` declarations for generated globals
 - Typed return statements with `return expr as T`
-- Type-aware `c.expr` formatting with `%t` for local DSL type rendering
+- Type-aware `c.expr` substitutions: DSL type arguments in `${name}` render as C types
 - Parameterized `struct` declarations for generated field macros
 - Compile-time `fn` macros for untyped or `any`-returning functions
 

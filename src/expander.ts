@@ -19,34 +19,19 @@ export function applyRawBody(
 ): string {
   const paramMap = new Map(paramNames.map((name, index) => [name, args[index] ?? '']));
   let result = body;
-  result = result.replace(/\$\{\s*([A-Za-z_][A-Za-z0-9_]*)\s+as\s+type\s*\}/g, (_match, name: string) => {
-    const value = paramMap.get(name) ?? '';
-    return resolveTypeArg ? resolveTypeArg(value, line) : value;
-  });
   for (let i = 0; i < paramNames.length; i++) {
-    result = result.replace(new RegExp(`\\$\\{${escapeRegex(paramNames[i])}\\}`, 'g'), args[i] ?? '');
+    const arg = args[i] ?? '';
+    let value = arg;
+    if (resolveTypeArg) {
+      try { value = resolveTypeArg(arg, line); }
+      catch { value = arg; }
+    }
+    result = result.replace(new RegExp(`\\$\\{${escapeRegex(paramNames[i])}\\}`, 'g'), value);
   }
   return result;
 }
 
-function parseCExprFormat(source: string, line: number): { format: string; args: string[] } | undefined {
-  const args = splitCallArgs(source, line);
-  const quoted = args[0]?.match(/^"(.*)"$/);
-  if (!quoted) { return undefined; }
-  return { format: quoted[1], args: args.slice(1) };
-}
-
 export function buildRawCExprBody(source: string, line: number): string {
-  const parsed = parseCExprFormat(source, line);
-  if (parsed) {
-    let index = 0;
-    return parsed.format
-      .replace(/%t\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (_match, name: string) => `\${${name} as type}`)
-      .replace(/%t/g, () => {
-        const arg = parsed.args[index++]?.trim() ?? '';
-        return `\${${arg} as type}`;
-      });
-  }
   const arg = source.trim();
   const quoted = arg.match(/^"(.*)"$/);
   if (quoted) { return quoted[1]; }
@@ -58,12 +43,7 @@ export function renderRawCExpr(
   line: number,
   resolveTypeArg: TypeResolver
 ): string {
-  const parsed = parseCExprFormat(source, line);
-  if (!parsed) { return source.trim().match(/^"(.*)"$/)?.[1] ?? source.trim(); }
-  let index = 0;
-  return parsed.format
-    .replace(/%t\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (_match, name: string) => resolveTypeArg(name, line))
-    .replace(/%t/g, () => resolveTypeArg(parsed.args[index++]?.trim() ?? '', line));
+  return buildRawCExprBody(source, line);
 }
 
 export function hasBalancedParens(source: string): boolean {

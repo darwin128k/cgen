@@ -8,7 +8,7 @@ scope c:
         @define
         fn of:
             param type
-            return c.expr("%t{type} *")
+            return c.expr("${type} *")
 
     alias char as c.type(char)
     alias schar as c.type(signed char)
@@ -80,7 +80,7 @@ scope c:
     fn cast:
         param type
         param val
-        return c.expr("((%t{type})${val})")
+        return c.expr("((${type})${val})")
 
     fn call:
         param fn

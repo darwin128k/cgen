@@ -301,15 +301,6 @@ export function buildTypeSymbols(modules: ModuleArtifact[], templateSymbols: Map
   return symbols;
 }
 
-function getRawTypeInterpolationParams(rawBody: string | undefined): Set<string> {
-  const result = new Set<string>();
-  if (!rawBody) { return result; }
-  for (const match of rawBody.matchAll(/\$\{\s*([A-Za-z_][A-Za-z0-9_]*)\s+as\s+type\s*\}/g)) {
-    result.add(match[1]);
-  }
-  return result;
-}
-
 function expandTypeTemplateExpression(
   expression: import('./cgenTypes').UseExpression,
   template: TemplateSymbol,
@@ -317,12 +308,6 @@ function expandTypeTemplateExpression(
   symbols: Map<string, TypeSymbol>,
   templateSymbols: Map<string, TemplateSymbol>
 ): string {
-  const typeParams = getRawTypeInterpolationParams(template.rawBody);
-  for (const [index, paramName] of (template.rawParams ?? []).entries()) {
-    if (typeParams.has(paramName) && expression.args[index] === undefined) {
-      throw new Error(`Line ${line}: type template "${expression.callee}" expects argument "${paramName}"`);
-    }
-  }
   return applyRawBody(
     template.rawBody!,
     template.rawParams ?? [],
@@ -373,10 +358,11 @@ export function getTypeExpressionSymbols(
     const template = templateSymbols.get(expression.callee);
     if (template?.rawBody !== undefined) {
       const result: TypeSymbol[] = [];
-      const typeParams = getRawTypeInterpolationParams(template.rawBody);
       for (let index = 0; index < expression.args.length; index += 1) {
-        if (typeParams.has(template.rawParams?.[index] ?? '')) {
+        try {
           result.push(...getTypeExpressionSymbols(expression.args[index], line, symbols, templateSymbols));
+        } catch {
+          // Raw C helpers may also receive value arguments; only type-looking args contribute dependencies.
         }
       }
       return result;
