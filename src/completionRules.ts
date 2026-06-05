@@ -14,9 +14,7 @@ export const contextCandidates: Readonly<Record<string, readonly string[]>> = {
     'enum name -> type:',
     'struct name:',
     'template name:',
-    'mutable template name:',
     'fn name -> type:',
-    'mutable fn name -> type:',
     'scope name:',
   ],
   'declaration.scope': [
@@ -24,9 +22,7 @@ export const contextCandidates: Readonly<Record<string, readonly string[]>> = {
     'enum name -> type:',
     'struct name:',
     'template name:',
-    'mutable template name:',
     'fn name -> type:',
-    'mutable fn name -> type:',
     'scope name:',
   ],
   'fn.body': [
@@ -38,10 +34,8 @@ export const contextCandidates: Readonly<Record<string, readonly string[]>> = {
   ],
   'struct.body': [
     'field name -> type',
-    'mutable field name -> type',
     'use c.ptr(value)',
     'fn name -> none:',
-    'mutable fn name -> none:',
   ],
   'template.body': [
     'name',
@@ -49,10 +43,10 @@ export const contextCandidates: Readonly<Record<string, readonly string[]>> = {
     'name -> template',
     '... -> values',
     'field name -> type',
-    'mutable field name -> type',
     'use c.ptr(value)',
   ],
   'attribute': [
+    '@mutable',
     '@public',
     '@private',
     '@inline',

@@ -59,7 +59,6 @@ interface CurrentTemplate {
 
 const builtinTemplates = [
   'c.array',
-  'c.const',
   'c.ptr',
   'c.struct',
   'c.union',
@@ -194,14 +193,14 @@ function findCurrentTemplate(textBeforeLine: string, currentIndent?: number, tex
       continue;
     }
 
-    if (/^(?:mutable\s+)?fn\s+[A-Za-z_][A-Za-z0-9_]*\s*->\s*.+:\s*$/.test(line)) {
+    if (/^fn\s+[A-Za-z_][A-Za-z0-9_]*\s*->\s*.+:\s*$/.test(line)) {
       currentFn = { indent, params: [] };
       continue;
     }
 
     if (currentFn) {
-      const paramName = line.match(/^(?:mutable\s+)?param\s+([A-Za-z_][A-Za-z0-9_]*)\s+(?:as|->)\s+/)?.[1]
-        ?? line.match(/^(?:mutable\s+)?param\s+\.\.\.\s+(?:as|->)\s+([A-Za-z_][A-Za-z0-9_]*)$/)?.[1];
+      const paramName = line.match(/^param\s+([A-Za-z_][A-Za-z0-9_]*)\s+(?:as|->)\s+/)?.[1]
+        ?? line.match(/^param\s+\.\.\.\s+(?:as|->)\s+([A-Za-z_][A-Za-z0-9_]*)$/)?.[1];
       if (paramName) {
         currentFn.params.push(paramName);
         continue;
@@ -212,7 +211,7 @@ function findCurrentTemplate(textBeforeLine: string, currentIndent?: number, tex
       currentStruct.fields.push(...getStructFieldNamesFromLine(line));
     }
 
-    const templateMatch = line.match(/^(?:mutable\s+)?template\s+([A-Za-z_][A-Za-z0-9_]*)\s*:\s*$/);
+    const templateMatch = line.match(/^template\s+([A-Za-z_][A-Za-z0-9_]*)\s*:\s*$/);
     if (templateMatch) {
       currentTemplate = {
         indent,
@@ -287,7 +286,7 @@ function collectTrailingStructFields(textFromLine: string, structIndent: number)
 }
 
 function getStructFieldNamesFromLine(line: string): string[] {
-  const fieldName = line.match(/^(?:mutable\s+)?field\s+([A-Za-z_][A-Za-z0-9_]*)(?:\s+as\s+|\s+->\s*)/)?.[1];
+  const fieldName = line.match(/^field\s+([A-Za-z_][A-Za-z0-9_]*)(?:\s+as\s+|\s+->\s*)/)?.[1];
   if (fieldName) {
     return [fieldName];
   }
@@ -452,7 +451,7 @@ function getCandidates(typed: string, contextPath: string[], currentTemplate: Cu
     return [...contextCandidates['attribute']];
   }
 
-  if (currentTemplate.insideFn && /^(alias|enum|struct|(?:mutable\s+)?template|(?:mutable\s+)?fn|(?:mutable\s+)?field|param|case)\b/.test(typed)) {
+  if (currentTemplate.insideFn && /^(alias|enum|struct|template|fn|field|param|case)\b/.test(typed)) {
     return [];
   }
 
@@ -863,8 +862,8 @@ function resolveKindForCandidate(candidate: string, index: DslIndex): string {
   if (/^enum\b/.test(candidate)) return 'enum';
   if (/^struct\b/.test(candidate)) return 'struct';
   if (/^template\b/.test(candidate)) return 'template';
-  if (/^(?:mutable\s+)?fn\b/.test(candidate)) return 'fn';
-  if (/^(?:mutable\s+)?field\b/.test(candidate)) return 'field';
+  if (/^fn\b/.test(candidate)) return 'fn';
+  if (/^field\b/.test(candidate)) return 'field';
   if (/^param\b/.test(candidate)) return 'param';
   if (/^self\./.test(candidate)) return 'field';
   if (candidate === 'self') return 'param';

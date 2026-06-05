@@ -23,7 +23,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - `@intrinsic` marks aliases and templates that resolve without direct C emission
 - `none` return type maps to C `void`; struct method `any` resolves to `none` when no value is returned
 - Function bodies support checked `self.field = value` assignment, restricted to mutable methods
-- Assignment requires both a `mutable fn` receiver and a `mutable field` or `mutable template`
+- Assignment requires `@mutable` on both the receiver `fn` and the assigned `field` or field-template
 - Functions use a single block form; parameters are declared as leading `param` lines in the body
 - Templates use a single block form; parameters are declared as leading `param` lines
 - `@doc("text")` emits Doxygen documentation comments for generated declarations
@@ -43,8 +43,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - `let name -> T = expr` statement in function bodies (`let name = expr` with inferred type also supported)
 - `scope` keyword — virtual namespace that contributes to guard/path but not to C symbol names
-- `mutable fn` — struct method with non-const `self` pointer
-- `mutable` parameter modifier on `fn` parameters
+- `@mutable` on `fn` — struct method with non-const `self` pointer
+- `@mutable` on `fn` parameters
 - `struct` keyword for declaring struct types with methods
 - Struct methods with implicit `self` parameter (const pointer by default)
 - Auto-return type inference for `-> any` when the body is a single `return self.field`

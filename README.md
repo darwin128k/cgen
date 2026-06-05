@@ -387,7 +387,8 @@ struct version:
     field major -> c.uint
 
     @doc("Updates the major version.")
-    mutable fn set_major -> none:
+    @mutable
+    fn set_major -> none:
         @doc("New major version.")
         param value as c.uint
         self.major = value
@@ -415,19 +416,21 @@ Documentation attached to a parameter becomes its Doxygen `@param` description. 
 ```cgen
 struct point:
     field x as c.int
-    mutable field y as c.int
+    @mutable
+    field y as c.int
 
     fn get_x -> any:
         return self.x
 
-    mutable fn set_x -> none:
+    @mutable
+    fn set_x -> none:
         param value as c.int
         self.x = value
 ```
 
-Inside a struct, `self` is the implicit first parameter — a const pointer to the struct type by default. Prefix a method with `mutable` to get a non-const `self` pointer.
+Inside a struct, `self` is the implicit first parameter — a const pointer to the struct type by default. Put `@mutable` before a method to get a non-const `self` pointer.
 
-Function parameters are const by default. Put `mutable` before the parameter name when the generated C parameter should not be const:
+Function parameters are const by default. Put `@mutable` before the parameter when the generated C parameter should not be const:
 
 ```cgen
 fn get -> c.int:
@@ -435,7 +438,8 @@ fn get -> c.int:
     return value
 
 fn set -> none:
-    mutable param value as c.int
+    @mutable
+    param value as c.int
     use c.expr((void)value)
 ```
 
@@ -464,20 +468,22 @@ Function bodies support these statement forms:
 
 When a struct method has `-> any`, CGen infers the return type from a single `return self.field`. If the method has no `return`, `any` resolves to `none`.
 
-Struct methods receive a const `self` pointer by default, so assigning to `self.field` is rejected. Prefix the method with `mutable` to allow field assignment:
+Struct methods receive a const `self` pointer by default, so assigning to `self.field` is rejected. Put `@mutable` before the method to allow field assignment:
 
 ```cgen
 struct version:
-    mutable field major -> c.int
+    @mutable
+    field major -> c.int
 
-    mutable fn set_major -> none:
+    @mutable
+    fn set_major -> none:
         param value as c.int
         self.major = value
 ```
 
 This generates a `void` method with a mutable `version_t *self` parameter and a mutable field. The same body in a non-mutable `fn` is an error. Assigning to an ordinary const `field` is also an error, even from a mutable method.
 
-Use `mutable template` when every field produced by a field-template should be mutable.
+Use `@mutable` on a field-template when every field it produces should be mutable.
 
 ### Visibility
 
@@ -628,8 +634,8 @@ typedef struct lh_point_t {
 | `param name as template` | Callable parameter — `name(args)` in the `use` body expands as a raw C call |
 | `param ... as name`      | Variadic — `name` becomes `__VA_ARGS__` in output. The `...` form without `as` is a parse error. |
 | `field name as type`     | Struct field; cannot mix with `param` or `use` in the same template |
-| `mutable field name as type` | Mutable struct field |
-| `mutable template name` | Field-template whose generated fields are mutable |
+| `@mutable` before `field name as type` | Mutable struct field |
+| `@mutable` before `template name` | Field-template whose generated fields are mutable |
 
 ### Built-in template operations
 

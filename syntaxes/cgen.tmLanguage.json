@@ -46,7 +46,7 @@
       "patterns": [
         {
           "name": "keyword.control.cgen",
-          "match": "\\b(package|module|scope|alias|enum|case|as|fn|template|struct|param|field|use|let|return|mutable|any|none)\\b"
+          "match": "\\b(package|module|scope|alias|enum|case|as|fn|template|struct|param|field|use|let|return|any|none)\\b"
         }
       ]
     },
