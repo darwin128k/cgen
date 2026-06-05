@@ -384,11 +384,11 @@ Attaches documentation to the next declaration and emits it as a Doxygen comment
 @doc("Current application version.")
 struct version:
     @doc("Major version component.")
-    field major -> c.uint
+    field major as c.uint
 
     @doc("Updates the major version.")
     @mutable
-    fn set_major -> none:
+    fn set_major:
         @doc("New major version.")
         param value as c.uint
         self.major = value
@@ -400,11 +400,11 @@ For functions, CGen automatically adds missing Doxygen tags for every parameter 
 
 ```cgen
 @doc("Finds an item.")
-fn find -> c.ptr.of(c.void):
+fn find:
     @doc("Item identifier.")
     param id as c.uint
     @doc("Found item.")
-    return c.null
+    return c.null as c.ptr.of(c.void)
 ```
 
 Documentation attached to a parameter becomes its Doxygen `@param` description. Documentation attached to a `return` statement becomes the function's `@return` description.
@@ -430,16 +430,16 @@ struct point:
 
 Inside a struct, `self` is the implicit first parameter — a const pointer to the struct type by default. Put `@mutable` before a method to get a non-const `self` pointer.
 
-Function return types may be written explicitly with `-> T`, or omitted. When omitted, CGen infers `none` for functions without `return` and `any` for functions with `return`. `any` return inference is currently supported for struct methods that return a single `self.field`; standalone functions with a return value still need an explicit `-> T`.
+Functions do not declare a return type on the `fn` line. CGen infers `none`/C `void` when there is no `return`. A struct method can return a known field directly with `return self.field`. Other returned expressions declare their type on the return statement with `return expr as T`.
 
 Function parameters are const by default. Put `@mutable` before the parameter when the generated C parameter should not be const:
 
 ```cgen
-fn get -> c.int:
+fn get:
     param value as c.int
-    return value
+    return value as c.int
 
-fn set -> none:
+fn set:
     @mutable
     param value as c.int
     use c.expr((void)value)
@@ -448,7 +448,7 @@ fn set -> none:
 Function parameters are declared as leading `param` lines before the executable body. Functions intentionally have one block-oriented form:
 
 ```cgen
-fn consume -> none:
+fn consume:
     @doc("Value to consume.")
     param value as c.int
     use c.expr((void)value)
@@ -458,10 +458,11 @@ Function bodies support these statement forms:
 
 | DSL                    | C output         |
 |------------------------|------------------|
-| `param name -> T`      | Function parameter |
-| `let name -> T = expr` | `T name = expr;` |
+| `param name as T`      | Function parameter |
+| `let name as T = expr` | `T name = expr;` |
 | `self.field = expr`    | `self->field = expr;` |
 | `return expr`          | `return expr;`   |
+| `return expr as T`     | `return expr;` with return type `T` |
 | `use c.expr(...)`      | literal C line   |
 
 `expr` in a `let` or `return` statement may be a plain identifier, a field access (`self.field`), or a built-in template call such as `c.cast(type, val)` — it is expanded the same way as a template argument.
@@ -470,30 +471,30 @@ Module bodies also support `let` declarations for generated globals:
 
 ```cgen
 module limits:
-    let max_items -> c.int = 64
+    let max_items as c.int = 64
 
     @mutable
-    let current_items -> c.int = 0
+    let current_items as c.int = 0
 
     @private
-    let scale -> c.float = 1.0f
+    let scale as c.float = 1.0f
 ```
 
 Public module `let`s emit an `extern` declaration in the header and one definition in the source file. They are `const` by default; put `@mutable` before the declaration for a mutable global. Put `@private` before the declaration to emit a `static` source-only definition.
 
 `none` is the DSL spelling for no return value and generates C `void`.
 
-When a struct method has `-> any` or an omitted return type with a `return`, CGen infers the return type from a single `return self.field`. If the method has no `return`, omitted return type resolves to `none`.
+CGen infers a struct method return type from a single `return self.field`. Standalone functions and non-field method returns use `return expr as T`.
 
 Struct methods receive a const `self` pointer by default, so assigning to `self.field` is rejected. Put `@mutable` before the method to allow field assignment:
 
 ```cgen
 struct version:
     @mutable
-    field major -> c.int
+    field major as c.int
 
     @mutable
-    fn set_major -> none:
+    fn set_major:
         param value as c.int
         self.major = value
 ```
@@ -516,16 +517,16 @@ Visibility attributes do not accept arguments. `@public(header|source|all)` is n
 
 ```cgen
 @public
-fn api -> c.int:
-    return 1
+fn api:
+    return 1 as c.int
 
 @private
-fn helper -> c.int:
-    return 2
+fn helper:
+    return 2 as c.int
 
 @inline
-fn fast -> c.int:
-    return 3
+fn fast:
+    return 3 as c.int
 ```
 
 This generates a public `api` declaration and source definition, a source-only `static helper`, and a header-only `static inline fast`.

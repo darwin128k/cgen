@@ -13,6 +13,7 @@ import {
   parseCallExpression,
   parseUseExpression,
   parseLetStatement,
+  parseReturnStatement,
   parseAssignmentStatement,
 } from './expander';
 import {
@@ -177,8 +178,14 @@ function addFnBodyDependencies(
       addFnExpressionDependencies(module, letStatement.expr, fn.line, templateSymbols);
       continue;
     }
-    if (/^return\s+/.test(line)) {
-      addFnExpressionDependencies(module, line.slice('return '.length).trim(), fn.line, templateSymbols);
+    const returnStatement = parseReturnStatement(line);
+    if (returnStatement) {
+      if (returnStatement.type) {
+        for (const symbol of getTypeExpressionSymbols(returnStatement.type, fn.line, symbols, templateSymbols)) {
+          addSymbolDep(module, symbol);
+        }
+      }
+      addFnExpressionDependencies(module, returnStatement.expr, fn.line, templateSymbols);
       continue;
     }
     const assignment = parseAssignmentStatement(line);
@@ -380,6 +387,18 @@ function collectTransitiveDependencies(module: ModuleArtifact, byId: Map<string,
 function validateFnReturnBody(fn: FnNode): void {
   if (fn.returnType === 'none' && hasReturnStatement(fn)) {
     throw new Error(`Line ${fn.bodyLine || fn.line}: none function cannot return a value`);
+  }
+  const typedReturns = fn.body
+    .map((line) => parseReturnStatement(line))
+    .filter((statement): statement is import('./cgenTypes').ReturnStatement => !!statement);
+  const returnTypes = typedReturns
+    .map((statement) => statement.type)
+    .filter((type): type is string => !!type);
+  if (returnTypes.length > 0 && returnTypes.length !== typedReturns.length) {
+    throw new Error(`Line ${fn.bodyLine || fn.line}: function return statements must either all declare a type or all omit it`);
+  }
+  if (returnTypes.some((type) => type !== returnTypes[0])) {
+    throw new Error(`Line ${fn.bodyLine || fn.line}: function return statements must use the same type`);
   }
 }
 

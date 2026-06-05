@@ -71,6 +71,11 @@ export interface LetStatement {
   expr: string;
 }
 
+export interface ReturnStatement {
+  expr: string;
+  type?: string;
+}
+
 export interface AssignmentStatement {
   target: string;
   expr: string;

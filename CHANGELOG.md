@@ -12,8 +12,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Webview run actions menu with Generate, Build, and Generate & Build
 - `project.type` support for executable, static, shared, interface, and auto CMake targets
 - Explicit `Ctrl+Shift+I` formatting shortcut for `.cgen` documents
-- Module-level `let name -> T = expr` declarations for generated globals
-- Optional function return type syntax: `fn name:` infers `none` or method `any` from the body
+- Module-level `let name as T = expr` declarations for generated globals
+- Typed return statements with `return expr as T`
 
 ### Changed
 
@@ -27,6 +27,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Function bodies support checked `self.field = value` assignment, restricted to mutable methods
 - Assignment requires `@mutable` on both the receiver `fn` and the assigned `field` or field-template
 - Functions use a single block form; parameters are declared as leading `param` lines in the body
+- Functions no longer declare return types on the `fn` line; `fn name:` infers `none`, `return self.field`, or `return expr as T`
+- DSL type annotations now use `as`; `->` syntax is removed
 - Templates use a single block form; parameters are declared as leading `param` lines
 - `@doc("text")` emits Doxygen documentation comments for generated declarations
 - Function documentation automatically includes missing Doxygen `@param`, `@param self`, and `@return` tags without invented descriptions

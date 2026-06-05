@@ -512,7 +512,7 @@ function parseExprBodyArgument(arg: string): string {
 }
 
 function parseAlias(line: string, lineNumber: number): AliasNode | undefined {
-  const match = line.match(/^alias\s+([A-Za-z_][A-Za-z0-9_]*)(?:\s+as\s+|\s+->\s*)(.+)$/);
+  const match = line.match(/^alias\s+([A-Za-z_][A-Za-z0-9_]*)\s+as\s+(.+)$/);
   if (!match) {
     return undefined;
   }
@@ -520,7 +520,7 @@ function parseAlias(line: string, lineNumber: number): AliasNode | undefined {
 }
 
 function parseEnum(line: string, lineNumber: number): EnumNode | undefined {
-  const match = line.match(/^enum\s+([A-Za-z_][A-Za-z0-9_]*)(?:\s+as\s+|\s+->\s*)(.+)\s*:\s*$/);
+  const match = line.match(/^enum\s+([A-Za-z_][A-Za-z0-9_]*)\s+as\s+(.+)\s*:\s*$/);
   if (!match) {
     return undefined;
   }
@@ -550,9 +550,8 @@ function parseFn(line: string, lineNumber: number, diagnostics?: string[]): FnNo
     return null;
   }
 
-  const returnMatch = rest.match(/^->\s*(.+?)\s*:\s*$/);
   const inferredMatch = rest.match(/^:\s*$/);
-  if (!returnMatch && !inferredMatch) {
+  if (!inferredMatch) {
     return undefined;
   }
 
@@ -560,8 +559,8 @@ function parseFn(line: string, lineNumber: number, diagnostics?: string[]): FnNo
     kind: 'fn',
     name,
     params: [],
-    returnType: returnMatch ? returnMatch[1].trim() : 'auto',
-    returnTypeInferred: !returnMatch,
+    returnType: 'auto',
+    returnTypeInferred: true,
     body: [],
     bodyLine: 0,
     returnAttributes: [],
@@ -573,6 +572,13 @@ function parseFn(line: string, lineNumber: number, diagnostics?: string[]): FnNo
 
 function finalizeFnReturnType(fn: FnNode): void {
   if (!fn.returnTypeInferred) { return; }
+  const typedReturns = fn.body
+    .map((line) => line.match(/^return\s+(.+)\s+as\s+(.+)$/)?.[2]?.trim())
+    .filter((type): type is string => !!type);
+  if (typedReturns.length > 0) {
+    fn.returnType = typedReturns[0];
+    return;
+  }
   fn.returnType = fn.body.some((line) => /^return(?:\s+|$)/.test(line)) ? 'any' : 'none';
 }
 
@@ -580,12 +586,12 @@ function parseFnParam(text: string, lineNumber: number, attributes: Attribute[] 
   const trimmed = text.trim();
   const mutable = attributes.some((a) => a.name === 'mutable');
 
-  const variadicMatch = trimmed.match(/^param\s+\.\.\.(?:\s+as\s+|\s+->\s*)([A-Za-z_][A-Za-z0-9_]*)$/);
+  const variadicMatch = trimmed.match(/^param\s+\.\.\.\s+as\s+([A-Za-z_][A-Za-z0-9_]*)$/);
   if (variadicMatch) {
     return { name: variadicMatch[1], type: '...', variadic: true, mutable: true, attributes, line: lineNumber };
   }
 
-  const normalMatch = trimmed.match(/^param\s+([A-Za-z_][A-Za-z0-9_]*)(?:\s+as\s+|\s+->\s*)(.+)$/);
+  const normalMatch = trimmed.match(/^param\s+([A-Za-z_][A-Za-z0-9_]*)\s+as\s+(.+)$/);
   if (normalMatch) {
     return {
       name: normalMatch[1],
@@ -600,7 +606,7 @@ function parseFnParam(text: string, lineNumber: number, attributes: Attribute[] 
 }
 
 function parseLet(line: string, lineNumber: number): LetNode | undefined {
-  const match = line.match(/^let\s+([A-Za-z_][A-Za-z0-9_]*)(?:\s+as\s+|\s+->\s*)(.+?)\s*=\s*(.+)$/);
+  const match = line.match(/^let\s+([A-Za-z_][A-Za-z0-9_]*)\s+as\s+(.+?)\s*=\s*(.+)$/);
   if (!match) {
     return undefined;
   }
@@ -640,11 +646,11 @@ function parseStruct(line: string, lineNumber: number): StructNode | undefined {
 }
 
 function parseTemplateParam(line: string, lineNumber: number): TemplateParam | undefined {
-  const variadicMatch = line.match(/^param\s+\.\.\.(?:\s+as\s+|\s+->\s*)([A-Za-z_][A-Za-z0-9_]*)$/);
+  const variadicMatch = line.match(/^param\s+\.\.\.\s+as\s+([A-Za-z_][A-Za-z0-9_]*)$/);
   if (variadicMatch) {
     return { variadic: true, callable: false, name: variadicMatch[1], line: lineNumber };
   }
-  const normalMatch = line.match(/^param\s+([A-Za-z_][A-Za-z0-9_]*)(?:(?:\s+as\s+|\s+->\s*)(\S+))?$/);
+  const normalMatch = line.match(/^param\s+([A-Za-z_][A-Za-z0-9_]*)(?:\s+as\s+(\S+))?$/);
   if (normalMatch) {
     return { variadic: false, callable: normalMatch[2] === 'template', name: normalMatch[1], line: lineNumber };
   }
@@ -652,7 +658,7 @@ function parseTemplateParam(line: string, lineNumber: number): TemplateParam | u
 }
 
 function parseTemplateField(line: string, lineNumber: number): TemplateField | undefined {
-  const match = line.match(/^field\s+([A-Za-z_][A-Za-z0-9_]*)(?:\s+as\s+|\s+->\s*)(.+)$/);
+  const match = line.match(/^field\s+([A-Za-z_][A-Za-z0-9_]*)\s+as\s+(.+)$/);
   if (!match) {
     return undefined;
   }

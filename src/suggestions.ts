@@ -193,14 +193,14 @@ function findCurrentTemplate(textBeforeLine: string, currentIndent?: number, tex
       continue;
     }
 
-    if (/^fn\s+[A-Za-z_][A-Za-z0-9_]*(?:\s*->\s*.+)?\s*:\s*$/.test(line)) {
+    if (/^fn\s+[A-Za-z_][A-Za-z0-9_]*\s*:\s*$/.test(line)) {
       currentFn = { indent, params: [] };
       continue;
     }
 
     if (currentFn) {
-      const paramName = line.match(/^param\s+([A-Za-z_][A-Za-z0-9_]*)\s+(?:as|->)\s+/)?.[1]
-        ?? line.match(/^param\s+\.\.\.\s+(?:as|->)\s+([A-Za-z_][A-Za-z0-9_]*)$/)?.[1];
+      const paramName = line.match(/^param\s+([A-Za-z_][A-Za-z0-9_]*)\s+as\s+/)?.[1]
+        ?? line.match(/^param\s+\.\.\.\s+as\s+([A-Za-z_][A-Za-z0-9_]*)$/)?.[1];
       if (paramName) {
         currentFn.params.push(paramName);
         continue;
@@ -227,12 +227,12 @@ function findCurrentTemplate(textBeforeLine: string, currentIndent?: number, tex
       continue;
     }
 
-    const variadicParam = line.match(/^(?:param\s+)?\.\.\.(?:\s+as\s+|\s+->\s*)([A-Za-z_][A-Za-z0-9_]*)$/);
-    const normalParam = line.match(/^(?:param\s+)?([A-Za-z_][A-Za-z0-9_]*)((?:\s+as\s+|\s+->\s*)(\S+))?$/);
+    const variadicParam = line.match(/^(?:param\s+)?\.\.\.\s+as\s+([A-Za-z_][A-Za-z0-9_]*)$/);
+    const normalParam = line.match(/^(?:param\s+)?([A-Za-z_][A-Za-z0-9_]*)(?:\s+as\s+(\S+))?$/);
     const paramName = variadicParam?.[1] ?? normalParam?.[1];
     if (paramName) {
       currentTemplate.params.push(paramName);
-      if (normalParam?.[3] === 'template') {
+      if (normalParam?.[2] === 'template') {
         currentTemplate.callableParams.push(paramName);
       }
     }
@@ -286,7 +286,7 @@ function collectTrailingStructFields(textFromLine: string, structIndent: number)
 }
 
 function getStructFieldNamesFromLine(line: string): string[] {
-  const fieldName = line.match(/^field\s+([A-Za-z_][A-Za-z0-9_]*)(?:\s+as\s+|\s+->\s*)/)?.[1];
+  const fieldName = line.match(/^field\s+([A-Za-z_][A-Za-z0-9_]*)\s+as\s+/)?.[1];
   if (fieldName) {
     return [fieldName];
   }
@@ -433,8 +433,8 @@ function getSuggestionContextKey(
 ): string {
   const typed = linePrefix.trimStart();
   if (/^@/.test(typed)) return 'attribute';
-  if (/^let\s+[A-Za-z_][A-Za-z0-9_]*(?:\s+as\s+|\s+->\s*).+=\s*/.test(typed)) return 'let.expression';
-  if (/(?:\s+as\s+|\s+->\s*)[A-Za-z_][A-Za-z0-9_.]*$/.test(typed)) return 'type';
+  if (/^let\s+[A-Za-z_][A-Za-z0-9_]*\s+as\s+.+?=\s*/.test(typed)) return 'let.expression';
+  if (/\s+as\s+[A-Za-z_][A-Za-z0-9_.]*$/.test(typed)) return 'type';
   if (/^use\s+/.test(typed)) return isUseArgumentPosition(typed) ? 'use.argument' : 'use.template';
   if (/^return\s+/.test(typed)) return 'return.expression';
   if (/^(package|module|scope|group)\s+/.test(typed)) return 'section.name';
@@ -455,24 +455,24 @@ function getCandidates(typed: string, contextPath: string[], currentTemplate: Cu
     return [];
   }
 
-  if (/^alias\s+\S+(?:\s+as\s+|\s+->\s*)/.test(typed)) {
+  if (/^alias\s+\S+\s+as\s+/.test(typed)) {
     return completeTail(typed, getTypeCandidates(typed, contextPath, index));
   }
 
-  if (/^enum\s+\S+(?:\s+as\s+|\s+->\s*)/.test(typed)) {
+  if (/^enum\s+\S+\s+as\s+/.test(typed)) {
     if (typed.trimEnd().endsWith(':')) return [];
     return completeTail(typed, getTypeCandidates(typed, contextPath, index));
   }
 
-  if (/^field\s+\S+(?:\s+as\s+|\s+->\s*)/.test(typed)) {
+  if (/^field\s+\S+\s+as\s+/.test(typed)) {
     return completeTail(typed, getTypeCandidates(typed, contextPath, index));
   }
 
-  if (/^let\s+\S+(?:\s+as\s+|\s+->\s*)[^=]*=\s*/.test(typed)) {
+  if (/^let\s+\S+\s+as\s+[^=]*=\s*/.test(typed)) {
     return completeTail(typed, getExpressionCandidates(typed, contextPath, currentTemplate, index));
   }
 
-  if (/^let\s+\S+(?:\s+as\s+|\s+->\s*)/.test(typed)) {
+  if (/^let\s+\S+\s+as\s+/.test(typed)) {
     return completeTail(typed, getTypeCandidates(typed, contextPath, index));
   }
 

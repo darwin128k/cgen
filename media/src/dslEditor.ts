@@ -71,7 +71,7 @@ let diagnosticLines: number[] = [];
 let activeLineIndex = 0;
 const indentText = '    ';
 const highlightRegex = new RegExp(
-  `(@[A-Za-z_][A-Za-z0-9_]*|\\bc\\.[A-Za-z_][A-Za-z0-9_.]*\\b|->|[()[\\]{}]|${keywords.map((k) => `\\b${k}\\b`).join('|')})`,
+  `(@[A-Za-z_][A-Za-z0-9_]*|\\bc\\.[A-Za-z_][A-Za-z0-9_.]*\\b|[()[\\]{}]|${keywords.map((k) => `\\b${k}\\b`).join('|')})`,
   'g'
 );
 let cachedLineHTMLs: string[] = [];
@@ -94,7 +94,7 @@ function highlightToken(token: string): string {
     return `<span class="attr">${escapeHtml(token)}</span>`;
   }
 
-  if (keywords.includes(token as typeof keywords[number]) || token === '->') {
+  if (keywords.includes(token as typeof keywords[number])) {
     return `<span class="kw">${escapeHtml(token)}</span>`;
   }
 

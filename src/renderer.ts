@@ -22,6 +22,7 @@ import {
   expandTemplateBodyInline,
   expandStructUse,
   parseLetStatement,
+  parseReturnStatement,
   parseAssignmentStatement,
   parseFnExprArgument,
   renderFnExpression,
@@ -314,8 +315,9 @@ function renderFnBodyLine(
   }
   const exprOfMatch = line.match(/^use\s+c\.expr\((.*)\)$/);
   if (exprOfMatch) { return `  ${parseFnExprArgument(exprOfMatch[1].trim())}`; }
-  if (/^return\s+/.test(line)) {
-    const expr = renderFnExpression(line.slice('return '.length).trim(), methodSelfPointer);
+  const returnStatement = parseReturnStatement(line);
+  if (returnStatement) {
+    const expr = renderFnExpression(returnStatement.expr, methodSelfPointer);
     const expanded = expandTemplateArgument(expr, fnLine, templateSymbols, new Set());
     return `  return ${expanded};`;
   }

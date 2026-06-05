@@ -3,6 +3,7 @@ import {
   type TemplateSymbol,
   type UseExpression,
   type LetStatement,
+  type ReturnStatement,
   type AssignmentStatement,
   escapeRegex,
 } from './cgenTypes';
@@ -206,9 +207,18 @@ export function expandStructUse(
 }
 
 export function parseLetStatement(line: string): LetStatement | undefined {
-  const match = line.match(/^let\s+([A-Za-z_][A-Za-z0-9_]*)(?:\s+as\s+|\s+->\s*)(.+?)\s*=\s*(.+)$/);
+  const match = line.match(/^let\s+([A-Za-z_][A-Za-z0-9_]*)\s+as\s+(.+?)\s*=\s*(.+)$/);
   if (!match) { return undefined; }
   return { name: match[1], type: match[2].trim(), expr: match[3].trim() };
+}
+
+export function parseReturnStatement(line: string): ReturnStatement | undefined {
+  const match = line.match(/^return\s+(.+)$/);
+  if (!match) { return undefined; }
+  const typed = match[1].match(/^(.+)\s+as\s+(.+)$/);
+  return typed
+    ? { expr: typed[1].trim(), type: typed[2].trim() }
+    : { expr: match[1].trim() };
 }
 
 export function parseAssignmentStatement(line: string): AssignmentStatement | undefined {
