@@ -58,6 +58,7 @@ export interface TemplateSymbol {
   defineOnly: boolean;
   rawBody?: string;
   rawParams?: string[];
+  rawTypeParams?: string[];
 }
 
 export interface UseExpression {

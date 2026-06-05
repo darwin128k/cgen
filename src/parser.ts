@@ -78,6 +78,7 @@ export interface StructUse {
 export interface StructNode {
   kind: 'struct';
   name: string;
+  params: FnParam[];
   fields: TemplateField[];
   uses: StructUse[];
   fns: FnNode[];
@@ -289,6 +290,13 @@ export function parseDsl(source: string): ParsedDsl {
     }
 
     if (currentStruct) {
+      const param = parseFnParam(line, lineNumber, pendingAttributes);
+      if (param) {
+        pendingAttributes = [];
+        currentStruct.node.params.push(param);
+        return;
+      }
+
       const fnNode = parseFn(line, lineNumber, diagnostics);
       if (fnNode != null) {
         fnNode.attributes = [...parentFrame.inheritedAttributes, ...pendingAttributes];
@@ -603,6 +611,17 @@ function parseFnParam(text: string, lineNumber: number, attributes: Attribute[] 
       line: lineNumber
     };
   }
+  const anyMatch = trimmed.match(/^param\s+([A-Za-z_][A-Za-z0-9_]*)$/);
+  if (anyMatch) {
+    return {
+      name: anyMatch[1],
+      type: 'any',
+      variadic: false,
+      mutable,
+      attributes,
+      line: lineNumber
+    };
+  }
   return undefined;
 }
 
@@ -627,6 +646,9 @@ function parseTemplate(line: string, lineNumber: number, diagnostics?: string[])
   if (!match) {
     return undefined;
   }
+  diagnostics?.push(`Line ${lineNumber}: template declarations were removed; use fn for expressions or parameterized struct for fields`);
+  return null;
+/*
   const rest = match[2].trim();
   if (rest.startsWith('(')) {
     diagnostics?.push(`Line ${lineNumber}: template parameters must be declared as indented \`param\` lines`);
@@ -636,6 +658,7 @@ function parseTemplate(line: string, lineNumber: number, diagnostics?: string[])
     return undefined;
   }
   return { kind: 'template', name: match[1], params: [], fields: [], body: '', bodyLine: lineNumber, bodyInline: false, bodyRaw: false, mutable: false, attributes: [], line: lineNumber };
+*/
 }
 
 function parseStruct(line: string, lineNumber: number): StructNode | undefined {
@@ -643,7 +666,7 @@ function parseStruct(line: string, lineNumber: number): StructNode | undefined {
   if (!match) {
     return undefined;
   }
-  return { kind: 'struct', name: match[1], fields: [], uses: [], fns: [], attributes: [], line: lineNumber };
+  return { kind: 'struct', name: match[1], params: [], fields: [], uses: [], fns: [], attributes: [], line: lineNumber };
 }
 
 function parseTemplateParam(line: string, lineNumber: number): TemplateParam | undefined {

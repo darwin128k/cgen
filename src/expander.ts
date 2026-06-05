@@ -66,22 +66,45 @@ export function parseUseExpression(body: string, line: number): UseExpression {
   return expression;
 }
 
-export function applyTemplateSymbol(templateKey: string, args: string[], line: number, templateSymbols: Map<string, TemplateSymbol>): string {
+type TypeResolver = (arg: string, line: number) => string;
+
+export function applyTemplateSymbol(
+  templateKey: string,
+  args: string[],
+  line: number,
+  templateSymbols: Map<string, TemplateSymbol>,
+  resolveTypeArg?: TypeResolver
+): string {
   const symbol = templateSymbols.get(templateKey);
   if (!symbol) { throw new Error(`Line ${line}: unknown template "${templateKey}"`); }
-  if (symbol.rawBody !== undefined) { return applyRawBody(symbol.rawBody, symbol.rawParams ?? [], args); }
+  if (symbol.rawBody !== undefined) {
+    const rawParams = symbol.rawParams ?? [];
+    const resolvedArgs = args.map((arg, index) => {
+      const name = rawParams[index];
+      return name && symbol.rawTypeParams?.includes(name) && resolveTypeArg
+        ? resolveTypeArg(arg, line)
+        : arg;
+    });
+    return applyRawBody(symbol.rawBody, rawParams, resolvedArgs);
+  }
   return `${symbol.macroName}(${args.join(', ')})`;
 }
 
-export function expandTemplateArgument(arg: string, line: number, templateSymbols: Map<string, TemplateSymbol>, callableParams: Set<string>): string {
+export function expandTemplateArgument(
+  arg: string,
+  line: number,
+  templateSymbols: Map<string, TemplateSymbol>,
+  callableParams: Set<string>,
+  resolveTypeArg?: TypeResolver
+): string {
   const expression = parseCallExpression(arg, line);
   if (!expression) {
     const symbol = templateSymbols.get(arg);
     return symbol ? symbol.macroName : arg;
   }
-  const args = expression.args.map((nestedArg) => expandTemplateArgument(nestedArg, line, templateSymbols, callableParams));
+  const args = expression.args.map((nestedArg) => expandTemplateArgument(nestedArg, line, templateSymbols, callableParams, resolveTypeArg));
   if (callableParams.has(expression.callee)) { return `${expression.callee}(${args.join(', ')})`; }
-  return applyTemplateSymbol(expression.callee, args, line, templateSymbols);
+  return applyTemplateSymbol(expression.callee, args, line, templateSymbols, resolveTypeArg);
 }
 
 export function expandTemplateBody(template: TemplateNode, templateSymbols: Map<string, TemplateSymbol>): string {
@@ -186,13 +209,28 @@ export function expandTemplateBodyInline(
 export function expandStructUse(
   useExpr: string | undefined,
   line: number,
-  paramTemplates: Map<string, TemplateNode>
+  paramTemplates: Map<string, TemplateNode>,
+  paramStructs: Map<string, import('./parser').StructNode> = new Map()
 ): import('./parser').TemplateField[] {
   if (!useExpr) { return []; }
   const call = parseCallExpression(useExpr, line);
   if (!call) { return []; }
   const template = paramTemplates.get(call.callee);
-  if (!template) { return []; }
+  if (!template) {
+    const struct = paramStructs.get(call.callee);
+    if (!struct) { return []; }
+    const paramMap = new Map<string, string>();
+    struct.params.forEach((param, i) => {
+      if (i < call.args.length) { paramMap.set(param.name, call.args[i].trim()); }
+    });
+    return struct.fields.map((field) => ({
+      name: field.name,
+      target: paramMap.get(field.target) ?? field.target,
+      mutable: field.mutable || struct.attributes.some((attr) => attr.name === 'mutable'),
+      attributes: field.attributes,
+      line: field.line
+    }));
+  }
   const paramMap = new Map<string, string>();
   template.params.forEach((param, i) => {
     if (i < call.args.length) { paramMap.set(param.name, call.args[i].trim()); }

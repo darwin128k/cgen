@@ -4,9 +4,9 @@ import { type FileIndexEntry, hashSource } from './indexer';
 import { parseDsl, createSection, type SectionNode, type ParsedDsl } from './parser';
 import { formatCgen } from './formatter';
 import { type SymbolUsageIndex, type ModuleArtifact, type TypeSymbol, type TemplateSymbol } from './cgenTypes';
-import { type TemplateNode } from './parser';
+import { type TemplateNode, type StructNode } from './parser';
 import { loadConfig } from './config';
-import { buildTemplateSymbols, buildTypeSymbols, buildParamTemplateMap, buildBodyTemplateMap } from './symbols';
+import { buildTemplateSymbols, buildTypeSymbols, buildParamTemplateMap, buildBodyTemplateMap, buildParamStructMap } from './symbols';
 import { collectModules, resolveModuleDependencies, buildSymbolUsageIndex, reduceTransitiveDependencies } from './resolver';
 import { renderHeader, renderSource } from './renderer';
 import {
@@ -31,6 +31,7 @@ interface DslArtifacts {
   symbols: Map<string, TypeSymbol>;
   templateSymbols: Map<string, TemplateSymbol>;
   paramTemplates: Map<string, TemplateNode>;
+  paramStructs: Map<string, StructNode>;
   bodyTemplates: Map<string, TemplateNode>;
   usage: SymbolUsageIndex;
   perFileData: FileIndexEntry[];
@@ -127,18 +128,19 @@ async function buildDslArtifacts(
     const templateSymbols = buildTemplateSymbols(modules);
     const symbols = buildTypeSymbols(modules, templateSymbols);
     const paramTemplates = buildParamTemplateMap(modules);
+    const paramStructs = buildParamStructMap(modules);
     const bodyTemplates = buildBodyTemplateMap(modules);
 
-    resolveModuleDependencies(modules, symbols, templateSymbols, paramTemplates);
+    resolveModuleDependencies(modules, symbols, templateSymbols, paramTemplates, paramStructs);
     const usage = buildSymbolUsageIndex(modules);
 
     for (const module of modules) {
       if (module.headerPathParts.length === 0) { continue; }
-      renderHeader(module, [], symbols, templateSymbols, paramTemplates, bodyTemplates);
-      renderSource(module, symbols, templateSymbols, paramTemplates);
+      renderHeader(module, [], symbols, templateSymbols, paramTemplates, paramStructs, bodyTemplates);
+      renderSource(module, symbols, templateSymbols, paramTemplates, paramStructs);
     }
 
-    return { root: merged.root, modules, symbols, templateSymbols, paramTemplates, bodyTemplates, usage, perFileData };
+    return { root: merged.root, modules, symbols, templateSymbols, paramTemplates, paramStructs, bodyTemplates, usage, perFileData };
   } catch (e) {
     throw new DslError(e instanceof Error ? e.message : String(e), merged.root, perFileData);
   }
@@ -164,7 +166,7 @@ export async function generateDsl(
   if (options.build && !config.build) {
     throw new Error('cgen.json must contain build settings to generate and build');
   }
-  const { root, modules, symbols, templateSymbols, paramTemplates, bodyTemplates, usage, perFileData } = await buildDslArtifacts(workspaceFolder, extensionUri, source, options);
+  const { root, modules, symbols, templateSymbols, paramTemplates, paramStructs, bodyTemplates, usage, perFileData } = await buildDslArtifacts(workspaceFolder, extensionUri, source, options);
 
   const generated: string[] = [];
   const includeRoot = resolveWorkspacePath(workspaceFolder, config.generate.include);
@@ -184,12 +186,12 @@ export async function generateDsl(
       .map((candidate) => candidate.includePath)
       .filter((p) => p.length > 0)
       .sort();
-    const text = renderHeader(module, includes, symbols, templateSymbols, paramTemplates, bodyTemplates);
+    const text = renderHeader(module, includes, symbols, templateSymbols, paramTemplates, paramStructs, bodyTemplates);
     await vscode.workspace.fs.createDirectory(vscode.Uri.file(path.dirname(headerPath)));
     await vscode.workspace.fs.writeFile(vscode.Uri.file(headerPath), Buffer.from(text, 'utf8'));
     generated.push(headerPath);
 
-    const sourceText = renderSource(module, symbols, templateSymbols, paramTemplates);
+    const sourceText = renderSource(module, symbols, templateSymbols, paramTemplates, paramStructs);
     if (sourceText) {
       const sourcePath = path.join(sourceRoot, ...module.context.pathParts, `${module.section.name}.c`);
       await vscode.workspace.fs.createDirectory(vscode.Uri.file(path.dirname(sourcePath)));

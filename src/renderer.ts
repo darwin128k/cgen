@@ -33,15 +33,22 @@ import {
   collectScopeFns,
   collectScopeLets,
   collectScopeTypeDeclarations,
+  collectScopeParameterizedStructs,
   resolveTypeExpression,
   shouldDefineAlias,
   hasReturnStatement,
   inferReturnedSelfField,
   getStructFields,
+  isTemplateLikeFn,
 } from './symbols';
 
-function renderFieldDeclaration(field: import('./parser').TemplateField, typeName: string, template?: TemplateNode): string {
-  const prefix = field.mutable || template?.mutable ? '' : 'const ';
+function renderFieldDeclaration(
+  field: import('./parser').TemplateField,
+  typeName: string,
+  template?: TemplateNode,
+  forceMutable = false
+): string {
+  const prefix = field.mutable || template?.mutable || forceMutable ? '' : 'const ';
   return `${prefix}${typeName} ${field.name}`;
 }
 
@@ -171,6 +178,79 @@ function renderFnParam(
   return `${prefix}${typeName} ${param.name}`;
 }
 
+function renderMacroParamList(params: FnParam[]): string {
+  return params.map((p) => p.variadic ? '...' : p.name).join(', ');
+}
+
+function renderDefineFnBody(
+  fn: FnNode,
+  symbols: Map<string, TypeSymbol>,
+  templateSymbols: Map<string, TemplateSymbol>
+): string {
+  if (fn.body.length !== 1) {
+    throw new Error(`Line ${fn.line}: template-like fn must have exactly one return or use statement`);
+  }
+  const line = fn.body[0];
+  const exprOf = line.match(/^return\s+c\.expr\((.*)\)(?:\s+as\s+.+)?$/)
+    ?? line.match(/^use\s+c\.expr\((.*)\)$/);
+  if (exprOf) {
+    const arg = exprOf[1].trim();
+    const parsed = parseFnExprArgument(arg);
+    const body = /^[A-Za-z_][A-Za-z0-9_]*$/.test(parsed) ? `\${${parsed}}` : parsed;
+    return expandDefineFnVariadics(fn, body);
+  }
+  const returnStatement = parseReturnStatement(line);
+  if (returnStatement) {
+    return expandDefineFnVariadics(fn, expandTypedTemplateArgument(returnStatement.expr, fn.line, symbols, templateSymbols));
+  }
+  if (/^use\s+/.test(line)) {
+    const expression = parseUseExpression(line, fn.line);
+    const args = expression.args.map((arg) => expandTypedTemplateArgument(arg, fn.line, symbols, templateSymbols));
+    const body = applyTemplateSymbol(expression.callee, args, fn.line, templateSymbols, (arg, lineNumber) => resolveTypeExpression(arg, lineNumber, symbols, templateSymbols));
+    return expandDefineFnVariadics(fn, body);
+  }
+  throw new Error(`Line ${fn.line}: template-like fn must have a return or use statement`);
+}
+
+function expandDefineFnVariadics(fn: FnNode, body: string): string {
+  let result = body;
+  for (const param of fn.params.filter((candidate) => candidate.variadic)) {
+    const escaped = param.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    result = result
+      .replace(new RegExp(`\\$\\{${escaped}\\}`, 'g'), '__VA_ARGS__')
+      .replace(new RegExp(`\\b${escaped}\\b`, 'g'), '__VA_ARGS__');
+  }
+  return result;
+}
+
+function expandTypedTemplateArgument(
+  arg: string,
+  line: number,
+  symbols: Map<string, TypeSymbol>,
+  templateSymbols: Map<string, TemplateSymbol>
+): string {
+  return expandTemplateArgument(
+    arg,
+    line,
+    templateSymbols,
+    new Set(),
+    (typeArg, lineNumber) => resolveTypeExpression(typeArg, lineNumber, symbols, templateSymbols)
+  );
+}
+
+function resolveMacroArg(
+  arg: string,
+  line: number,
+  symbols: Map<string, TypeSymbol>,
+  templateSymbols: Map<string, TemplateSymbol>
+): string {
+  try {
+    return resolveTypeExpression(arg, line, symbols, templateSymbols);
+  } catch {
+    return expandTemplateArgument(arg, line, templateSymbols, new Set());
+  }
+}
+
 function makeFnSignature(
   fn: FnNode,
   fnCName: string,
@@ -193,6 +273,7 @@ function resolveStructMethodReturnType(
   fn: FnNode,
   struct: StructNode,
   paramTemplates: Map<string, TemplateNode>,
+  paramStructs: Map<string, StructNode>,
   symbols: Map<string, TypeSymbol>,
   templateSymbols: Map<string, TemplateSymbol>
 ): string {
@@ -201,7 +282,7 @@ function resolveStructMethodReturnType(
   const fieldName = inferReturnedSelfField(fn);
   if (!hasReturnStatement(fn)) { return 'void'; }
   if (!fieldName) { throw new Error(`Line ${fn.bodyLine || fn.line}: cannot infer any return type`); }
-  const field = getStructFields(struct, paramTemplates).find((candidate) => candidate.name === fieldName);
+  const field = getStructFields(struct, paramTemplates, paramStructs).find((candidate) => candidate.name === fieldName);
   if (!field) {
     throw new Error(`Line ${fn.bodyLine || fn.line}: cannot infer any return type, unknown field "self.${fieldName}"`);
   }
@@ -215,11 +296,12 @@ function makeStructMethodSignature(
   templateSymbols: Map<string, TemplateSymbol>,
   selfTypeName: string,
   struct: StructNode,
-  paramTemplates: Map<string, TemplateNode>
+  paramTemplates: Map<string, TemplateNode>,
+  paramStructs: Map<string, StructNode>
 ): string {
   const specifiers = getFnSpecifiers(fn);
   const prefix = specifiers ? `${specifiers} ` : '';
-  const returnC = resolveStructMethodReturnType(fn, struct, paramTemplates, symbols, templateSymbols);
+  const returnC = resolveStructMethodReturnType(fn, struct, paramTemplates, paramStructs, symbols, templateSymbols);
   const selfPrefix = fn.selfMutable ? '' : 'const ';
   const params = [`${selfPrefix}${selfTypeName} *self`, ...fn.params.map((p) => p.variadic ? '...' : renderFnParam(p, symbols, templateSymbols))];
   return `${prefix}${returnC} ${fnCName}(${params.join(', ')})`;
@@ -276,7 +358,7 @@ function renderLetDefinition(
 ): string {
   const storage = isPrivate ? 'static ' : '';
   const typeName = resolveTypeExpression(letNode.type, letNode.line, symbols, templateSymbols);
-  const expanded = expandTemplateArgument(letNode.expr, letNode.line, templateSymbols, new Set());
+  const expanded = expandTypedTemplateArgument(letNode.expr, letNode.line, symbols, templateSymbols);
   return `${storage}${renderLetTypePrefix(letNode)}${typeName} ${cName} = ${expanded};`;
 }
 
@@ -310,7 +392,7 @@ function renderFnBodyLine(
   if (letStatement) {
     const typeName = resolveTypeExpression(letStatement.type, fnLine, symbols, templateSymbols);
     const expr = renderFnExpression(letStatement.expr, methodSelfPointer);
-    const expanded = expandTemplateArgument(expr, fnLine, templateSymbols, new Set());
+    const expanded = expandTypedTemplateArgument(expr, fnLine, symbols, templateSymbols);
     return `  ${typeName} ${letStatement.name} = ${expanded};`;
   }
   const exprOfMatch = line.match(/^use\s+c\.expr\((.*)\)$/);
@@ -318,7 +400,7 @@ function renderFnBodyLine(
   const returnStatement = parseReturnStatement(line);
   if (returnStatement) {
     const expr = renderFnExpression(returnStatement.expr, methodSelfPointer);
-    const expanded = expandTemplateArgument(expr, fnLine, templateSymbols, new Set());
+    const expanded = expandTypedTemplateArgument(expr, fnLine, symbols, templateSymbols);
     return `  return ${expanded};`;
   }
   const assignment = parseAssignmentStatement(line);
@@ -328,13 +410,13 @@ function renderFnBodyLine(
     }
     const target = renderFnExpression(assignment.target, methodSelfPointer);
     const expr = renderFnExpression(assignment.expr, methodSelfPointer);
-    const expanded = expandTemplateArgument(expr, fnLine, templateSymbols, new Set());
+    const expanded = expandTypedTemplateArgument(expr, fnLine, symbols, templateSymbols);
     return `  ${target} = ${expanded};`;
   }
   if (/^use\s+/.test(line)) {
     const expression = parseUseExpression(renderFnExpression(line, methodSelfPointer), fnLine);
-    const args = expression.args.map((arg) => expandTemplateArgument(arg, fnLine, templateSymbols, new Set()));
-    const expanded = applyTemplateSymbol(expression.callee, args, fnLine, templateSymbols);
+    const args = expression.args.map((arg) => expandTypedTemplateArgument(arg, fnLine, symbols, templateSymbols));
+    const expanded = applyTemplateSymbol(expression.callee, args, fnLine, templateSymbols, (typeArg, lineNumber) => resolveTypeExpression(typeArg, lineNumber, symbols, templateSymbols));
     return `  ${expanded};`;
   }
   throw new Error(`Line ${fnLine}: function bodies only support declarations, assignments, returns, and use expressions`);
@@ -387,6 +469,7 @@ export function renderHeader(
   symbols: Map<string, TypeSymbol>,
   templateSymbols: Map<string, TemplateSymbol>,
   paramTemplates: Map<string, TemplateNode>,
+  paramStructs: Map<string, StructNode>,
   bodyTemplates: Map<string, TemplateNode>
 ): string {
   const lines: string[] = [];
@@ -463,7 +546,31 @@ export function renderHeader(
     lines.push(`#define ${makeMacroName(allSymbolParts, template.name)}(${paramList}) ${body}`);
   }
 
+  for (const { struct, symbolParts } of collectScopeParameterizedStructs(module.section, [])) {
+    const allSymbolParts = [...module.symbolParts, ...symbolParts];
+    const paramNames = new Set(struct.params.map((p) => p.name));
+    const paramList = renderMacroParamList(struct.params);
+    const mutableFields = hasAttr(struct.attributes, 'mutable');
+    const fieldDefs = struct.fields.map((field, index) => {
+      const typeName = paramNames.has(field.target)
+        ? field.target
+        : resolveTypeExpression(field.target, field.line, symbols, templateSymbols);
+      const semi = index < struct.fields.length - 1 ? ';' : '';
+      return `${renderFieldDeclaration(field, typeName, undefined, mutableFields)}${semi}`;
+    }).join(' ');
+    pushDoc(lines, struct.attributes);
+    lines.push(`#define ${makeMacroName(allSymbolParts, struct.name)}(${paramList}) ${fieldDefs}`);
+  }
+
+  for (const { fn, symbolParts } of collectScopeFns(module.section, [])) {
+    if (!isTemplateLikeFn(fn) || hasAttr(fn.attributes, 'intrinsic')) { continue; }
+    const allSymbolParts = [...module.symbolParts, ...symbolParts];
+    pushDoc(lines, fn.attributes);
+    lines.push(`#define ${makeMacroName(allSymbolParts, fn.name)}(${renderMacroParamList(fn.params)}) ${renderDefineFnBody(fn, symbols, templateSymbols)}`);
+  }
+
   for (const { struct, symbolParts } of collectScopeStructs(module.section, [])) {
+    if (struct.params.length > 0) { continue; }
     const allSymbolParts = [...module.symbolParts, ...symbolParts];
     const tagName = makeStructTagName(allSymbolParts, struct.name);
     const typedefName = makeTypedefName(allSymbolParts, struct.name);
@@ -476,7 +583,7 @@ export function renderHeader(
     }
     for (const use of (struct.uses ?? [])) {
       if (use.inline) {
-        for (const field of expandStructUse(use.expr, struct.line, paramTemplates)) {
+        for (const field of expandStructUse(use.expr, struct.line, paramTemplates, paramStructs)) {
           const typeName = resolveTypeExpression(field.target, field.line, symbols, templateSymbols);
           pushDoc(lines, field.attributes, '  ');
           lines.push(`  ${renderFieldDeclaration(field, typeName)};`);
@@ -487,7 +594,7 @@ export function renderHeader(
       if (!call) { continue; }
       const tmpl = templateSymbols.get(call.callee);
       if (!tmpl) { continue; }
-      const resolvedArgs = call.args.map((arg) => resolveTypeExpression(arg, struct.line, symbols, templateSymbols));
+      const resolvedArgs = call.args.map((arg) => resolveMacroArg(arg, struct.line, symbols, templateSymbols));
       lines.push(`  ${tmpl.macroName}(${resolvedArgs.join(', ')});`);
     }
     lines.push(`} ${typedefName};`);
@@ -495,8 +602,8 @@ export function renderHeader(
       const target = getFnOutputTarget(fn);
       if (target === 'source') { continue; }
       const fnCName = makeStructMethodCName(module, symbolParts, struct.name, fn.name);
-      const signature = makeStructMethodSignature(fn, fnCName, symbols, templateSymbols, typedefName, struct, paramTemplates);
-      pushFnDoc(lines, fn, resolveStructMethodReturnType(fn, struct, paramTemplates, symbols, templateSymbols), true);
+      const signature = makeStructMethodSignature(fn, fnCName, symbols, templateSymbols, typedefName, struct, paramTemplates, paramStructs);
+      pushFnDoc(lines, fn, resolveStructMethodReturnType(fn, struct, paramTemplates, paramStructs, symbols, templateSymbols), true);
       if (hasAttr(fn.attributes, 'inline')) {
         lines.push(`${signature} {`);
         lines.push(...renderFnBody(fn, symbols, templateSymbols, true));
@@ -515,6 +622,7 @@ export function renderHeader(
   }
 
   for (const { fn, symbolParts: extraParts } of collectScopeFns(module.section, [])) {
+    if (isTemplateLikeFn(fn)) { continue; }
     const target = getFnOutputTarget(fn);
     if (target === 'source') { continue; }
     const fnCName = makeFnCName(module, extraParts, fn.name);
@@ -537,7 +645,8 @@ export function renderSource(
   module: ModuleArtifact,
   symbols: Map<string, TypeSymbol>,
   templateSymbols: Map<string, TemplateSymbol>,
-  paramTemplates: Map<string, TemplateNode>
+  paramTemplates: Map<string, TemplateNode>,
+  paramStructs: Map<string, StructNode>
 ): string | undefined {
   const lines = [`#include <${module.includePath}>`, ''];
   let hasDefinitions = false;
@@ -567,6 +676,7 @@ export function renderSource(
   }
 
   for (const { fn, symbolParts: extraParts } of collectScopeFns(module.section, [])) {
+    if (isTemplateLikeFn(fn)) { continue; }
     const target = getFnOutputTarget(fn);
     if (target !== 'source' && target !== 'both') { continue; }
     const fnCName = makeFnCName(module, extraParts, fn.name);
@@ -578,6 +688,7 @@ export function renderSource(
   }
 
   for (const { struct, symbolParts } of collectScopeStructs(module.section, [])) {
+    if (struct.params.length > 0) { continue; }
     const allSymbolParts = [...module.symbolParts, ...symbolParts];
     const typedefName = makeTypedefName(allSymbolParts, struct.name);
     for (const fn of struct.fns) {
@@ -585,9 +696,9 @@ export function renderSource(
       if (target !== 'source' && target !== 'both') { continue; }
       const fnCName = makeStructMethodCName(module, symbolParts, struct.name, fn.name);
       if (target === 'source') {
-        pushFnDoc(lines, fn, resolveStructMethodReturnType(fn, struct, paramTemplates, symbols, templateSymbols), true);
+        pushFnDoc(lines, fn, resolveStructMethodReturnType(fn, struct, paramTemplates, paramStructs, symbols, templateSymbols), true);
       }
-      lines.push(`${makeStructMethodSignature(fn, fnCName, symbols, templateSymbols, typedefName, struct, paramTemplates)} {`);
+      lines.push(`${makeStructMethodSignature(fn, fnCName, symbols, templateSymbols, typedefName, struct, paramTemplates, paramStructs)} {`);
       lines.push(...renderFnBody(fn, symbols, templateSymbols, true));
       lines.push('}');
       hasDefinitions = true;

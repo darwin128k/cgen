@@ -14,7 +14,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Explicit `Ctrl+Shift+I` formatting shortcut for `.cgen` documents
 - Module-level `let name as T = expr` declarations for generated globals
 - Typed return statements with `return expr as T`
-- Best-effort semantic type checking for function bodies, struct methods, and typed template parameters
+- `@requires(type)` constraints for untyped compile-time parameters used as DSL type arguments
+- Parameterized `struct` declarations for generated field macros
+- Compile-time `fn` macros for untyped or `any`-returning functions
 
 ### Changed
 
@@ -23,14 +25,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Function visibility now uses `@public`, `@private`, and `@inline`; argument-based `@public(header|source|all)` is removed
 - `@extern` enum cases emit external declarations without generated source definitions
 - `@public` enum cases emit declarations in headers and definitions in sources
-- `@intrinsic` marks aliases and templates that resolve without direct C emission
+- `@intrinsic` marks aliases and compile-time functions that resolve without direct C emission
 - `none` return type maps to C `void`; struct method `any` resolves to `none` when no value is returned
 - Function bodies support checked `self.field = value` assignment, restricted to mutable methods
-- Assignment requires `@mutable` on both the receiver `fn` and the assigned `field` or field-template
+- Assignment requires `@mutable` on both the receiver `fn` and the assigned `field` or parameterized field struct
 - Functions use a single block form; parameters are declared as leading `param` lines in the body
 - Functions no longer declare return types on the `fn` line; `fn name:` infers `none`, `return self.field`, or `return expr as T`
 - DSL type annotations now use `as`; `->` syntax is removed
-- Templates use a single block form; parameters are declared as leading `param` lines
+- `template` declarations are removed; use `fn` for expression macros and parameterized `struct` for field macros
 - `@doc("text")` emits Doxygen documentation comments for generated declarations
 - Function documentation automatically includes missing Doxygen `@param`, `@param self`, and `@return` tags without invented descriptions
 - Body parameter documentation is collected into the function's Doxygen `@param` tags

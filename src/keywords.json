@@ -1,1 +1,1 @@
-["package", "module", "scope", "alias", "enum", "case", "as", "fn", "template", "struct", "param", "field", "use", "let", "return", "any", "none"]
+["package", "module", "scope", "alias", "enum", "case", "as", "fn", "struct", "param", "field", "use", "let", "return", "any", "none"]

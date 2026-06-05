@@ -1,4 +1,4 @@
-import type { SectionNode, FnNode, TemplateNode } from './parser';
+import type { SectionNode, FnNode, TemplateNode, StructNode } from './parser';
 import {
   type ModuleContext,
   type ModuleArtifact,
@@ -27,6 +27,9 @@ import {
   inferReturnedSelfField,
   getStructFields,
   resolveTypeExpression,
+  isTemplateLikeFn,
+  collectScopeParameterizedStructs,
+  isTypeParam,
 } from './symbols';
 import { expandStructUse } from './expander';
 
@@ -160,6 +163,7 @@ function addFnExpressionDependencies(
   templateSymbols: Map<string, TemplateSymbol>
 ): void {
   const expression = parseCallExpression(expr, line);
+  if (expression?.callee === 'c.expr') { return; }
   if (expression) { addFnUseExpressionDependencies(module, expression, line, templateSymbols); }
 }
 
@@ -233,7 +237,8 @@ export function resolveModuleDependencies(
   modules: ModuleArtifact[],
   symbols: Map<string, TypeSymbol>,
   templateSymbols: Map<string, TemplateSymbol>,
-  paramTemplates: Map<string, TemplateNode>
+  paramTemplates: Map<string, TemplateNode>,
+  paramStructs: Map<string, StructNode> = new Map()
 ): void {
   for (const module of modules) {
     for (const { declaration } of collectScopeTypeDeclarations(module.section, [])) {
@@ -294,7 +299,25 @@ export function resolveModuleDependencies(
       }
     }
 
+    for (const { struct } of collectScopeParameterizedStructs(module.section, [])) {
+      for (const param of struct.params) {
+        if (!isTypeParam(param) && param.type === 'any') { continue; }
+        if (isTypeParam(param)) { continue; }
+        for (const symbol of getTypeExpressionSymbols(param.type, param.line, symbols, templateSymbols)) {
+          addSymbolDep(module, symbol);
+        }
+      }
+      const paramNames = new Set(struct.params.map((p) => p.name));
+      for (const field of struct.fields) {
+        if (paramNames.has(field.target)) { continue; }
+        for (const symbol of getTypeExpressionSymbols(field.target, field.line, symbols, templateSymbols)) {
+          addSymbolDep(module, symbol);
+        }
+      }
+    }
+
     for (const { struct } of collectScopeStructs(module.section, [])) {
+      if (struct.params.length > 0) { continue; }
       for (const field of struct.fields) {
         for (const symbol of getTypeExpressionSymbols(field.target, field.line, symbols, templateSymbols)) {
           addSymbolDep(module, symbol);
@@ -302,7 +325,7 @@ export function resolveModuleDependencies(
       }
       for (const use of (struct.uses ?? [])) {
         if (use.inline) {
-          for (const field of expandStructUse(use.expr, struct.line, paramTemplates)) {
+          for (const field of expandStructUse(use.expr, struct.line, paramTemplates, paramStructs)) {
             for (const sym of getTypeExpressionSymbols(field.target, field.line, symbols, templateSymbols)) {
               addSymbolDep(module, sym);
             }
@@ -320,9 +343,9 @@ export function resolveModuleDependencies(
         }
       }
       for (const fn of struct.fns) {
-        validateStructMethodBody(fn, struct, paramTemplates);
+        validateStructMethodBody(fn, struct, paramTemplates, paramStructs);
         validateFnReturnBody(fn);
-        validateFnBodyTypes(fn, symbols, templateSymbols, struct, paramTemplates);
+        validateFnBodyTypes(fn, symbols, templateSymbols, struct, paramTemplates, paramStructs);
         for (const p of fn.params) {
           if (p.variadic) { continue; }
           for (const symbol of getTypeExpressionSymbols(p.type, p.line, symbols, templateSymbols)) {
@@ -330,7 +353,7 @@ export function resolveModuleDependencies(
           }
         }
         const returnTargets = fn.returnType === 'any'
-          ? inferStructMethodReturnTargets(fn, struct, paramTemplates)
+          ? inferStructMethodReturnTargets(fn, struct, paramTemplates, paramStructs)
           : [fn.returnType];
         for (const returnTarget of returnTargets) {
           for (const symbol of getTypeExpressionSymbols(returnTarget, fn.line, symbols, templateSymbols)) {
@@ -342,6 +365,21 @@ export function resolveModuleDependencies(
     }
 
     for (const { fn } of collectScopeFns(module.section, [])) {
+      if (isTemplateLikeFn(fn)) {
+        for (const p of fn.params) {
+          if (p.variadic || p.type === 'any' || isTypeParam(p)) { continue; }
+          for (const symbol of getTypeExpressionSymbols(p.type, p.line, symbols, templateSymbols)) {
+            addSymbolDep(module, symbol);
+          }
+        }
+        if (fn.returnType !== 'any' && fn.returnType !== 'none') {
+          for (const symbol of getTypeExpressionSymbols(fn.returnType, fn.line, symbols, templateSymbols)) {
+            addSymbolDep(module, symbol);
+          }
+        }
+        addFnBodyDependencies(module, fn, symbols, templateSymbols);
+        continue;
+      }
       validateFnReturnBody(fn);
       validateFnBodyTypes(fn, symbols, templateSymbols);
       for (const p of fn.params) {
@@ -563,7 +601,8 @@ function validateFnBodyTypes(
   symbols: Map<string, TypeSymbol>,
   templateSymbols: Map<string, TemplateSymbol>,
   struct?: import('./parser').StructNode,
-  paramTemplates?: Map<string, TemplateNode>
+  paramTemplates?: Map<string, TemplateNode>,
+  paramStructs?: Map<string, StructNode>
 ): void {
   const env = new Map<string, ValueType>();
   for (const param of fn.params) {
@@ -572,11 +611,11 @@ function validateFnBodyTypes(
   }
 
   const selfFields = struct && paramTemplates
-    ? new Map(getStructFields(struct, paramTemplates).map((field) => [field.name, field]))
+    ? new Map(getStructFields(struct, paramTemplates, paramStructs).map((field) => [field.name, field]))
     : undefined;
 
   const expectedReturnTypes = fn.returnType === 'any' && struct && paramTemplates
-    ? inferStructMethodReturnTargets(fn, struct, paramTemplates)
+    ? inferStructMethodReturnTargets(fn, struct, paramTemplates, paramStructs)
     : fn.returnType === 'none'
       ? []
       : [fn.returnType];
@@ -631,9 +670,10 @@ function validateFnBodyTypes(
 function validateStructMethodBody(
   fn: FnNode,
   struct: import('./parser').StructNode,
-  paramTemplates: Map<string, TemplateNode>
+  paramTemplates: Map<string, TemplateNode>,
+  paramStructs: Map<string, StructNode> = new Map()
 ): void {
-  const fields = new Map(getStructFields(struct, paramTemplates).map((field) => [field.name, field]));
+  const fields = new Map(getStructFields(struct, paramTemplates, paramStructs).map((field) => [field.name, field]));
   for (const line of fn.body) {
     const assignment = parseAssignmentStatement(line);
     if (!assignment?.target.startsWith('self.')) { continue; }
@@ -654,12 +694,13 @@ function validateStructMethodBody(
 function inferStructMethodReturnTargets(
   fn: FnNode,
   struct: import('./parser').StructNode,
-  paramTemplates: Map<string, TemplateNode>
+  paramTemplates: Map<string, TemplateNode>,
+  paramStructs: Map<string, StructNode> = new Map()
 ): string[] {
   if (!hasReturnStatement(fn)) { return []; }
   const fieldName = inferReturnedSelfField(fn);
   if (!fieldName) { throw new Error(`Line ${fn.bodyLine || fn.line}: cannot infer any return type`); }
-  const field = getStructFields(struct, paramTemplates).find((candidate) => candidate.name === fieldName);
+  const field = getStructFields(struct, paramTemplates, paramStructs).find((candidate) => candidate.name === fieldName);
   if (!field) { throw new Error(`Line ${fn.bodyLine || fn.line}: cannot infer any return type, unknown field "self.${fieldName}"`); }
   return [field.target];
 }

@@ -13,7 +13,6 @@ export const contextCandidates: Readonly<Record<string, readonly string[]>> = {
     'alias name as type',
     'enum name as type:',
     'struct name:',
-    'template name:',
     'fn name:',
     'let name as type = value',
     'scope name:',
@@ -22,7 +21,6 @@ export const contextCandidates: Readonly<Record<string, readonly string[]>> = {
     'alias name as type',
     'enum name as type:',
     'struct name:',
-    'template name:',
     'fn name:',
     'let name as type = value',
     'scope name:',
@@ -40,7 +38,7 @@ export const contextCandidates: Readonly<Record<string, readonly string[]>> = {
     'use c.ptr(value)',
     'fn name:',
   ],
-  'template.body': [
+  'define.body': [
     'name',
     'name as any',
     'name as template',

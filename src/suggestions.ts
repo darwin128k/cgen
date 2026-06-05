@@ -17,7 +17,7 @@ export interface SuggestionResult {
 }
 
 type SectionKind = 'root' | 'package' | 'module' | 'scope';
-type SymbolKind = 'alias' | 'enum' | 'template' | 'struct' | 'fn' | 'let';
+type SymbolKind = 'alias' | 'enum' | 'struct' | 'fn' | 'let';
 
 interface DslNode {
   kind: SectionKind;
@@ -440,7 +440,7 @@ function getSuggestionContextKey(
   if (/^(package|module|scope|group)\s+/.test(typed)) return 'section.name';
   if (currentTemplate.insideFn) return 'fn.body';
   if (currentTemplate.insideStruct) return 'struct.body';
-  if (currentTemplate.insideTemplate) return 'template.body';
+  if (currentTemplate.insideTemplate) return 'define.body';
 
   const node = findNode(index.root, contextPath);
   return `declaration.${node?.kind ?? 'root'}`;
@@ -521,7 +521,7 @@ function getCandidates(typed: string, contextPath: string[], currentTemplate: Cu
 function getStaticContextKey(contextPath: string[], currentTemplate: CurrentTemplate, index: DslIndex): string {
   if (currentTemplate.insideFn) { return 'fn.body'; }
   if (currentTemplate.insideStruct) { return 'struct.body'; }
-  if (currentTemplate.insideTemplate) { return 'template.body'; }
+  if (currentTemplate.insideTemplate) { return 'define.body'; }
   const node = findNode(index.root, contextPath);
   return `declaration.${node?.kind ?? 'root'}`;
 }
@@ -715,27 +715,31 @@ function getDottedFnUseCandidates(token: string, index: DslIndex): string[] {
   ]);
 }
 
-function nodeHasTemplates(node: DslNode): boolean {
-  if (node.symbols.some((s) => s.kind === 'template')) { return true; }
-  return node.children.some(nodeHasTemplates);
+function isUseCallable(symbol: DslSymbol): boolean {
+  return symbol.kind === 'fn' || (symbol.kind === 'struct' && symbol.params.length > 0);
+}
+
+function nodeHasUseCallables(node: DslNode): boolean {
+  if (node.symbols.some(isUseCallable)) { return true; }
+  return node.children.some(nodeHasUseCallables);
 }
 
 function getNodeTemplateUseMembers(node: DslNode, prefix: string, currentTemplate: CurrentTemplate): string[] {
   const childCandidates = node.children.flatMap((child) => {
     const childPath = `${prefix}${child.name}`;
     const collapsible = child.symbols.find(
-      (s) => s.kind === 'template' && makePublicSymbolPath(s).join('.') === childPath
+      (s) => isUseCallable(s) && makePublicSymbolPath(s).join('.') === childPath
     );
     if (collapsible) {
       if (currentTemplate.excludeNames.includes(childPath)) { return []; }
       const args = collapsible.params.length > 0 ? collapsible.params.join(', ') : '';
       return [`${childPath}(${args})`];
     }
-    return nodeHasTemplates(child) ? [`${childPath}.`] : [];
+    return nodeHasUseCallables(child) ? [`${childPath}.`] : [];
   });
 
   const directTemplates = node.symbols
-    .filter((symbol) => symbol.kind === 'template')
+    .filter(isUseCallable)
     .map((symbol) => {
       const name = makePublicSymbolPath(symbol).join('.');
       if (currentTemplate.excludeNames.includes(name)) { return null; }
@@ -765,12 +769,12 @@ function getRootUseNamespaces(contextPath: string[], index: DslIndex): string[] 
 function getAllUsePaths(index: DslIndex, currentTemplate: CurrentTemplate): string[] {
   const result: string[] = [];
   walk(index.root, (node) => {
-    if (node.kind !== 'root' && nodeHasTemplates(node)) {
+    if (node.kind !== 'root' && nodeHasUseCallables(node)) {
       result.push(`${node.path.join('.')}.`);
     }
 
     for (const symbol of node.symbols) {
-      if (symbol.kind !== 'template') {
+      if (!isUseCallable(symbol)) {
         continue;
       }
 
@@ -811,7 +815,6 @@ function getDottedCandidates(token: string, contextPath: string[], index: DslInd
         .map((name) => `${parentPrefix}.${name}`);
       const symbolCandidates = sortUnique(
         node.symbols
-          .filter((s) => s.kind !== 'template')
           .map((s) => s.kind === 'fn' ? formatFnUseCandidate(s) : s.path.join('.'))
       );
       const typeNames = sortUnique([...childCandidates, ...symbolCandidates]);

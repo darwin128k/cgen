@@ -1,14 +1,14 @@
 @intrinsic
 scope c:
-    template type:
+    fn type:
         param name
-        use c.expr(name)
+        return c.expr(name)
 
     scope ptr:
         @define
-        template of:
+        fn of:
             param type
-            use c.expr("${type} *")
+            return c.expr("${type} *")
 
     alias char as c.type(char)
     alias schar as c.type(signed char)
@@ -77,141 +77,141 @@ scope c:
         alias uptr as c.type(uintmax_t)
 
 
-    template cast:
+    fn cast:
         param type
         param val
-        use c.expr("((${type})${val})")
+        return c.expr("((${type})${val})")
 
-    template call:
+    fn call:
         param fn
         param ... as args
-        use c.expr("${fn}(${args})")
+        return c.expr("${fn}(${args})")
 
-    template initializer:
+    fn initializer:
         param ... as values
-        use c.expr("{ ${values} }")
+        return c.expr("{ ${values} }")
 
-    template sel:
+    fn sel:
         param cond
         param a
         param b
-        use c.expr("(${cond} ? ${a} : ${b})")
+        return c.expr("(${cond} ? ${a} : ${b})")
 
-    template eq:
+    fn eq:
         param a
         param b
-        use c.expr("(${a} == ${b})")
+        return c.expr("(${a} == ${b})")
 
-    template ne:
+    fn ne:
         param a
         param b
-        use c.expr("(${a} != ${b})")
+        return c.expr("(${a} != ${b})")
 
-    template lt:
+    fn lt:
         param a
         param b
-        use c.expr("(${a} < ${b})")
+        return c.expr("(${a} < ${b})")
 
-    template le:
+    fn le:
         param a
         param b
-        use c.expr("(${a} <= ${b})")
+        return c.expr("(${a} <= ${b})")
 
-    template gt:
+    fn gt:
         param a
         param b
-        use c.expr("(${a} > ${b})")
+        return c.expr("(${a} > ${b})")
 
-    template ge:
+    fn ge:
         param a
         param b
-        use c.expr("(${a} >= ${b})")
+        return c.expr("(${a} >= ${b})")
 
     scope struct:
-        template of:
+        fn of:
             param type
-            use c.expr("struct ${type}")
+            return c.expr("struct ${type}")
 
     scope math:
-        template add:
+        fn add:
             param a
             param b
-            use c.expr("(${a} + ${b})")
-        template sub:
+            return c.expr("(${a} + ${b})")
+        fn sub:
             param a
             param b
-            use c.expr("(${a} - ${b})")
-        template mul:
+            return c.expr("(${a} - ${b})")
+        fn mul:
             param a
             param b
-            use c.expr("(${a} * ${b})")
-        template div:
+            return c.expr("(${a} * ${b})")
+        fn div:
             param a
             param b
-            use c.expr("(${a} / ${b})")
-        template mod:
+            return c.expr("(${a} / ${b})")
+        fn mod:
             param a
             param b
-            use c.expr("(${a} % ${b})")
-        template neg:
+            return c.expr("(${a} % ${b})")
+        fn neg:
             param a
-            use c.expr("(-${a})")
+            return c.expr("(-${a})")
 
         scope bit:
-            template and:
+            fn and:
                 param a
                 param b
-                use c.expr("(${a} & ${b})")
-            template or:
+                return c.expr("(${a} & ${b})")
+            fn or:
                 param a
                 param b
-                use c.expr("(${a} | ${b})")
-            template xor:
+                return c.expr("(${a} | ${b})")
+            fn xor:
                 param a
                 param b
-                use c.expr("(${a} ^ ${b})")
-            template not:
+                return c.expr("(${a} ^ ${b})")
+            fn not:
                 param a
-                use c.expr("(~${a})")
-            template shl:
-                param a
-                param b
-                use c.expr("(${a} << ${b})")
-            template shr:
+                return c.expr("(~${a})")
+            fn shl:
                 param a
                 param b
-                use c.expr("(${a} >> ${b})")
-            template set:
+                return c.expr("(${a} << ${b})")
+            fn shr:
                 param a
                 param b
-                use c.expr("(${a} |= ${b})")
+                return c.expr("(${a} >> ${b})")
+            fn set:
+                param a
+                param b
+                return c.expr("(${a} |= ${b})")
 
     @include("stdlib.h")
-    template malloc:
+    fn malloc:
         param size
-        use c.expr("malloc(${size})")
+        return c.expr("malloc(${size})")
 
     @include("stdlib.h")
-    template calloc:
+    fn calloc:
         param count
         param size
-        use c.expr("calloc(${count}, ${size})")
+        return c.expr("calloc(${count}, ${size})")
 
     @include("stdlib.h")
-    template free:
+    fn free:
         param ptr
-        use c.expr("free(${ptr})")
+        return c.expr("free(${ptr})")
 
     @include("string.h")
-    template memcpy:
+    fn memcpy:
         param dest
         param src
         param size
-        use c.expr("memcpy(${dest}, ${src}, ${size})")
+        return c.expr("memcpy(${dest}, ${src}, ${size})")
 
     @include("string.h")
-    template memset:
+    fn memset:
         param dest
         param value
         param size
-        use c.expr("memset(${dest}, ${value}, ${size})")
+        return c.expr("memset(${dest}, ${value}, ${size})")

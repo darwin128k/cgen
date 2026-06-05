@@ -3,7 +3,7 @@ import * as vscode from 'vscode';
 import { makePublicPath, type SectionKind, type SectionNode } from './parser';
 import type { SymbolUsageIndex } from './cgenTypes';
 
-type SymbolKind = 'alias' | 'enum' | 'template' | 'struct' | 'fn' | 'let';
+type SymbolKind = 'alias' | 'enum' | 'struct' | 'fn' | 'let';
 
 export interface IndexedNode {
   kind: SectionKind;
@@ -369,12 +369,9 @@ function extractFromRoot(root: SectionNode): { sections: StoredSection[]; symbol
     for (const enumNode of node.enums) {
       symbols.push({ kind: 'enum', name: enumNode.name, path: makePublicPath([...pathParts, enumNode.name]).join('.'), parentPath: symbolParentPath, params: '' });
     }
-    for (const template of node.templates) {
-      symbols.push({ kind: 'template', name: template.name, path: makePublicPath([...pathParts, template.name]).join('.'), parentPath: symbolParentPath, params: template.params.map((p) => p.name).join(',') });
-    }
     for (const struct of node.structs) {
       const structPath = makePublicPath([...pathParts, struct.name]);
-      symbols.push({ kind: 'struct', name: struct.name, path: structPath.join('.'), parentPath: symbolParentPath, params: '' });
+      symbols.push({ kind: 'struct', name: struct.name, path: structPath.join('.'), parentPath: symbolParentPath, params: struct.params.map((p) => p.name).join(',') });
       for (const fn of struct.fns) {
         symbols.push({ kind: 'fn', name: fn.name, path: [...structPath, fn.name].join('.'), parentPath: structPath.join('.'), params: fn.params.map((p) => p.name).join(',') });
       }

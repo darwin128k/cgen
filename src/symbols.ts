@@ -1,4 +1,4 @@
-import type { SectionNode, TemplateNode, AliasNode, EnumNode } from './parser';
+import type { SectionNode, TemplateNode, AliasNode, EnumNode, FnNode, StructNode, FnParam } from './parser';
 import {
   type ModuleArtifact,
   type TypeSymbol,
@@ -79,6 +79,24 @@ export function collectScopeRecordTemplates(
   );
 }
 
+export function collectScopeParameterizedStructs(
+  section: SectionNode,
+  extraParts: string[]
+): Array<{ struct: StructNode; symbolParts: string[]; typeParts: string[] }> {
+  return collectScopeStructs(section, extraParts).filter(({ struct }) => struct.params.length > 0);
+}
+
+export function isAnyParam(param: FnParam): boolean {
+  return param.type === 'any';
+}
+
+export function isTemplateLikeFn(fn: FnNode): boolean {
+  return hasAttr(fn.attributes, 'define')
+    || hasAttr(fn.attributes, 'intrinsic')
+    || fn.params.some(isAnyParam)
+    || fn.returnType === 'any';
+}
+
 function getTypeDeclarations(section: SectionNode): TypeDeclaration[] {
   return [...section.aliases, ...section.enums].sort((left, right) => left.line - right.line);
 }
@@ -110,6 +128,17 @@ export function buildParamTemplateMap(modules: ModuleArtifact[]): Map<string, Te
   return map;
 }
 
+export function buildParamStructMap(modules: ModuleArtifact[]): Map<string, StructNode> {
+  const map = new Map<string, StructNode>();
+  for (const module of modules) {
+    for (const { struct, typeParts } of collectScopeParameterizedStructs(module.section, [])) {
+      const key = makeTypeKey([...module.typeParts, ...typeParts], struct.name);
+      map.set(key, struct);
+    }
+  }
+  return map;
+}
+
 export function buildBodyTemplateMap(modules: ModuleArtifact[]): Map<string, TemplateNode> {
   const map = new Map<string, TemplateNode>();
   for (const module of modules) {
@@ -126,6 +155,57 @@ export function buildBodyTemplateMap(modules: ModuleArtifact[]): Map<string, Tem
 export function buildTemplateSymbols(modules: ModuleArtifact[]): Map<string, TemplateSymbol> {
   const symbols = new Map<string, TemplateSymbol>();
   for (const module of modules) {
+    for (const { fn, symbolParts } of collectScopeFns(module.section, [])) {
+      if (!isTemplateLikeFn(fn)) { continue; }
+      const allTypeParts = [...module.typeParts, ...symbolParts];
+      if (allTypeParts[allTypeParts.length - 1] !== fn.name) { allTypeParts.push(fn.name); }
+      const key = allTypeParts.join('.');
+      const allSymbolParts = [...module.symbolParts, ...symbolParts];
+      const macroName = makeMacroName(allSymbolParts, fn.name);
+      const existing = symbols.get(key);
+      if (existing) {
+        throw new Error(`Line ${fn.line}: callable "${key}" is already defined in ${existing.includePath}`);
+      }
+      const rawBody = getRawFnBody(fn);
+      symbols.set(key, {
+        key,
+        macroName,
+        moduleId: module.id,
+        includePath: module.includePath,
+        externHeader: getIncludeArg(fn.attributes) ?? undefined,
+        intrinsicOnly: hasAttr(fn.attributes, 'intrinsic'),
+        defineOnly: hasAttr(fn.attributes, 'define') || hasAttr(fn.attributes, 'intrinsic') || fn.params.some(isAnyParam),
+        ...(rawBody ? {
+          rawBody,
+          rawParams: fn.params.map((p) => p.name),
+          rawTypeParams: fn.params.filter(isTypeParam).map((p) => p.name)
+        } : {})
+      });
+    }
+
+    for (const { struct, typeParts } of collectScopeParameterizedStructs(module.section, [])) {
+      const allTypeParts = [...module.typeParts, ...typeParts];
+      if (allTypeParts[allTypeParts.length - 1] !== struct.name) { allTypeParts.push(struct.name); }
+      const key = allTypeParts.join('.');
+      const allSymbolParts = [...module.symbolParts, ...typeParts];
+      const macroName = makeMacroName(allSymbolParts, struct.name);
+      const existing = symbols.get(key);
+      if (existing) {
+        throw new Error(`Line ${struct.line}: callable "${key}" is already defined in ${existing.includePath}`);
+      }
+      symbols.set(key, {
+        key,
+        macroName,
+        moduleId: module.id,
+        includePath: module.includePath,
+        externHeader: getIncludeArg(struct.attributes) ?? undefined,
+        intrinsicOnly: hasAttr(struct.attributes, 'intrinsic'),
+        defineOnly: true,
+        rawParams: struct.params.map((p) => p.name),
+        rawTypeParams: struct.params.filter(isTypeParam).map((p) => p.name)
+      });
+    }
+
     for (const { template, typeParts } of collectScopeTemplates(module.section, [])) {
       const allTypeParts = [...module.typeParts, ...typeParts];
       if (allTypeParts[allTypeParts.length - 1] !== template.name) { allTypeParts.push(template.name); }
@@ -150,6 +230,22 @@ export function buildTemplateSymbols(modules: ModuleArtifact[]): Map<string, Tem
     }
   }
   return symbols;
+}
+
+function getRawFnBody(fn: FnNode): string | undefined {
+  if (fn.body.length !== 1) { return undefined; }
+  const line = fn.body[0];
+  const exprOf = line.match(/^return\s+c\.expr\((.*)\)(?:\s+as\s+.+)?$/)
+    ?? line.match(/^use\s+c\.expr\((.*)\)$/);
+  if (!exprOf) { return undefined; }
+  const arg = exprOf[1].trim();
+  const quoted = arg.match(/^"(.*)"$/)?.[1];
+  if (quoted !== undefined) { return quoted; }
+  return /^[A-Za-z_][A-Za-z0-9_]*$/.test(arg) ? `\${${arg}}` : arg;
+}
+
+export function isTypeParam(param: FnParam): boolean {
+  return param.attributes.some((attr) => attr.name === 'requires' && attr.args.includes('type'));
 }
 
 export function buildTypeSymbols(modules: ModuleArtifact[], templateSymbols: Map<string, TemplateSymbol>): Map<string, TypeSymbol> {
@@ -191,6 +287,7 @@ export function buildTypeSymbols(modules: ModuleArtifact[], templateSymbols: Map
     }
 
     for (const { struct, symbolParts, typeParts } of collectScopeStructs(module.section, [])) {
+      if (struct.params.length > 0) { continue; }
       const key = makeTypeKey([...module.typeParts, ...typeParts], struct.name);
       const cName = makeTypedefName([...module.symbolParts, ...symbolParts], struct.name);
       const existing = symbols.get(key);
@@ -225,12 +322,12 @@ function expandTypeTemplateExpression(
 ): string {
   const args = expression.args.map((arg, index) => {
     const paramName = template.rawParams?.[index];
-    return isTypeTemplateParam(paramName)
+    return isTypeTemplateParam(paramName) || template.rawTypeParams?.includes(paramName ?? '')
       ? resolveTypeExpression(arg, line, symbols, templateSymbols)
       : arg;
   });
   for (const [index, paramName] of (template.rawParams ?? []).entries()) {
-    if (isTypeTemplateParam(paramName) && expression.args[index] === undefined) {
+    if ((isTypeTemplateParam(paramName) || template.rawTypeParams?.includes(paramName ?? '')) && expression.args[index] === undefined) {
       throw new Error(`Line ${line}: type template "${expression.callee}" expects argument "${paramName}"`);
     }
   }
@@ -279,7 +376,7 @@ export function getTypeExpressionSymbols(
     if (template?.rawBody !== undefined) {
       const result: TypeSymbol[] = [];
       for (let index = 0; index < expression.args.length; index += 1) {
-        if (isTypeTemplateParam(template.rawParams?.[index])) {
+        if (isTypeTemplateParam(template.rawParams?.[index]) || template.rawTypeParams?.includes(template.rawParams?.[index] ?? '')) {
           result.push(...getTypeExpressionSymbols(expression.args[index], line, symbols, templateSymbols));
         }
       }
@@ -305,11 +402,12 @@ export function inferReturnedSelfField(fn: import('./parser').FnNode): string | 
 
 export function getStructFields(
   struct: import('./parser').StructNode,
-  paramTemplates: Map<string, TemplateNode>
+  paramTemplates: Map<string, TemplateNode>,
+  paramStructs: Map<string, StructNode> = new Map()
 ): import('./parser').TemplateField[] {
   const fields = [...struct.fields];
   for (const use of (struct.uses ?? [])) {
-    fields.push(...expandStructUse(use.expr, struct.line, paramTemplates));
+    fields.push(...expandStructUse(use.expr, struct.line, paramTemplates, paramStructs));
   }
   return fields;
 }

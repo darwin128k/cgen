@@ -169,10 +169,10 @@ package lh:
             case true
 
     package math:
-        template add:
+        fn add:
             param a
             param b
-            use c.math.add(a, b)
+            return c.math.add(a, b)
 ```
 
 Inline nesting is supported for `package`, `module`, and `scope`:
@@ -233,7 +233,7 @@ Guard: `LH_CHAR_H`. Type name: `lh_uchar_t` (not `lh_char_uchar_t`).
 
 ### `@include("header.h")`
 
-Attaches to aliases and templates that depend on external C declarations. Specifies which C header to `#include` in any generated file that uses the declared name.
+Attaches to aliases and compile-time functions that depend on external C declarations. Specifies which C header to `#include` in any generated file that uses the declared name.
 
 ```cgen
 scope c:
@@ -243,7 +243,7 @@ scope c:
 
 ## External C Symbols
 
-External C types, macros, and functions are represented with ordinary `alias` and `template` declarations, usually under a `scope c:` namespace. Use `c.type(...)` for C type spelling, `c.expr(...)` for literal C expressions, and `@include("...")` when generated files must include a C header.
+External C types, macros, and functions are represented with ordinary `alias` and compile-time `fn` declarations, usually under a `scope c:` namespace. Use `c.type(...)` for C type spelling, `c.expr(...)` for literal C expressions, and `@include("...")` when generated files must include a C header.
 
 ```cgen
 scope c:
@@ -254,12 +254,12 @@ scope c:
     alias size as c.type(size_t)
 
     @include("stdlib.h")
-    template malloc:
+    fn malloc:
         param size
-        use c.expr(malloc(${size}))
+        return c.expr("malloc(${size})")
 ```
 
-Alias declarations map a DSL name to a C type spelling. Template declarations map a DSL name to a C macro or function — they produce no output themselves but can be called from template `use` bodies or used as field types.
+Alias declarations map a DSL name to a C type spelling. Untyped compile-time functions map a DSL name to a C macro or expression — they can be called from function bodies, `let` initializers, returns, or other compile-time functions.
 
 A bundled `packages/c.cgen` file declares the standard C types and common stdlib/string.h functions (see [Built-in C Types](#built-in-c-types)), so they are always available without any extra setup.
 
@@ -277,7 +277,7 @@ typedef lh_uchar_t lh_byte_t;
 
 If the target type lives in another generated module, CGen adds the needed `#include` automatically.
 
-**Special cases — `c.void` and define-only type templates:** because `typedef void foo_t` is an incomplete type, and pointer aliases are intended to behave as pure C spelling aliases, these targets generate `#define` declarations instead. The bundled `c.ptr.of(...)` template is declared in `packages/c.cgen` as a define-only inline type template.
+**Special cases — `c.void` and define-only type helpers:** because `typedef void foo_t` is an incomplete type, and pointer aliases are intended to behave as pure C spelling aliases, these targets generate `#define` declarations instead. The bundled `c.ptr.of(...)` helper is declared in `packages/c.cgen` as a define-only compile-time function.
 
 ```cgen
 alias void as c.void
@@ -360,21 +360,21 @@ enum status as c.int:
     case error
 ```
 
-`@intrinsic` is unrelated to linkage. It marks aliases and templates as DSL-level primitives that are resolved and expanded but not emitted directly.
+`@intrinsic` is unrelated to linkage. It marks aliases and compile-time functions as DSL-level primitives that are resolved and expanded but not emitted directly.
 
-For an intrinsic alias, CGen substitutes the target C type instead of generating an intermediate typedef. For an intrinsic template, CGen expands its body at use sites instead of generating a standalone macro.
+For an intrinsic alias, CGen substitutes the target C type instead of generating an intermediate typedef. For an intrinsic compile-time function, CGen expands its body at use sites instead of generating a standalone macro.
 
 ```cgen
 @intrinsic
 scope c:
-    template type:
+    fn type:
         param name
-        use c.expr(name)
+        return c.expr(name)
 
     alias int as c.type(int)
 ```
 
-The bundled `packages/c.cgen` uses `@intrinsic` on `scope c`, so its C types and helper templates do not create unnecessary `c_*` typedefs or macros.
+The bundled `packages/c.cgen` uses `@intrinsic` on `scope c`, so its C types and helper functions do not create unnecessary `c_*` typedefs or macros.
 
 ### `@doc("text")`
 
@@ -465,7 +465,7 @@ Function bodies support these statement forms:
 | `return expr as T`     | `return expr;` with return type `T` |
 | `use c.expr(...)`      | literal C line   |
 
-`expr` in a `let` or `return` statement may be a plain identifier, a field access (`self.field`), or a built-in template call such as `c.cast(type, val)` — it is expanded the same way as a template argument.
+`expr` in a `let` or `return` statement may be a plain identifier, a field access (`self.field`), or a built-in compile-time call such as `c.cast(type, val)` — it is expanded before C output.
 
 CGen performs best-effort semantic type checks when both sides have known DSL types. It validates assignments to local values and `self.field`, typed returns, inferred `return self.field`, and built-in expressions such as `c.cast`, `c.sel`, comparisons, and `c.math.*`. Raw C expressions and literals remain unchecked and are left to the C compiler.
 
@@ -503,7 +503,7 @@ struct version:
 
 This generates a `void` method with a mutable `version_t *self` parameter and a mutable field. The same body in a non-mutable `fn` is an error. Assigning to an ordinary const `field` is also an error, even from a mutable method.
 
-Use `@mutable` on a field-template when every field it produces should be mutable.
+Use `@mutable` on a parameterized field struct when every field it produces should be mutable.
 
 ### Visibility
 
@@ -537,19 +537,19 @@ This generates a public `api` declaration and source definition, a source-only `
 
 Templates generate function-like macros (`#define`). The body must be a single
 `use X(...)` expression. `X` can be a built-in operation such as `c.math.add` or
-another generated template such as `lh.math.add`.
+another generated compile-time function such as `lh.math.add`.
 
-Template parameters are declared as leading `param` lines. Like functions, template declarations intentionally use one block-oriented form; parentheses are reserved for calls.
+Functions with untyped (`any`) parameters or an inferred `any` return are compile-time callables. They generate macros instead of C functions. Parameters are declared as leading `param` lines; parentheses are reserved for calls.
 
 ```cgen
-template add:
+fn add:
     param a
     param b
-    use c.math.add(a, b)
+    return c.math.add(a, b)
 
-template add_one:
+fn add_one:
     param a
-    use lh.math.add(a, 1)
+    return lh.math.add(a, 1)
 ```
 
 ```c
@@ -557,28 +557,28 @@ template add_one:
 #define lh_math_add_one(a) lh_math_add(a, 1)
 ```
 
-### Face templates
+### Face callables
 
-When a template has the same name as its containing module, it is addressed without repeating the name:
+When a callable has the same name as its containing module, it is addressed without repeating the name:
 
 ```cgen
 module initializer:
-    template initializer:        # addressed as lh.initializer(...)
+    fn initializer:        # addressed as lh.initializer(...)
         param ... as values
-        use c.initializer(values)
+        return c.initializer(values)
 ```
 
 ```c
 #define lh_initializer(...) { __VA_ARGS__ }
 ```
 
-### Struct templates
+### Parameterized structs
 
-Templates with fields and no params generate `typedef struct` declarations:
+Structs without params generate `typedef struct` declarations:
 
 ```cgen
 module version:
-    template version:
+    struct version:
         field major as c.uint
         field minor as c.uint
 ```
@@ -590,10 +590,10 @@ typedef struct lh_version_t {
 } lh_version_t;
 ```
 
-When a field template also declares params, it generates a macro that expands to a semicolon-separated list of typed fields:
+When a struct declares params, it generates a macro that expands to a semicolon-separated list of typed fields:
 
 ```cgen
-template pair:
+struct pair:
     param T
     field first as T
     field second as T
@@ -603,15 +603,15 @@ template pair:
 #define lh_pair(T) T first; T second
 ```
 
-### `@template(inline)`
+### `@intrinsic`
 
-Marks a template as a compile-time helper — it is expanded at every call site but **never emitted** as a `#define` in any header. Use this for templates that only exist to build other declarations.
+Marks a compile-time function or alias as a DSL helper — it is expanded at every call site but **never emitted** as a `#define` in any header. Use this for helpers that only exist to build other declarations.
 
 ```cgen
-@template(inline)
-template type:
+@intrinsic
+fn type:
     param name
-    use c.expr(name)
+    return c.expr(name)
 
 alias byte as c.type(unsigned char)
 ```
@@ -623,10 +623,10 @@ typedef unsigned char lh_byte_t;
 
 ### `@use(inline)` in structs
 
-Normally a `use expr` inside a struct generates a dependency on a field-template and expands to a macro call. With `@use(inline)` the referenced template's fields are copied directly into the containing struct — flat embedding without a wrapper type.
+Normally a `use expr` inside a struct generates a dependency on a parameterized struct and expands to a macro call. With `@use(inline)` the referenced struct's fields are copied directly into the containing struct — flat embedding without a wrapper type.
 
 ```cgen
-template coords:
+struct coords:
     param T
     field x as T
     field y as T
@@ -651,14 +651,13 @@ typedef struct lh_point_t {
 |--------------------------|---------|
 | `param name`             | Regular parameter |
 | `param name as any`      | Same — `any` is an explicit "untyped" annotation, DSL-level only |
-| `param name as type`     | Typed template parameter; contributes type dependencies and can be used by generated fields or raw type templates |
-| `param name as template` | Callable parameter — `name(args)` in the `use` body expands as a raw C call |
+| `@requires(type) param name` | Restricts an untyped parameter to DSL type arguments; useful for raw C expressions such as `sizeof(${T})` |
 | `param ... as name`      | Variadic — `name` becomes `__VA_ARGS__` in output. The `...` form without `as` is a parse error. |
-| `field name as type`     | Struct field; cannot mix with `param` or `use` in the same template |
+| `field name as type`     | Struct field |
 | `@mutable` before `field name as type` | Mutable struct field |
-| `@mutable` before `template name` | Field-template whose generated fields are mutable |
+| `@mutable` before parameterized `struct` | Field macro whose generated fields are mutable |
 
-### Built-in template operations
+### Built-in compile-time operations
 
 Operands that are themselves macro calls are passed through without extra wrapping; plain identifiers and literals are wrapped in `()` to protect against operator precedence.
 
