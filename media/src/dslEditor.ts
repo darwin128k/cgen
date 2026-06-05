@@ -502,7 +502,6 @@ function completionIconFor(kind: string): [string, string] {
     case 'enum': return ['symbol-enum', 'enum'];
     case 'case': return ['symbol-enum-member', 'enum'];
     case 'struct': return ['symbol-struct', 'struct'];
-    case 'template':
     case 'fn': return ['symbol-method', 'method'];
     case 'field': return ['symbol-field', 'variable'];
     case 'param': return ['symbol-variable', 'variable'];
@@ -526,7 +525,6 @@ function completionGroupFor(kind: string): string {
     case 'module':
     case 'scope':
       return 'Sections';
-    case 'template':
     case 'fn':
       return 'Callables';
     default:
@@ -907,7 +905,7 @@ function buildDeclarationIndex(): Array<{ name: string; path: string[]; position
       continue;
     }
 
-    const symbol = trimmed.match(/^(alias|enum|template|fn)\s+([A-Za-z_][A-Za-z0-9_]*)\b/);
+    const symbol = trimmed.match(/^(alias|enum|fn)\s+([A-Za-z_][A-Za-z0-9_]*)\b/);
     if (symbol) {
       const path = [...stack.map((item) => item.name), symbol[2]];
       declarations.push({ name: symbol[2], path, position: offset + rawLine.indexOf(symbol[2]) });

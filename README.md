@@ -741,13 +741,13 @@ c.i8   c.i16  c.i32  c.i64   c.imax  c.iptr
 c.u8   c.u16  c.u32  c.u64   c.umax  c.uptr
 ```
 
-**`<stdlib.h>` templates:**
+**`<stdlib.h>` helpers:**
 
 ```text
 c.malloc(size)  c.calloc(count, size)  c.free(ptr)
 ```
 
-**`<string.h>` templates:**
+**`<string.h>` helpers:**
 
 ```text
 c.memcpy(dest, src, size)  c.memset(dest, value, size)

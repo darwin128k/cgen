@@ -46,25 +46,14 @@ interface LineRange {
   lineStart: number;
 }
 
-interface CurrentTemplate {
+interface CurrentContextState {
   params: string[];
-  callableParams: string[];
   fnParams: string[];
   structFields: string[];
   excludeNames: string[];
   insideStruct: boolean;
-  insideTemplate: boolean;
   insideFn: boolean;
 }
-
-const builtinTemplates = [
-  'c.array',
-  'c.ptr',
-  'c.struct',
-  'c.union',
-  'c.volatile'
-];
-
 
 export async function createDslSuggestion(
   projectIndex: CgenProjectIndex,
@@ -85,15 +74,15 @@ export async function createDslSuggestion(
   const index = projectIndex.getSnapshot();
   const currentIndent = lineRange.before.match(/^\s*/)?.[0].length ?? 0;
   const context = findCurrentContext(request.text.slice(0, lineRange.lineStart), currentIndent);
-  const currentTemplate = findCurrentTemplate(
+  const currentState = findCurrentContextState(
     request.text.slice(0, lineRange.lineStart),
     currentIndent,
     request.text.slice(lineRange.lineStart)
   );
-  const contextKey = getSuggestionContextKey(context, currentTemplate, linePrefix, index);
+  const contextKey = getSuggestionContextKey(context, currentState, linePrefix, index);
   const prefix = getSuggestionPrefix(linePrefix);
   const usage = projectIndex.getSuggestionUsage(contextKey, prefix);
-  const matches = pickSuggestions(linePrefix, context, currentTemplate, index, usage);
+  const matches = pickSuggestions(linePrefix, context, currentState, index, usage);
   if (!matches.length) {
     return undefined;
   }
@@ -153,9 +142,8 @@ function findCurrentContext(textBeforeLine: string, currentIndent?: number): str
   return stack[stack.length - 1] ?? [];
 }
 
-function findCurrentTemplate(textBeforeLine: string, currentIndent?: number, textFromLine?: string): CurrentTemplate {
+function findCurrentContextState(textBeforeLine: string, currentIndent?: number, textFromLine?: string): CurrentContextState {
   const sectionStack: Array<{ indent: number; path: string[] }> = [{ indent: -1, path: [] }];
-  let currentTemplate: { indent: number; name: string; path: string[]; params: string[]; callableParams: string[] } | undefined;
   let currentStruct: { indent: number; fields: string[] } | undefined;
   let currentFn: { indent: number; params: string[] } | undefined;
 
@@ -167,9 +155,6 @@ function findCurrentTemplate(textBeforeLine: string, currentIndent?: number, tex
 
     const indent = withoutComment.match(/^\s*/)?.[0].length ?? 0;
     const line = withoutComment.trim();
-    if (currentTemplate && indent <= currentTemplate.indent) {
-      currentTemplate = undefined;
-    }
     if (currentStruct && indent <= currentStruct.indent) {
       currentStruct = undefined;
     }
@@ -200,6 +185,7 @@ function findCurrentTemplate(textBeforeLine: string, currentIndent?: number, tex
 
     if (currentFn) {
       const paramName = line.match(/^param\s+([A-Za-z_][A-Za-z0-9_]*)\s+as\s+/)?.[1]
+        ?? line.match(/^param\s+([A-Za-z_][A-Za-z0-9_]*)$/)?.[1]
         ?? line.match(/^param\s+\.\.\.\s+as\s+([A-Za-z_][A-Za-z0-9_]*)$/)?.[1];
       if (paramName) {
         currentFn.params.push(paramName);
@@ -209,32 +195,6 @@ function findCurrentTemplate(textBeforeLine: string, currentIndent?: number, tex
 
     if (currentStruct) {
       currentStruct.fields.push(...getStructFieldNamesFromLine(line));
-    }
-
-    const templateMatch = line.match(/^template\s+([A-Za-z_][A-Za-z0-9_]*)\s*:\s*$/);
-    if (templateMatch) {
-      currentTemplate = {
-        indent,
-        name: templateMatch[1],
-        path: [...sectionStack[sectionStack.length - 1].path, templateMatch[1]],
-        params: [],
-        callableParams: []
-      };
-      continue;
-    }
-
-    if (!currentTemplate) {
-      continue;
-    }
-
-    const variadicParam = line.match(/^(?:param\s+)?\.\.\.\s+as\s+([A-Za-z_][A-Za-z0-9_]*)$/);
-    const normalParam = line.match(/^(?:param\s+)?([A-Za-z_][A-Za-z0-9_]*)(?:\s+as\s+(\S+))?$/);
-    const paramName = variadicParam?.[1] ?? normalParam?.[1];
-    if (paramName) {
-      currentTemplate.params.push(paramName);
-      if (normalParam?.[2] === 'template') {
-        currentTemplate.callableParams.push(paramName);
-      }
     }
   }
 
@@ -248,18 +208,12 @@ function findCurrentTemplate(textBeforeLine: string, currentIndent?: number, tex
     ])
     : [];
 
-  if (!currentTemplate || (currentIndent !== undefined && currentIndent <= currentTemplate.indent)) {
-    return { params: [], callableParams: [], fnParams, structFields, excludeNames: [], insideStruct, insideTemplate: false, insideFn };
-  }
-
   return {
-    params: currentTemplate.params,
-    callableParams: currentTemplate.callableParams,
+    params: [],
     fnParams,
     structFields,
-    excludeNames: [currentTemplate.name, makePublicPath(currentTemplate.path).join('.')],
+    excludeNames: [],
     insideStruct,
-    insideTemplate: true,
     insideFn
   };
 }
@@ -382,14 +336,14 @@ function uniqueInOrder(values: string[]): string[] {
 function pickSuggestions(
   linePrefix: string,
   contextPath: string[],
-  currentTemplate: CurrentTemplate,
+  currentState: CurrentContextState,
   index: DslIndex,
   usage: SuggestionUsageRecord[]
 ): string[] {
   const indent = linePrefix.match(/^\s*/)?.[0] ?? '';
   const typed = linePrefix.trimStart();
   const candidates = rankCandidates(
-    uniqueInOrder(getCandidates(typed, contextPath, currentTemplate, index)),
+    uniqueInOrder(getCandidates(typed, contextPath, currentState, index)),
     typed,
     typed.startsWith('@') ? [] : usage
   );
@@ -427,7 +381,7 @@ function getSuggestionPrefix(linePrefix: string): string {
 
 function getSuggestionContextKey(
   contextPath: string[],
-  currentTemplate: CurrentTemplate,
+  currentState: CurrentContextState,
   linePrefix: string,
   index: DslIndex
 ): string {
@@ -435,23 +389,22 @@ function getSuggestionContextKey(
   if (/^@/.test(typed)) return 'attribute';
   if (/^let\s+[A-Za-z_][A-Za-z0-9_]*\s+as\s+.+?=\s*/.test(typed)) return 'let.expression';
   if (/\s+as\s+[A-Za-z_][A-Za-z0-9_.]*$/.test(typed)) return 'type';
-  if (/^use\s+/.test(typed)) return isUseArgumentPosition(typed) ? 'use.argument' : 'use.template';
+  if (/^use\s+/.test(typed)) return isUseArgumentPosition(typed) ? 'use.argument' : 'use.callable';
   if (/^return\s+/.test(typed)) return 'return.expression';
   if (/^(package|module|scope|group)\s+/.test(typed)) return 'section.name';
-  if (currentTemplate.insideFn) return 'fn.body';
-  if (currentTemplate.insideStruct) return 'struct.body';
-  if (currentTemplate.insideTemplate) return 'define.body';
+  if (currentState.insideFn) return 'fn.body';
+  if (currentState.insideStruct) return 'struct.body';
 
   const node = findNode(index.root, contextPath);
   return `declaration.${node?.kind ?? 'root'}`;
 }
 
-function getCandidates(typed: string, contextPath: string[], currentTemplate: CurrentTemplate, index: DslIndex): string[] {
+function getCandidates(typed: string, contextPath: string[], currentState: CurrentContextState, index: DslIndex): string[] {
   if (/^@/.test(typed)) {
     return [...contextCandidates['attribute']];
   }
 
-  if (currentTemplate.insideFn && /^(alias|enum|struct|template|fn|field|param|case)\b/.test(typed)) {
+  if (currentState.insideFn && /^(alias|enum|struct|fn|field|param|case)\b/.test(typed)) {
     return [];
   }
 
@@ -469,7 +422,7 @@ function getCandidates(typed: string, contextPath: string[], currentTemplate: Cu
   }
 
   if (/^let\s+\S+\s+as\s+[^=]*=\s*/.test(typed)) {
-    return completeTail(typed, getExpressionCandidates(typed, contextPath, currentTemplate, index));
+    return completeTail(typed, getExpressionCandidates(typed, contextPath, currentState, index));
   }
 
   if (/^let\s+\S+\s+as\s+/.test(typed)) {
@@ -477,7 +430,7 @@ function getCandidates(typed: string, contextPath: string[], currentTemplate: Cu
   }
 
   if (/^return\s+/.test(typed)) {
-    return completeTail(typed, getExpressionCandidates(typed, contextPath, currentTemplate, index));
+    return completeTail(typed, getExpressionCandidates(typed, contextPath, currentState, index));
   }
 
   if (/^use\s+/.test(typed)) {
@@ -486,10 +439,10 @@ function getCandidates(typed: string, contextPath: string[], currentTemplate: Cu
     }
 
     if (isUseArgumentPosition(typed)) {
-      return completeTail(typed, getUseArgumentCandidates(typed, contextPath, currentTemplate, index));
+      return completeTail(typed, getUseArgumentCandidates(typed, contextPath, currentState, index));
     }
 
-    return completeTail(typed, getTemplateUseCandidates(typed, contextPath, currentTemplate, index));
+    return completeTail(typed, getCallableUseCandidates(typed, contextPath, currentState, index));
   }
 
   if (/^(package|module|scope|group)\s+/.test(typed)) {
@@ -501,37 +454,36 @@ function getCandidates(typed: string, contextPath: string[], currentTemplate: Cu
   }
 
   if (/^struct\b/.test(typed)) {
-    return getDeclarationSnippetsForContext(contextPath, currentTemplate, index);
+    return getDeclarationSnippetsForContext(contextPath, currentState, index);
   }
 
-  if (/^(alias|enum|template|fn|param|field|let)\b/.test(typed)) {
-    return getDeclarationSnippetsForContext(contextPath, currentTemplate, index);
+  if (/^(alias|enum|fn|param|field|let)\b/.test(typed)) {
+    return getDeclarationSnippetsForContext(contextPath, currentState, index);
   }
 
-  if (currentTemplate.insideFn) {
+  if (currentState.insideFn) {
     return uniqueInOrder([
-      ...getContextSnippets(contextPath, currentTemplate, index),
-      ...getExpressionCandidates(typed, contextPath, currentTemplate, index)
+      ...getContextSnippets(contextPath, currentState, index),
+      ...getExpressionCandidates(typed, contextPath, currentState, index)
     ]);
   }
 
-  return getContextSnippets(contextPath, currentTemplate, index);
+  return getContextSnippets(contextPath, currentState, index);
 }
 
-function getStaticContextKey(contextPath: string[], currentTemplate: CurrentTemplate, index: DslIndex): string {
-  if (currentTemplate.insideFn) { return 'fn.body'; }
-  if (currentTemplate.insideStruct) { return 'struct.body'; }
-  if (currentTemplate.insideTemplate) { return 'define.body'; }
+function getStaticContextKey(contextPath: string[], currentState: CurrentContextState, index: DslIndex): string {
+  if (currentState.insideFn) { return 'fn.body'; }
+  if (currentState.insideStruct) { return 'struct.body'; }
   const node = findNode(index.root, contextPath);
   return `declaration.${node?.kind ?? 'root'}`;
 }
 
-function getContextSnippets(contextPath: string[], currentTemplate: CurrentTemplate, index: DslIndex): string[] {
-  return [...(contextCandidates[getStaticContextKey(contextPath, currentTemplate, index)] ?? [])];
+function getContextSnippets(contextPath: string[], currentState: CurrentContextState, index: DslIndex): string[] {
+  return [...(contextCandidates[getStaticContextKey(contextPath, currentState, index)] ?? [])];
 }
 
-function getDeclarationSnippetsForContext(contextPath: string[], currentTemplate: CurrentTemplate, index: DslIndex): string[] {
-  return getContextSnippets(contextPath, currentTemplate, index);
+function getDeclarationSnippetsForContext(contextPath: string[], currentState: CurrentContextState, index: DslIndex): string[] {
+  return getContextSnippets(contextPath, currentState, index);
 }
 
 function getTypeCandidatePool(contextPath: string[], index: DslIndex): string[] {
@@ -601,15 +553,15 @@ function getTypeCandidates(typed: string, contextPath: string[], index: DslIndex
   return getDottedCandidates(getTailToken(typed), contextPath, index, getTypeCandidatePool(contextPath, index));
 }
 
-function getTemplateUseCandidates(
+function getCallableUseCandidates(
   typed: string,
   contextPath: string[],
-  currentTemplate: CurrentTemplate,
+  currentState: CurrentContextState,
   index: DslIndex
 ): string[] {
   const token = getTailToken(typed);
   if (token.includes('.')) {
-    return getDottedTemplateUseCandidates(token, index, currentTemplate);
+    return getDottedCallableUseCandidates(token, index, currentState);
   }
 
   return getRootUseNamespaces(contextPath, index);
@@ -618,20 +570,20 @@ function getTemplateUseCandidates(
 function getExpressionCandidates(
   typed: string,
   contextPath: string[],
-  currentTemplate: CurrentTemplate,
+  currentState: CurrentContextState,
   index: DslIndex
 ): string[] {
   const token = getTailToken(typed);
   if (token.includes('.')) {
     return uniqueInOrder([
-      ...getDottedSelfCandidates(token, currentTemplate),
-      ...getDottedTemplateUseCandidates(token, index, currentTemplate),
+      ...getDottedSelfCandidates(token, currentState),
+      ...getDottedCallableUseCandidates(token, index, currentState),
       ...getDottedFnUseCandidates(token, index)
     ]);
   }
 
   return uniqueInOrder([
-    ...getLocalExpressionCandidates(currentTemplate),
+    ...getLocalExpressionCandidates(currentState),
     ...getRootUseNamespaces(contextPath, index),
     ...getFnUseCandidates(index)
   ]);
@@ -640,23 +592,22 @@ function getExpressionCandidates(
 function getUseArgumentCandidates(
   typed: string,
   contextPath: string[],
-  currentTemplate: CurrentTemplate,
+  currentState: CurrentContextState,
   index: DslIndex
 ): string[] {
   const token = getTailToken(typed);
   if (token.includes('.')) {
     return uniqueInOrder([
-      ...getDottedSelfCandidates(token, currentTemplate),
-      ...getTemplateUseCandidates(typed, contextPath, currentTemplate, index),
+      ...getDottedSelfCandidates(token, currentState),
+      ...getCallableUseCandidates(typed, contextPath, currentState, index),
       ...getTypeCandidates(typed, contextPath, index)
     ]);
   }
 
   return sortUnique([
-    ...getLocalExpressionCandidates(currentTemplate),
-    ...currentTemplate.params.filter((p) => !currentTemplate.callableParams.includes(p)),
-    ...currentTemplate.callableParams.map((p) => `${p}()`),
-    ...getTemplateUseCandidates(typed, contextPath, currentTemplate, index)
+    ...getLocalExpressionCandidates(currentState),
+    ...currentState.params,
+    ...getCallableUseCandidates(typed, contextPath, currentState, index)
   ]);
 }
 
@@ -664,34 +615,34 @@ function getTailToken(typed: string): string {
   return typed.match(/[A-Za-z_][A-Za-z0-9_.]*$/)?.[0] ?? '';
 }
 
-function getLocalExpressionCandidates(currentTemplate: CurrentTemplate): string[] {
+function getLocalExpressionCandidates(currentState: CurrentContextState): string[] {
   return uniqueInOrder([
-    ...currentTemplate.fnParams,
-    ...(currentTemplate.insideStruct && currentTemplate.insideFn ? ['self'] : [])
+    ...currentState.fnParams,
+    ...(currentState.insideStruct && currentState.insideFn ? ['self'] : [])
   ]);
 }
 
-function getDottedSelfCandidates(token: string, currentTemplate: CurrentTemplate): string[] {
-  if (!currentTemplate.insideStruct || !currentTemplate.insideFn || !token.startsWith('self.')) {
+function getDottedSelfCandidates(token: string, currentState: CurrentContextState): string[] {
+  if (!currentState.insideStruct || !currentState.insideFn || !token.startsWith('self.')) {
     return [];
   }
 
-  return currentTemplate.structFields
+  return currentState.structFields
     .map((field) => `self.${field}`)
     .filter((candidate) => candidate.startsWith(token));
 }
 
-function getDottedTemplateUseCandidates(token: string, index: DslIndex, currentTemplate: CurrentTemplate): string[] {
+function getDottedCallableUseCandidates(token: string, index: DslIndex, currentState: CurrentContextState): string[] {
   const parentPath = token.split('.').slice(0, -1).filter(Boolean);
   const node = findNode(index.root, parentPath);
-  const builtinMatches = getAllUsePaths(index, currentTemplate).filter((name) => name.startsWith(token));
+  const builtinMatches = getAllUsePaths(index, currentState).filter((name) => name.startsWith(token));
 
   if (!node) {
     return builtinMatches;
   }
 
   return uniqueInOrder([
-    ...getNodeTemplateUseMembers(node, `${parentPath.join('.')}.`, currentTemplate),
+    ...getNodeCallableUseMembers(node, `${parentPath.join('.')}.`, currentState),
     ...builtinMatches
   ]);
 }
@@ -724,14 +675,14 @@ function nodeHasUseCallables(node: DslNode): boolean {
   return node.children.some(nodeHasUseCallables);
 }
 
-function getNodeTemplateUseMembers(node: DslNode, prefix: string, currentTemplate: CurrentTemplate): string[] {
+function getNodeCallableUseMembers(node: DslNode, prefix: string, currentState: CurrentContextState): string[] {
   const childCandidates = node.children.flatMap((child) => {
     const childPath = `${prefix}${child.name}`;
     const collapsible = child.symbols.find(
       (s) => isUseCallable(s) && makePublicSymbolPath(s).join('.') === childPath
     );
     if (collapsible) {
-      if (currentTemplate.excludeNames.includes(childPath)) { return []; }
+      if (currentState.excludeNames.includes(childPath)) { return []; }
       const args = collapsible.params.length > 0 ? collapsible.params.join(', ') : '';
       return [`${childPath}(${args})`];
     }
@@ -742,7 +693,7 @@ function getNodeTemplateUseMembers(node: DslNode, prefix: string, currentTemplat
     .filter(isUseCallable)
     .map((symbol) => {
       const name = makePublicSymbolPath(symbol).join('.');
-      if (currentTemplate.excludeNames.includes(name)) { return null; }
+      if (currentState.excludeNames.includes(name)) { return null; }
       const args = symbol.params.length > 0 ? symbol.params.join(', ') : '';
       return `${name}(${args})`;
     })
@@ -766,7 +717,7 @@ function getRootUseNamespaces(contextPath: string[], index: DslIndex): string[] 
   ]);
 }
 
-function getAllUsePaths(index: DslIndex, currentTemplate: CurrentTemplate): string[] {
+function getAllUsePaths(index: DslIndex, currentState: CurrentContextState): string[] {
   const result: string[] = [];
   walk(index.root, (node) => {
     if (node.kind !== 'root' && nodeHasUseCallables(node)) {
@@ -779,17 +730,14 @@ function getAllUsePaths(index: DslIndex, currentTemplate: CurrentTemplate): stri
       }
 
       const name = makePublicSymbolPath(symbol).join('.');
-      if (!currentTemplate.excludeNames.includes(name)) {
+      if (!currentState.excludeNames.includes(name)) {
         const args = symbol.params.length > 0 ? symbol.params.join(', ') : '';
         result.push(`${name}(${args})`);
       }
     }
   });
 
-  const all = uniqueInOrder([
-    ...result,
-    ...builtinTemplates.map((name) => `${name}()`)
-  ]);
+  const all = uniqueInOrder(result);
   const callPrefixes = new Set(all.filter((s) => s.includes('(')).map((s) => s.slice(0, s.indexOf('('))));
   return all.filter((s) => !s.endsWith('.') || !callPrefixes.has(s.slice(0, -1)));
 }
@@ -864,7 +812,6 @@ function resolveKindForCandidate(candidate: string, index: DslIndex): string {
   if (/^alias\b/.test(candidate)) return 'alias';
   if (/^enum\b/.test(candidate)) return 'enum';
   if (/^struct\b/.test(candidate)) return 'struct';
-  if (/^template\b/.test(candidate)) return 'template';
   if (/^fn\b/.test(candidate)) return 'fn';
   if (/^field\b/.test(candidate)) return 'field';
   if (/^param\b/.test(candidate)) return 'param';
@@ -879,7 +826,7 @@ function resolveKindForCandidate(candidate: string, index: DslIndex): string {
   const symbol = index.symbols.find((s) => s.path.join('.') === callablePath || s.path.join('.') === pathStr);
   if (symbol) return symbol.kind;
 
-  if (candidate.includes('(')) return 'template';
+  if (candidate.includes('(')) return 'fn';
 
   const node = findNode(index.root, pathParts);
   if (node) return node.kind;

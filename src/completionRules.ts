@@ -41,7 +41,6 @@ export const contextCandidates: Readonly<Record<string, readonly string[]>> = {
   'define.body': [
     'name',
     'name as any',
-    'name as template',
     '... as values',
     'field name as type',
     'use c.ptr(value)',

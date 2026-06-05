@@ -41,14 +41,14 @@ export interface TypeSymbol {
   moduleId: string;
   includePath: string;
   externHeader?: string;
-  kind: 'alias' | 'enum' | 'template' | 'struct';
+  kind: 'alias' | 'enum' | 'struct';
   target?: string;
   line: number;
   defineOnly: boolean;
   intrinsicAlias: boolean;
 }
 
-export interface TemplateSymbol {
+export interface CallableSymbol {
   key: string;
   macroName: string;
   moduleId: string;

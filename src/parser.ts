@@ -39,31 +39,9 @@ export interface LetNode {
   line: number;
 }
 
-export interface TemplateParam {
-  variadic: boolean;
-  name: string;
-  type: string;
-  callable: boolean;
-  line: number;
-}
-
-export interface TemplateField {
+export interface FieldNode {
   name: string;
   target: string;
-  mutable: boolean;
-  attributes: Attribute[];
-  line: number;
-}
-
-export interface TemplateNode {
-  kind: 'template';
-  name: string;
-  params: TemplateParam[];
-  fields: TemplateField[];
-  body: string;
-  bodyLine: number;
-  bodyInline: boolean;
-  bodyRaw: boolean;
   mutable: boolean;
   attributes: Attribute[];
   line: number;
@@ -79,7 +57,7 @@ export interface StructNode {
   kind: 'struct';
   name: string;
   params: FnParam[];
-  fields: TemplateField[];
+  fields: FieldNode[];
   uses: StructUse[];
   fns: FnNode[];
   attributes: Attribute[];
@@ -116,7 +94,6 @@ export interface SectionNode {
   attributes: Attribute[];
   aliases: AliasNode[];
   enums: EnumNode[];
-  templates: TemplateNode[];
   structs: StructNode[];
   fns: FnNode[];
   lets: LetNode[];
@@ -127,11 +104,6 @@ export interface SectionNode {
 export interface ParsedDsl {
   root: SectionNode;
   diagnostics: string[];
-}
-
-interface TemplateFrame {
-  indent: number;
-  node: TemplateNode;
 }
 
 interface StructFrame {
@@ -169,7 +141,6 @@ export function parseDsl(source: string): ParsedDsl {
   const diagnostics: string[] = [];
   let pendingAttributes: Attribute[] = [];
   let currentEnum: EnumFrame | undefined;
-  let currentTemplate: TemplateFrame | undefined;
   let currentStruct: StructFrame | undefined;
   let currentFn: FnFrame | undefined;
 
@@ -190,10 +161,6 @@ export function parseDsl(source: string): ParsedDsl {
 
     if (currentEnum && indent <= currentEnum.indent) {
       currentEnum = undefined;
-    }
-
-    if (currentTemplate && indent <= currentTemplate.indent) {
-      currentTemplate = undefined;
     }
 
     if (currentStruct && indent <= currentStruct.indent) {
@@ -240,55 +207,6 @@ export function parseDsl(source: string): ParsedDsl {
       }
     }
 
-    if (currentTemplate) {
-      if (/^param\s+\.\.\.$/.test(line)) {
-        diagnostics.push(`Line ${lineNumber}: variadic param must have an alias: use \`param ... as name\``);
-        return;
-      }
-
-      const param = parseTemplateParam(line, lineNumber);
-      if (param) {
-        currentTemplate.node.params.push(param);
-        return;
-      }
-
-      const field = parseTemplateField(line, lineNumber);
-      if (field) {
-        if (currentTemplate.node.body !== '') {
-          diagnostics.push(`Line ${lineNumber}: template "${currentTemplate.node.name}" with a body cannot have fields`);
-          return;
-        }
-        field.attributes = [...pendingAttributes];
-        field.mutable = field.attributes.some((a) => a.name === 'mutable');
-        pendingAttributes = [];
-        currentTemplate.node.fields.push(field);
-        return;
-      }
-
-      if (currentTemplate.node.body === '') {
-        if (currentTemplate.node.fields.length > 0) {
-          diagnostics.push(`Line ${lineNumber}: template "${currentTemplate.node.name}" with fields cannot have a body`);
-          return;
-        }
-        const exprOfMatch = line.match(/^use\s+c\.expr\((.*)\)$/);
-        if (exprOfMatch) {
-          pendingAttributes = [];
-          currentTemplate.node.bodyRaw = true;
-          currentTemplate.node.body = parseExprBodyArgument(exprOfMatch[1].trim());
-          currentTemplate.node.bodyLine = lineNumber;
-          return;
-        }
-        currentTemplate.node.bodyInline = pendingAttributes.some((a) => a.name === 'expand');
-        pendingAttributes = [];
-        currentTemplate.node.body = line;
-        currentTemplate.node.bodyLine = lineNumber;
-        return;
-      }
-
-      diagnostics.push(`Line ${lineNumber}: template "${currentTemplate.node.name}" already has a body`);
-      return;
-    }
-
     if (currentStruct) {
       const param = parseFnParam(line, lineNumber, pendingAttributes);
       if (param) {
@@ -308,7 +226,7 @@ export function parseDsl(source: string): ParsedDsl {
       }
       if (fnNode === null) { return; }
 
-      const field = parseTemplateField(line, lineNumber);
+      const field = parseFieldNode(line, lineNumber);
       if (field) {
         field.attributes = [...pendingAttributes];
         field.mutable = field.attributes.some((a) => a.name === 'mutable');
@@ -349,17 +267,6 @@ export function parseDsl(source: string): ParsedDsl {
       currentEnum = { indent, node: enumNode };
       return;
     }
-
-    const templateNode = parseTemplate(line, lineNumber, diagnostics);
-    if (templateNode != null) {
-      templateNode.attributes = [...parentFrame.inheritedAttributes, ...pendingAttributes];
-      templateNode.mutable = templateNode.attributes.some((a) => a.name === 'mutable');
-      pendingAttributes = [];
-      parent.templates.push(templateNode);
-      currentTemplate = { indent, node: templateNode };
-      return;
-    }
-    if (templateNode === null) { return; }
 
     const structNode = parseStruct(line, lineNumber);
     if (structNode) {
@@ -437,7 +344,6 @@ export function createSection(kind: SectionKind, name: string, line: number): Se
     attributes: [],
     aliases: [],
     enums: [],
-    templates: [],
     structs: [],
     fns: [],
     lets: [],
@@ -505,19 +411,6 @@ function parseSection(line: string, lineNumber: number): SectionNode | undefined
     return undefined;
   }
   return createSection(match[1] as SectionKind, match[2], lineNumber);
-}
-
-function parseExprBodyArgument(arg: string): string {
-  const quoted = arg.match(/^"(.*)"$/);
-  if (quoted) {
-    return quoted[1];
-  }
-
-  if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(arg)) {
-    return `\${${arg}}`;
-  }
-
-  return arg;
 }
 
 function parseAlias(line: string, lineNumber: number): AliasNode | undefined {
@@ -679,26 +572,6 @@ function parseLet(line: string, lineNumber: number): LetNode | undefined {
   };
 }
 
-function parseTemplate(line: string, lineNumber: number, diagnostics?: string[]): TemplateNode | null | undefined {
-  const match = line.match(/^template\s+([A-Za-z_][A-Za-z0-9_]*)(.*)$/);
-  if (!match) {
-    return undefined;
-  }
-  diagnostics?.push(`Line ${lineNumber}: template declarations were removed; use fn for expressions or parameterized struct for fields`);
-  return null;
-/*
-  const rest = match[2].trim();
-  if (rest.startsWith('(')) {
-    diagnostics?.push(`Line ${lineNumber}: template parameters must be declared as indented \`param\` lines`);
-    return null;
-  }
-  if (rest !== ':') {
-    return undefined;
-  }
-  return { kind: 'template', name: match[1], params: [], fields: [], body: '', bodyLine: lineNumber, bodyInline: false, bodyRaw: false, mutable: false, attributes: [], line: lineNumber };
-*/
-}
-
 function parseStruct(line: string, lineNumber: number): StructNode | undefined {
   const match = line.match(/^struct\s+([A-Za-z_][A-Za-z0-9_]*)\s*:\s*$/);
   if (!match) {
@@ -707,20 +580,7 @@ function parseStruct(line: string, lineNumber: number): StructNode | undefined {
   return { kind: 'struct', name: match[1], params: [], fields: [], uses: [], fns: [], attributes: [], line: lineNumber };
 }
 
-function parseTemplateParam(line: string, lineNumber: number): TemplateParam | undefined {
-  const variadicMatch = line.match(/^param\s+\.\.\.\s+as\s+([A-Za-z_][A-Za-z0-9_]*)$/);
-  if (variadicMatch) {
-    return { variadic: true, type: '...', callable: false, name: variadicMatch[1], line: lineNumber };
-  }
-  const normalMatch = line.match(/^param\s+([A-Za-z_][A-Za-z0-9_]*)(?:\s+as\s+(\S+))?$/);
-  if (normalMatch) {
-    const type = normalMatch[2] ?? 'any';
-    return { variadic: false, type, callable: type === 'template', name: normalMatch[1], line: lineNumber };
-  }
-  return undefined;
-}
-
-function parseTemplateField(line: string, lineNumber: number): TemplateField | undefined {
+function parseFieldNode(line: string, lineNumber: number): FieldNode | undefined {
   const match = line.match(/^field\s+([A-Za-z_][A-Za-z0-9_]*)\s+as\s+(.+)$/);
   if (!match) {
     return undefined;

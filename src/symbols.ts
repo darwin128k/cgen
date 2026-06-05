@@ -1,8 +1,8 @@
-import type { SectionNode, TemplateNode, AliasNode, EnumNode, FnNode, StructNode, FnParam } from './parser';
+import type { SectionNode, AliasNode, EnumNode, FnNode, StructNode, FnParam } from './parser';
 import {
   type ModuleArtifact,
   type TypeSymbol,
-  type TemplateSymbol,
+  type CallableSymbol,
   type ScopedTypeDeclaration,
   type TypeDeclaration,
   hasAttr,
@@ -18,19 +18,6 @@ import {
   expandStructUse,
   buildRawCExprBody,
 } from './expander';
-
-export function collectScopeTemplates(
-  section: SectionNode,
-  extraParts: string[]
-): Array<{ template: TemplateNode; symbolParts: string[]; typeParts: string[] }> {
-  const result = section.templates.map((template) => ({ template, symbolParts: extraParts, typeParts: extraParts }));
-  for (const child of section.children) {
-    if (child.kind === 'scope') {
-      result.push(...collectScopeTemplates(child, [...extraParts, child.name]));
-    }
-  }
-  return result;
-}
 
 export function collectScopeStructs(
   section: SectionNode,
@@ -71,15 +58,6 @@ export function collectScopeLets(
   return result;
 }
 
-export function collectScopeRecordTemplates(
-  section: SectionNode,
-  extraParts: string[]
-): Array<{ template: TemplateNode; symbolParts: string[]; typeParts: string[] }> {
-  return collectScopeTemplates(section, extraParts).filter(
-    ({ template }) => template.fields.length > 0 && template.params.length === 0
-  );
-}
-
 export function collectScopeParameterizedStructs(
   section: SectionNode,
   extraParts: string[]
@@ -91,7 +69,7 @@ export function isAnyParam(param: FnParam): boolean {
   return param.type === 'any';
 }
 
-export function isTemplateLikeFn(fn: FnNode): boolean {
+export function isCompileTimeFn(fn: FnNode): boolean {
   return hasAttr(fn.attributes, 'define')
     || hasAttr(fn.attributes, 'intrinsic')
     || fn.params.some(isAnyParam)
@@ -116,19 +94,6 @@ export function collectScopeTypeDeclarations(section: SectionNode, extraParts: s
   return result.sort((left, right) => left.declaration.line - right.declaration.line);
 }
 
-export function buildParamTemplateMap(modules: ModuleArtifact[]): Map<string, TemplateNode> {
-  const map = new Map<string, TemplateNode>();
-  for (const module of modules) {
-    for (const { template, typeParts } of collectScopeTemplates(module.section, [])) {
-      if (template.params.length > 0 && template.fields.length > 0) {
-        const key = makeTypeKey([...module.typeParts, ...typeParts], template.name);
-        map.set(key, template);
-      }
-    }
-  }
-  return map;
-}
-
 export function buildParamStructMap(modules: ModuleArtifact[]): Map<string, StructNode> {
   const map = new Map<string, StructNode>();
   for (const module of modules) {
@@ -140,24 +105,11 @@ export function buildParamStructMap(modules: ModuleArtifact[]): Map<string, Stru
   return map;
 }
 
-export function buildBodyTemplateMap(modules: ModuleArtifact[]): Map<string, TemplateNode> {
-  const map = new Map<string, TemplateNode>();
-  for (const module of modules) {
-    for (const { template, typeParts } of collectScopeTemplates(module.section, [])) {
-      if (template.body) {
-        const key = makeTypeKey([...module.typeParts, ...typeParts], template.name);
-        map.set(key, template);
-      }
-    }
-  }
-  return map;
-}
-
-export function buildTemplateSymbols(modules: ModuleArtifact[]): Map<string, TemplateSymbol> {
-  const symbols = new Map<string, TemplateSymbol>();
+export function buildCallableSymbols(modules: ModuleArtifact[]): Map<string, CallableSymbol> {
+  const symbols = new Map<string, CallableSymbol>();
   for (const module of modules) {
     for (const { fn, symbolParts } of collectScopeFns(module.section, [])) {
-      if (!isTemplateLikeFn(fn)) { continue; }
+      if (!isCompileTimeFn(fn)) { continue; }
       const allTypeParts = [...module.typeParts, ...symbolParts];
       if (allTypeParts[allTypeParts.length - 1] !== fn.name) { allTypeParts.push(fn.name); }
       const key = allTypeParts.join('.');
@@ -204,29 +156,6 @@ export function buildTemplateSymbols(modules: ModuleArtifact[]): Map<string, Tem
         rawParams: struct.params.map((p) => p.name)
       });
     }
-
-    for (const { template, typeParts } of collectScopeTemplates(module.section, [])) {
-      const allTypeParts = [...module.typeParts, ...typeParts];
-      if (allTypeParts[allTypeParts.length - 1] !== template.name) { allTypeParts.push(template.name); }
-      const key = allTypeParts.join('.');
-      const allSymbolParts = [...module.symbolParts, ...typeParts];
-      const macroName = makeMacroName(allSymbolParts, template.name);
-      const existing = symbols.get(key);
-      if (existing) {
-        throw new Error(`Line ${template.line}: template "${key}" is already defined in ${existing.includePath}`);
-      }
-      if (template.fields.length > 0 && template.params.length === 0) { continue; }
-      symbols.set(key, {
-        key,
-        macroName,
-        moduleId: module.id,
-        includePath: module.includePath,
-        externHeader: getIncludeArg(template.attributes) ?? undefined,
-        intrinsicOnly: hasAttr(template.attributes, 'intrinsic'),
-        defineOnly: hasAttr(template.attributes, 'define'),
-        ...(template.bodyRaw && template.body ? { rawBody: template.body, rawParams: template.params.map((p) => p.name) } : {})
-      });
-    }
   }
   return symbols;
 }
@@ -240,7 +169,7 @@ function getRawFnBody(fn: FnNode): string | undefined {
   return buildRawCExprBody(exprOf[1].trim(), fn.line);
 }
 
-export function buildTypeSymbols(modules: ModuleArtifact[], templateSymbols: Map<string, TemplateSymbol>): Map<string, TypeSymbol> {
+export function buildTypeSymbols(modules: ModuleArtifact[], callableSymbols: Map<string, CallableSymbol>): Map<string, TypeSymbol> {
   const symbols = new Map<string, TypeSymbol>();
 
   for (const module of modules) {
@@ -265,19 +194,6 @@ export function buildTypeSymbols(modules: ModuleArtifact[], templateSymbols: Map
       });
     }
 
-    for (const { template, symbolParts, typeParts } of collectScopeRecordTemplates(module.section, [])) {
-      const key = makeTypeKey([...module.typeParts, ...typeParts], template.name);
-      const cName = makeTypedefName([...module.symbolParts, ...symbolParts], template.name);
-      const existing = symbols.get(key);
-      if (existing) {
-        throw new Error(`Line ${template.line}: type "${key}" is already defined in ${existing.includePath}`);
-      }
-      symbols.set(key, {
-        key, cName, moduleId: module.id, includePath: module.includePath,
-        kind: 'template', line: template.line, defineOnly: false, intrinsicAlias: false,
-      });
-    }
-
     for (const { struct, symbolParts, typeParts } of collectScopeStructs(module.section, [])) {
       if (struct.params.length > 0) { continue; }
       const key = makeTypeKey([...module.typeParts, ...typeParts], struct.name);
@@ -295,25 +211,25 @@ export function buildTypeSymbols(modules: ModuleArtifact[], templateSymbols: Map
 
   for (const symbol of symbols.values()) {
     if (symbol.defineOnly) { continue; }
-    symbol.defineOnly = resolveTypeSymbolDefineOnly(symbol, symbols, templateSymbols, new Set());
+    symbol.defineOnly = resolveTypeSymbolDefineOnly(symbol, symbols, callableSymbols, new Set());
   }
 
   return symbols;
 }
 
-function expandTypeTemplateExpression(
+function expandTypeHelperExpression(
   expression: import('./cgenTypes').UseExpression,
-  template: TemplateSymbol,
+  helper: CallableSymbol,
   line: number,
   symbols: Map<string, TypeSymbol>,
-  templateSymbols: Map<string, TemplateSymbol>
+  callableSymbols: Map<string, CallableSymbol>
 ): string {
   return applyRawBody(
-    template.rawBody!,
-    template.rawParams ?? [],
+    helper.rawBody!,
+    helper.rawParams ?? [],
     expression.args,
     line,
-    (arg, lineNumber) => resolveTypeExpression(arg, lineNumber, symbols, templateSymbols)
+    (arg, lineNumber) => resolveTypeExpression(arg, lineNumber, symbols, callableSymbols)
   );
 }
 
@@ -321,7 +237,7 @@ export function resolveTypeExpression(
   target: string,
   line: number,
   symbols: Map<string, TypeSymbol>,
-  templateSymbols: Map<string, TemplateSymbol>
+  callableSymbols: Map<string, CallableSymbol>
 ): string {
   if (target === 'none') { return 'void'; }
   const expr = parseExprOf(target);
@@ -329,17 +245,17 @@ export function resolveTypeExpression(
 
   const expression = parseCallExpression(target, line);
   if (expression) {
-    const template = templateSymbols.get(expression.callee);
-    if (template?.rawBody !== undefined) {
-      return expandTypeTemplateExpression(expression, template, line, symbols, templateSymbols);
+    const helper = callableSymbols.get(expression.callee);
+    if (helper?.rawBody !== undefined) {
+      return expandTypeHelperExpression(expression, helper, line, symbols, callableSymbols);
     }
-    throw new Error(`Line ${line}: unknown type template "${expression.callee}"`);
+    throw new Error(`Line ${line}: unknown type helper "${expression.callee}"`);
   }
 
   const symbol = symbols.get(target);
   if (!symbol) { throw new Error(`Line ${line}: unknown type "${target}"`); }
   if (symbol.intrinsicAlias && symbol.target) {
-    return resolveTypeExpression(symbol.target, line, symbols, templateSymbols);
+    return resolveTypeExpression(symbol.target, line, symbols, callableSymbols);
   }
   return symbol.cName;
 }
@@ -348,26 +264,26 @@ export function getTypeExpressionSymbols(
   target: string,
   line: number,
   symbols: Map<string, TypeSymbol>,
-  templateSymbols: Map<string, TemplateSymbol>
+  callableSymbols: Map<string, CallableSymbol>
 ): TypeSymbol[] {
   if (target === 'none') { return []; }
   if (parseExprOf(target) !== undefined) { return []; }
 
   const expression = parseCallExpression(target, line);
   if (expression) {
-    const template = templateSymbols.get(expression.callee);
-    if (template?.rawBody !== undefined) {
+    const helper = callableSymbols.get(expression.callee);
+    if (helper?.rawBody !== undefined) {
       const result: TypeSymbol[] = [];
       for (let index = 0; index < expression.args.length; index += 1) {
         try {
-          result.push(...getTypeExpressionSymbols(expression.args[index], line, symbols, templateSymbols));
+          result.push(...getTypeExpressionSymbols(expression.args[index], line, symbols, callableSymbols));
         } catch {
           // Raw C helpers may also receive value arguments; only type-looking args contribute dependencies.
         }
       }
       return result;
     }
-    throw new Error(`Line ${line}: unknown type template "${expression.callee}"`);
+    throw new Error(`Line ${line}: unknown type helper "${expression.callee}"`);
   }
 
   const symbol = symbols.get(target);
@@ -387,12 +303,11 @@ export function inferReturnedSelfField(fn: import('./parser').FnNode): string | 
 
 export function getStructFields(
   struct: import('./parser').StructNode,
-  paramTemplates: Map<string, TemplateNode>,
   paramStructs: Map<string, StructNode> = new Map()
-): import('./parser').TemplateField[] {
+): import('./parser').FieldNode[] {
   const fields = [...struct.fields];
   for (const use of (struct.uses ?? [])) {
-    fields.push(...expandStructUse(use.expr, struct.line, paramTemplates, paramStructs));
+    fields.push(...expandStructUse(use.expr, struct.line, paramStructs));
   }
   return fields;
 }
@@ -401,21 +316,21 @@ export function shouldDefineAlias(
   target: string,
   line: number,
   symbols: Map<string, TypeSymbol>,
-  templateSymbols: Map<string, TemplateSymbol>
+  callableSymbols: Map<string, CallableSymbol>
 ): boolean {
-  return isDefineOnlyTypeExpression(target, line, symbols, templateSymbols, new Set());
+  return isDefineOnlyTypeExpression(target, line, symbols, callableSymbols, new Set());
 }
 
 function resolveTypeSymbolDefineOnly(
   symbol: TypeSymbol,
   symbols: Map<string, TypeSymbol>,
-  templateSymbols: Map<string, TemplateSymbol>,
+  callableSymbols: Map<string, CallableSymbol>,
   seen: Set<string>
 ): boolean {
-  if (symbol.kind === 'enum' || symbol.kind === 'template' || symbol.kind === 'struct') { return false; }
+  if (symbol.kind === 'enum' || symbol.kind === 'struct') { return false; }
   if (seen.has(symbol.key)) { throw new Error(`Line ${symbol.line}: cyclic type alias "${symbol.key}"`); }
   seen.add(symbol.key);
-  const result = isDefineOnlyTypeExpression(symbol.target!, symbol.line, symbols, templateSymbols, seen);
+  const result = isDefineOnlyTypeExpression(symbol.target!, symbol.line, symbols, callableSymbols, seen);
   seen.delete(symbol.key);
   return result;
 }
@@ -424,17 +339,17 @@ function isDefineOnlyTypeExpression(
   target: string,
   line: number,
   symbols: Map<string, TypeSymbol>,
-  templateSymbols: Map<string, TemplateSymbol>,
+  callableSymbols: Map<string, CallableSymbol>,
   seen: Set<string>
 ): boolean {
   if (parseExprOf(target) !== undefined) { return false; }
   const expression = parseCallExpression(target, line);
   if (expression) {
-    const template = templateSymbols.get(expression.callee);
-    if (template?.rawBody !== undefined) { return template.defineOnly; }
-    throw new Error(`Line ${line}: unknown type template "${expression.callee}"`);
+    const helper = callableSymbols.get(expression.callee);
+    if (helper?.rawBody !== undefined) { return helper.defineOnly; }
+    throw new Error(`Line ${line}: unknown type helper "${expression.callee}"`);
   }
   const symbol = symbols.get(target);
   if (!symbol) { throw new Error(`Line ${line}: unknown type "${target}"`); }
-  return symbol.defineOnly || resolveTypeSymbolDefineOnly(symbol, symbols, templateSymbols, seen);
+  return symbol.defineOnly || resolveTypeSymbolDefineOnly(symbol, symbols, callableSymbols, seen);
 }

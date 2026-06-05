@@ -1,9 +1,9 @@
-import type { SectionNode, FnNode, TemplateNode, StructNode } from './parser';
+import type { SectionNode, FnNode, StructNode } from './parser';
 import {
   type ModuleContext,
   type ModuleArtifact,
   type TypeSymbol,
-  type TemplateSymbol,
+  type CallableSymbol,
   type SymbolUsageIndex,
   type UseExpression,
   hasAttribute,
@@ -17,7 +17,6 @@ import {
   parseAssignmentStatement,
 } from './expander';
 import {
-  collectScopeTemplates,
   collectScopeStructs,
   collectScopeFns,
   collectScopeLets,
@@ -27,7 +26,7 @@ import {
   inferReturnedSelfField,
   getStructFields,
   resolveTypeExpression,
-  isTemplateLikeFn,
+  isCompileTimeFn,
   collectScopeParameterizedStructs,
 } from './symbols';
 import { expandStructUse } from './expander';
@@ -122,36 +121,24 @@ function addSymbolRef(module: ModuleArtifact, symbolKey: string): void {
   module.symbolRefs.set(symbolKey, (module.symbolRefs.get(symbolKey) ?? 0) + 1);
 }
 
-function addSymbolDep(module: ModuleArtifact, symbol: TypeSymbol | TemplateSymbol): void {
+function addSymbolDep(module: ModuleArtifact, symbol: TypeSymbol | CallableSymbol): void {
   addDep(module, symbol.moduleId);
   addSymbolRef(module, symbol.key);
   if (symbol.externHeader) { module.externHeaders.add(symbol.externHeader); }
 }
 
-function getUsedTemplateSymbols(template: TemplateNode, templateSymbols: Map<string, TemplateSymbol>): TemplateSymbol[] {
-  if (template.bodyRaw) { return []; }
-  const expression = parseUseExpression(template.body, template.bodyLine);
-  const callableParams = new Set(template.params.filter((p) => p.callable).map((p) => p.name));
-  const result: TemplateSymbol[] = [];
-  collectUsedTemplateSymbols(expression, template.bodyLine, templateSymbols, result, callableParams);
-  return result;
-}
-
-function collectUsedTemplateSymbols(
+function collectUsedCallableSymbols(
   expression: UseExpression,
   line: number,
-  templateSymbols: Map<string, TemplateSymbol>,
-  result: TemplateSymbol[],
-  callableParams: Set<string>
+  callableSymbols: Map<string, CallableSymbol>,
+  result: CallableSymbol[]
 ): void {
-  if (!callableParams.has(expression.callee)) {
-    const symbol = templateSymbols.get(expression.callee);
-    if (!symbol) { throw new Error(`Line ${line}: unknown template "${expression.callee}"`); }
-    if (!symbol.rawBody && !symbol.intrinsicOnly) { result.push(symbol); }
-  }
+  const symbol = callableSymbols.get(expression.callee);
+  if (!symbol) { throw new Error(`Line ${line}: unknown callable "${expression.callee}"`); }
+  if (!symbol.rawBody && !symbol.intrinsicOnly) { result.push(symbol); }
   for (const arg of expression.args) {
     const nested = parseCallExpression(arg, line);
-    if (nested) { collectUsedTemplateSymbols(nested, line, templateSymbols, result, callableParams); }
+    if (nested) { collectUsedCallableSymbols(nested, line, callableSymbols, result); }
   }
 }
 
@@ -159,21 +146,21 @@ function addFnExpressionDependencies(
   module: ModuleArtifact,
   expr: string,
   line: number,
-  templateSymbols: Map<string, TemplateSymbol>
+  callableSymbols: Map<string, CallableSymbol>
 ): void {
   const expression = parseCallExpression(expr, line);
   if (expression?.callee === 'c.expr') { return; }
-  if (expression) { addFnUseExpressionDependencies(module, expression, line, templateSymbols); }
+  if (expression) { addFnUseExpressionDependencies(module, expression, line, callableSymbols); }
 }
 
 function addFnUseExpressionDependencies(
   module: ModuleArtifact,
   expression: UseExpression,
   line: number,
-  templateSymbols: Map<string, TemplateSymbol>
+  callableSymbols: Map<string, CallableSymbol>
 ): void {
-  const used: TemplateSymbol[] = [];
-  collectUsedTemplateSymbols(expression, line, templateSymbols, used, new Set());
+  const used: CallableSymbol[] = [];
+  collectUsedCallableSymbols(expression, line, callableSymbols, used);
   for (const symbol of used) { addSymbolDep(module, symbol); }
 }
 
@@ -181,53 +168,35 @@ function addFnBodyDependencies(
   module: ModuleArtifact,
   fn: FnNode,
   symbols: Map<string, TypeSymbol>,
-  templateSymbols: Map<string, TemplateSymbol>
+  callableSymbols: Map<string, CallableSymbol>
 ): void {
   for (const line of fn.body) {
     const letStatement = parseLetStatement(line);
     if (letStatement) {
-      for (const symbol of getTypeExpressionSymbols(letStatement.type, fn.line, symbols, templateSymbols)) {
+      for (const symbol of getTypeExpressionSymbols(letStatement.type, fn.line, symbols, callableSymbols)) {
         addSymbolDep(module, symbol);
       }
-      addFnExpressionDependencies(module, letStatement.expr, fn.line, templateSymbols);
+      addFnExpressionDependencies(module, letStatement.expr, fn.line, callableSymbols);
       continue;
     }
     const returnStatement = parseReturnStatement(line);
     if (returnStatement) {
       if (returnStatement.type) {
-        for (const symbol of getTypeExpressionSymbols(returnStatement.type, fn.line, symbols, templateSymbols)) {
+        for (const symbol of getTypeExpressionSymbols(returnStatement.type, fn.line, symbols, callableSymbols)) {
           addSymbolDep(module, symbol);
         }
       }
-      addFnExpressionDependencies(module, returnStatement.expr, fn.line, templateSymbols);
+      addFnExpressionDependencies(module, returnStatement.expr, fn.line, callableSymbols);
       continue;
     }
     const assignment = parseAssignmentStatement(line);
     if (assignment) {
-      addFnExpressionDependencies(module, assignment.expr, fn.line, templateSymbols);
+      addFnExpressionDependencies(module, assignment.expr, fn.line, callableSymbols);
       continue;
     }
     if (/^use\s+c\.expr\(/.test(line)) { continue; }
     if (/^use\s+/.test(line)) {
-      addFnUseExpressionDependencies(module, parseUseExpression(line, fn.line), fn.line, templateSymbols);
-    }
-  }
-}
-
-function isDslOnlyTemplateParamType(type: string): boolean {
-  return type === 'any' || type === 'template' || type === '...';
-}
-
-function addTemplateParamTypeDependencies(
-  module: ModuleArtifact,
-  template: TemplateNode,
-  symbols: Map<string, TypeSymbol>,
-  templateSymbols: Map<string, TemplateSymbol>
-): void {
-  for (const param of template.params) {
-    if (isDslOnlyTemplateParamType(param.type)) { continue; }
-    for (const symbol of getTypeExpressionSymbols(param.type, param.line, symbols, templateSymbols)) {
-      addSymbolDep(module, symbol);
+      addFnUseExpressionDependencies(module, parseUseExpression(line, fn.line), fn.line, callableSymbols);
     }
   }
 }
@@ -235,80 +204,34 @@ function addTemplateParamTypeDependencies(
 export function resolveModuleDependencies(
   modules: ModuleArtifact[],
   symbols: Map<string, TypeSymbol>,
-  templateSymbols: Map<string, TemplateSymbol>,
-  paramTemplates: Map<string, TemplateNode>,
+  callableSymbols: Map<string, CallableSymbol>,
   paramStructs: Map<string, StructNode> = new Map()
 ): void {
   for (const module of modules) {
     for (const { declaration } of collectScopeTypeDeclarations(module.section, [])) {
-      for (const symbol of getTypeExpressionSymbols(declaration.target, declaration.line, symbols, templateSymbols)) {
+      for (const symbol of getTypeExpressionSymbols(declaration.target, declaration.line, symbols, callableSymbols)) {
         addSymbolDep(module, symbol);
       }
     }
 
     for (const { letNode } of collectScopeLets(module.section, [])) {
-      for (const symbol of getTypeExpressionSymbols(letNode.type, letNode.line, symbols, templateSymbols)) {
+      for (const symbol of getTypeExpressionSymbols(letNode.type, letNode.line, symbols, callableSymbols)) {
         addSymbolDep(module, symbol);
       }
-      addFnExpressionDependencies(module, letNode.expr, letNode.line, templateSymbols);
-    }
-
-    for (const { template } of collectScopeTemplates(module.section, [])) {
-      addTemplateParamTypeDependencies(module, template, symbols, templateSymbols);
-      if (template.fields.length > 0 && template.params.length > 0) {
-        const paramNames = new Set(template.params.map((p) => p.name));
-        for (const field of template.fields) {
-          if (paramNames.has(field.target)) { continue; }
-          for (const symbol of getTypeExpressionSymbols(field.target, field.line, symbols, templateSymbols)) {
-            addSymbolDep(module, symbol);
-          }
-        }
-        continue;
-      }
-      if (template.fields.length > 0) {
-        for (const field of template.fields) {
-          for (const symbol of getTypeExpressionSymbols(field.target, field.line, symbols, templateSymbols)) {
-            addSymbolDep(module, symbol);
-          }
-        }
-        continue;
-      }
-      if (template.bodyRaw) { continue; }
-      if (template.bodyInline) {
-        const expression = parseUseExpression(template.body, template.bodyLine);
-        const fieldTemplate = paramTemplates.get(expression.callee);
-        if (fieldTemplate) {
-          const outerParamNames = new Set(template.params.map((p) => p.name));
-          const innerParamMap = new Map<string, string>();
-          fieldTemplate.params.forEach((p, i) => {
-            if (i < expression.args.length) { innerParamMap.set(p.name, expression.args[i].trim()); }
-          });
-          for (const field of fieldTemplate.fields) {
-            const mappedTarget = innerParamMap.get(field.target) ?? field.target;
-            if (outerParamNames.has(mappedTarget)) { continue; }
-            for (const sym of getTypeExpressionSymbols(mappedTarget, field.line, symbols, templateSymbols)) {
-              addSymbolDep(module, sym);
-            }
-          }
-        }
-        continue;
-      }
-      for (const usedTemplate of getUsedTemplateSymbols(template, templateSymbols)) {
-        addSymbolDep(module, usedTemplate);
-      }
+      addFnExpressionDependencies(module, letNode.expr, letNode.line, callableSymbols);
     }
 
     for (const { struct } of collectScopeParameterizedStructs(module.section, [])) {
       for (const param of struct.params) {
         if (param.type === 'any') { continue; }
-        for (const symbol of getTypeExpressionSymbols(param.type, param.line, symbols, templateSymbols)) {
+        for (const symbol of getTypeExpressionSymbols(param.type, param.line, symbols, callableSymbols)) {
           addSymbolDep(module, symbol);
         }
       }
       const paramNames = new Set(struct.params.map((p) => p.name));
       for (const field of struct.fields) {
         if (paramNames.has(field.target)) { continue; }
-        for (const symbol of getTypeExpressionSymbols(field.target, field.line, symbols, templateSymbols)) {
+        for (const symbol of getTypeExpressionSymbols(field.target, field.line, symbols, callableSymbols)) {
           addSymbolDep(module, symbol);
         }
       }
@@ -317,14 +240,14 @@ export function resolveModuleDependencies(
     for (const { struct } of collectScopeStructs(module.section, [])) {
       if (struct.params.length > 0) { continue; }
       for (const field of struct.fields) {
-        for (const symbol of getTypeExpressionSymbols(field.target, field.line, symbols, templateSymbols)) {
+        for (const symbol of getTypeExpressionSymbols(field.target, field.line, symbols, callableSymbols)) {
           addSymbolDep(module, symbol);
         }
       }
       for (const use of (struct.uses ?? [])) {
         if (use.inline) {
-          for (const field of expandStructUse(use.expr, struct.line, paramTemplates, paramStructs)) {
-            for (const sym of getTypeExpressionSymbols(field.target, field.line, symbols, templateSymbols)) {
+          for (const field of expandStructUse(use.expr, struct.line, paramStructs)) {
+            for (const sym of getTypeExpressionSymbols(field.target, field.line, symbols, callableSymbols)) {
               addSymbolDep(module, sym);
             }
           }
@@ -332,58 +255,58 @@ export function resolveModuleDependencies(
         }
         const call = parseCallExpression(use.expr, struct.line);
         if (!call) { continue; }
-        const tmpl = templateSymbols.get(call.callee);
+        const tmpl = callableSymbols.get(call.callee);
         if (tmpl) { addSymbolDep(module, tmpl); }
         for (const arg of call.args) {
-          for (const sym of getTypeExpressionSymbols(arg, struct.line, symbols, templateSymbols)) {
+          for (const sym of getTypeExpressionSymbols(arg, struct.line, symbols, callableSymbols)) {
             addSymbolDep(module, sym);
           }
         }
       }
       for (const fn of struct.fns) {
-        validateStructMethodBody(fn, struct, paramTemplates, paramStructs);
+        validateStructMethodBody(fn, struct, paramStructs);
         validateFnReturnBody(fn);
-        validateFnBodyTypes(fn, symbols, templateSymbols, struct, paramTemplates, paramStructs);
+        validateFnBodyTypes(fn, symbols, callableSymbols, struct, paramStructs);
         for (const p of fn.params) {
           if (p.variadic) { continue; }
-          for (const symbol of getTypeExpressionSymbols(p.type, p.line, symbols, templateSymbols)) {
+          for (const symbol of getTypeExpressionSymbols(p.type, p.line, symbols, callableSymbols)) {
             addSymbolDep(module, symbol);
           }
         }
         const returnTargets = fn.returnType === 'any'
-          ? inferStructMethodReturnTargets(fn, struct, paramTemplates, paramStructs)
+          ? inferStructMethodReturnTargets(fn, struct, paramStructs)
           : [fn.returnType];
         for (const returnTarget of returnTargets) {
-          for (const symbol of getTypeExpressionSymbols(returnTarget, fn.line, symbols, templateSymbols)) {
+          for (const symbol of getTypeExpressionSymbols(returnTarget, fn.line, symbols, callableSymbols)) {
             addSymbolDep(module, symbol);
           }
         }
-        addFnBodyDependencies(module, fn, symbols, templateSymbols);
+        addFnBodyDependencies(module, fn, symbols, callableSymbols);
       }
     }
 
     for (const { fn } of collectScopeFns(module.section, [])) {
-      if (isTemplateLikeFn(fn)) {
+      if (isCompileTimeFn(fn)) {
         for (const p of fn.params) {
           if (p.variadic || p.type === 'any') { continue; }
-          for (const symbol of getTypeExpressionSymbols(p.type, p.line, symbols, templateSymbols)) {
+          for (const symbol of getTypeExpressionSymbols(p.type, p.line, symbols, callableSymbols)) {
             addSymbolDep(module, symbol);
           }
         }
         const paramNames = new Set(fn.params.map((p) => p.name));
         if (fn.returnType !== 'any' && fn.returnType !== 'none' && !paramNames.has(fn.returnType)) {
-          for (const symbol of getTypeExpressionSymbols(fn.returnType, fn.line, symbols, templateSymbols)) {
+          for (const symbol of getTypeExpressionSymbols(fn.returnType, fn.line, symbols, callableSymbols)) {
             addSymbolDep(module, symbol);
           }
         }
-        addFnBodyDependencies(module, fn, symbols, templateSymbols);
+        addFnBodyDependencies(module, fn, symbols, callableSymbols);
         continue;
       }
       validateFnReturnBody(fn);
-      validateFnBodyTypes(fn, symbols, templateSymbols);
+      validateFnBodyTypes(fn, symbols, callableSymbols);
       for (const p of fn.params) {
         if (p.variadic) { continue; }
-        for (const symbol of getTypeExpressionSymbols(p.type, p.line, symbols, templateSymbols)) {
+        for (const symbol of getTypeExpressionSymbols(p.type, p.line, symbols, callableSymbols)) {
           addSymbolDep(module, symbol);
         }
       }
@@ -394,10 +317,10 @@ export function resolveModuleDependencies(
             : `Line ${fn.line}: any return type is only supported for struct methods`
         );
       }
-      for (const symbol of getTypeExpressionSymbols(fn.returnType, fn.line, symbols, templateSymbols)) {
+      for (const symbol of getTypeExpressionSymbols(fn.returnType, fn.line, symbols, callableSymbols)) {
         addSymbolDep(module, symbol);
       }
-      addFnBodyDependencies(module, fn, symbols, templateSymbols);
+      addFnBodyDependencies(module, fn, symbols, callableSymbols);
     }
   }
 
@@ -475,7 +398,7 @@ function typeIdentity(
   target: string,
   line: number,
   symbols: Map<string, TypeSymbol>,
-  templateSymbols: Map<string, TemplateSymbol>,
+  callableSymbols: Map<string, CallableSymbol>,
   seen = new Set<string>()
 ): TypeIdentity {
   if (target === 'none') { return { display: 'none', key: 'none' }; }
@@ -484,7 +407,7 @@ function typeIdentity(
   if (expression) {
     return {
       display: target,
-      key: `c:${normalizeCType(resolveTypeExpression(target, line, symbols, templateSymbols))}`
+      key: `c:${normalizeCType(resolveTypeExpression(target, line, symbols, callableSymbols))}`
     };
   }
 
@@ -492,13 +415,13 @@ function typeIdentity(
   if (!symbol) {
     return {
       display: target,
-      key: `c:${normalizeCType(resolveTypeExpression(target, line, symbols, templateSymbols))}`
+      key: `c:${normalizeCType(resolveTypeExpression(target, line, symbols, callableSymbols))}`
     };
   }
   if (symbol.kind === 'alias' && symbol.target) {
     if (seen.has(symbol.key)) { throw new Error(`Line ${symbol.line}: cyclic type alias "${symbol.key}"`); }
     seen.add(symbol.key);
-    const result = typeIdentity(symbol.target, line, symbols, templateSymbols, seen);
+    const result = typeIdentity(symbol.target, line, symbols, callableSymbols, seen);
     seen.delete(symbol.key);
     return result;
   }
@@ -515,10 +438,10 @@ function assertAssignableType(
   sourceType: string,
   context: string,
   symbols: Map<string, TypeSymbol>,
-  templateSymbols: Map<string, TemplateSymbol>
+  callableSymbols: Map<string, CallableSymbol>
 ): void {
-  const target = typeIdentity(targetType, line, symbols, templateSymbols);
-  const source = typeIdentity(sourceType, line, symbols, templateSymbols);
+  const target = typeIdentity(targetType, line, symbols, callableSymbols);
+  const source = typeIdentity(sourceType, line, symbols, callableSymbols);
   if (target.key !== source.key) {
     throw new Error(`Line ${line}: cannot assign ${source.display} to ${target.display} in ${context}`);
   }
@@ -528,9 +451,9 @@ function inferExpressionType(
   expr: string,
   line: number,
   env: Map<string, ValueType>,
-  selfFields: Map<string, import('./parser').TemplateField> | undefined,
+  selfFields: Map<string, import('./parser').FieldNode> | undefined,
   symbols: Map<string, TypeSymbol>,
-  templateSymbols: Map<string, TemplateSymbol>
+  callableSymbols: Map<string, CallableSymbol>
 ): string | undefined {
   const selfField = expr.match(/^self\.([A-Za-z_][A-Za-z0-9_]*)$/)?.[1];
   if (selfField) {
@@ -551,10 +474,10 @@ function inferExpressionType(
   }
 
   if (call.callee === 'c.sel' && call.args.length >= 3) {
-    const left = inferExpressionType(call.args[1], line, env, selfFields, symbols, templateSymbols);
-    const right = inferExpressionType(call.args[2], line, env, selfFields, symbols, templateSymbols);
+    const left = inferExpressionType(call.args[1], line, env, selfFields, symbols, callableSymbols);
+    const right = inferExpressionType(call.args[2], line, env, selfFields, symbols, callableSymbols);
     if (left && right) {
-      assertAssignableType(line, left, right, `call "${call.callee}"`, symbols, templateSymbols);
+      assertAssignableType(line, left, right, `call "${call.callee}"`, symbols, callableSymbols);
       return left;
     }
     return left ?? right;
@@ -579,17 +502,17 @@ function inferExpressionType(
       'c.math.bit.set',
     ].includes(call.callee)
   ) {
-    const left = inferExpressionType(call.args[0] ?? '', line, env, selfFields, symbols, templateSymbols);
-    const right = inferExpressionType(call.args[1] ?? '', line, env, selfFields, symbols, templateSymbols);
+    const left = inferExpressionType(call.args[0] ?? '', line, env, selfFields, symbols, callableSymbols);
+    const right = inferExpressionType(call.args[1] ?? '', line, env, selfFields, symbols, callableSymbols);
     if (left && right) {
-      assertAssignableType(line, left, right, `call "${call.callee}"`, symbols, templateSymbols);
+      assertAssignableType(line, left, right, `call "${call.callee}"`, symbols, callableSymbols);
       return left;
     }
     return left ?? right;
   }
 
   if (['c.math.neg', 'c.math.bit.not'].includes(call.callee)) {
-    return inferExpressionType(call.args[0] ?? '', line, env, selfFields, symbols, templateSymbols);
+    return inferExpressionType(call.args[0] ?? '', line, env, selfFields, symbols, callableSymbols);
   }
 
   return undefined;
@@ -598,9 +521,8 @@ function inferExpressionType(
 function validateFnBodyTypes(
   fn: FnNode,
   symbols: Map<string, TypeSymbol>,
-  templateSymbols: Map<string, TemplateSymbol>,
+  callableSymbols: Map<string, CallableSymbol>,
   struct?: import('./parser').StructNode,
-  paramTemplates?: Map<string, TemplateNode>,
   paramStructs?: Map<string, StructNode>
 ): void {
   const env = new Map<string, ValueType>();
@@ -609,12 +531,12 @@ function validateFnBodyTypes(
     env.set(param.name, { type: param.type, mutable: param.mutable });
   }
 
-  const selfFields = struct && paramTemplates
-    ? new Map(getStructFields(struct, paramTemplates, paramStructs).map((field) => [field.name, field]))
+  const selfFields = struct
+    ? new Map(getStructFields(struct, paramStructs).map((field) => [field.name, field]))
     : undefined;
 
-  const expectedReturnTypes = fn.returnType === 'any' && struct && paramTemplates
-    ? inferStructMethodReturnTargets(fn, struct, paramTemplates, paramStructs)
+  const expectedReturnTypes = fn.returnType === 'any' && struct
+    ? inferStructMethodReturnTargets(fn, struct, paramStructs)
     : fn.returnType === 'none'
       ? []
       : [fn.returnType];
@@ -622,9 +544,9 @@ function validateFnBodyTypes(
   for (const line of fn.body) {
     const letStatement = parseLetStatement(line);
     if (letStatement) {
-      const exprType = inferExpressionType(letStatement.expr, fn.line, env, selfFields, symbols, templateSymbols);
+      const exprType = inferExpressionType(letStatement.expr, fn.line, env, selfFields, symbols, callableSymbols);
       if (exprType) {
-        assertAssignableType(fn.line, letStatement.type, exprType, `let "${letStatement.name}"`, symbols, templateSymbols);
+        assertAssignableType(fn.line, letStatement.type, exprType, `let "${letStatement.name}"`, symbols, callableSymbols);
       }
       env.set(letStatement.name, { type: letStatement.type, mutable: true });
       continue;
@@ -632,12 +554,12 @@ function validateFnBodyTypes(
 
     const returnStatement = parseReturnStatement(line);
     if (returnStatement) {
-      const exprType = inferExpressionType(returnStatement.expr, fn.line, env, selfFields, symbols, templateSymbols);
+      const exprType = inferExpressionType(returnStatement.expr, fn.line, env, selfFields, symbols, callableSymbols);
       if (returnStatement.type && exprType) {
-        assertAssignableType(fn.line, returnStatement.type, exprType, 'return statement', symbols, templateSymbols);
+        assertAssignableType(fn.line, returnStatement.type, exprType, 'return statement', symbols, callableSymbols);
       }
       if (!returnStatement.type && exprType && expectedReturnTypes.length === 1) {
-        assertAssignableType(fn.line, expectedReturnTypes[0], exprType, 'return statement', symbols, templateSymbols);
+        assertAssignableType(fn.line, expectedReturnTypes[0], exprType, 'return statement', symbols, callableSymbols);
       }
       continue;
     }
@@ -658,9 +580,9 @@ function validateFnBodyTypes(
         }
         targetType = target.type;
       }
-      const exprType = inferExpressionType(assignment.expr, fn.line, env, selfFields, symbols, templateSymbols);
+      const exprType = inferExpressionType(assignment.expr, fn.line, env, selfFields, symbols, callableSymbols);
       if (targetType && exprType) {
-        assertAssignableType(fn.line, targetType, exprType, `assignment to "${assignment.target}"`, symbols, templateSymbols);
+        assertAssignableType(fn.line, targetType, exprType, `assignment to "${assignment.target}"`, symbols, callableSymbols);
       }
     }
   }
@@ -669,10 +591,9 @@ function validateFnBodyTypes(
 function validateStructMethodBody(
   fn: FnNode,
   struct: import('./parser').StructNode,
-  paramTemplates: Map<string, TemplateNode>,
   paramStructs: Map<string, StructNode> = new Map()
 ): void {
-  const fields = new Map(getStructFields(struct, paramTemplates, paramStructs).map((field) => [field.name, field]));
+  const fields = new Map(getStructFields(struct, paramStructs).map((field) => [field.name, field]));
   for (const line of fn.body) {
     const assignment = parseAssignmentStatement(line);
     if (!assignment?.target.startsWith('self.')) { continue; }
@@ -693,13 +614,12 @@ function validateStructMethodBody(
 function inferStructMethodReturnTargets(
   fn: FnNode,
   struct: import('./parser').StructNode,
-  paramTemplates: Map<string, TemplateNode>,
   paramStructs: Map<string, StructNode> = new Map()
 ): string[] {
   if (!hasReturnStatement(fn)) { return []; }
   const fieldName = inferReturnedSelfField(fn);
   if (!fieldName) { throw new Error(`Line ${fn.bodyLine || fn.line}: cannot infer any return type`); }
-  const field = getStructFields(struct, paramTemplates, paramStructs).find((candidate) => candidate.name === fieldName);
+  const field = getStructFields(struct, paramStructs).find((candidate) => candidate.name === fieldName);
   if (!field) { throw new Error(`Line ${fn.bodyLine || fn.line}: cannot infer any return type, unknown field "self.${fieldName}"`); }
   return [field.target];
 }

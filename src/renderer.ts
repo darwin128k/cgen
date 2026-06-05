@@ -1,8 +1,8 @@
-import type { FnNode, FnParam, TemplateNode, StructNode, Attribute } from './parser';
+import type { FnNode, FnParam, StructNode, Attribute } from './parser';
 import {
   type ModuleArtifact,
   type TypeSymbol,
-  type TemplateSymbol,
+  type CallableSymbol,
   type DocTag,
   type EnumConstMode,
   type OutputTarget,
@@ -16,11 +16,9 @@ import {
 import {
   parseCallExpression,
   parseUseExpression,
-  applyTemplateSymbol,
+  applyCallableSymbol,
   applyRawBody,
-  expandTemplateArgument,
-  expandTemplateBody,
-  expandTemplateBodyInline,
+  expandCallableArgument,
   expandStructUse,
   parseLetStatement,
   parseReturnStatement,
@@ -31,7 +29,6 @@ import {
   renderRawCExpr,
 } from './expander';
 import {
-  collectScopeTemplates,
   collectScopeStructs,
   collectScopeFns,
   collectScopeLets,
@@ -42,16 +39,15 @@ import {
   hasReturnStatement,
   inferReturnedSelfField,
   getStructFields,
-  isTemplateLikeFn,
+  isCompileTimeFn,
 } from './symbols';
 
 function renderFieldDeclaration(
-  field: import('./parser').TemplateField,
+  field: import('./parser').FieldNode,
   typeName: string,
-  template?: TemplateNode,
   forceMutable = false
 ): string {
-  const prefix = field.mutable || template?.mutable || forceMutable ? '' : 'const ';
+  const prefix = field.mutable || forceMutable ? '' : 'const ';
   return `${prefix}${typeName} ${field.name}`;
 }
 
@@ -160,10 +156,10 @@ export function getFnOutputTarget(fn: FnNode): OutputTarget {
 function resolveFnReturnType(
   fn: FnNode,
   symbols: Map<string, TypeSymbol>,
-  templateSymbols: Map<string, TemplateSymbol>
+  callableSymbols: Map<string, CallableSymbol>
 ): string {
   if (fn.returnType === 'none') { return 'void'; }
-  if (fn.returnType !== 'any') { return resolveTypeExpression(fn.returnType, fn.line, symbols, templateSymbols); }
+  if (fn.returnType !== 'any') { return resolveTypeExpression(fn.returnType, fn.line, symbols, callableSymbols); }
   throw new Error(
     fn.returnTypeInferred
       ? `Line ${fn.line}: cannot infer return type for non-method function`
@@ -174,9 +170,9 @@ function resolveFnReturnType(
 function renderFnParam(
   param: FnParam,
   symbols: Map<string, TypeSymbol>,
-  templateSymbols: Map<string, TemplateSymbol>
+  callableSymbols: Map<string, CallableSymbol>
 ): string {
-  const typeName = resolveTypeExpression(param.type, param.line, symbols, templateSymbols);
+  const typeName = resolveTypeExpression(param.type, param.line, symbols, callableSymbols);
   const prefix = param.mutable ? '' : 'const ';
   return `${prefix}${typeName} ${param.name}`;
 }
@@ -188,10 +184,10 @@ function renderMacroParamList(params: FnParam[]): string {
 function renderDefineFnBody(
   fn: FnNode,
   symbols: Map<string, TypeSymbol>,
-  templateSymbols: Map<string, TemplateSymbol>
+  callableSymbols: Map<string, CallableSymbol>
 ): string {
   if (fn.body.length !== 1) {
-    throw new Error(`Line ${fn.line}: template-like fn must have exactly one return or use statement`);
+    throw new Error(`Line ${fn.line}: compile-time fn must have exactly one return or use statement`);
   }
   const line = fn.body[0];
   const exprOf = line.match(/^return\s+c\.expr\((.*)\)(?:\s+as\s+.+)?$/)
@@ -202,15 +198,15 @@ function renderDefineFnBody(
   }
   const returnStatement = parseReturnStatement(line);
   if (returnStatement) {
-    return expandDefineFnVariadics(fn, expandTypedTemplateArgument(returnStatement.expr, fn.line, symbols, templateSymbols));
+    return expandDefineFnVariadics(fn, expandTypedTemplateArgument(returnStatement.expr, fn.line, symbols, callableSymbols));
   }
   if (/^use\s+/.test(line)) {
     const expression = parseUseExpression(line, fn.line);
-    const args = expression.args.map((arg) => expandTypedTemplateArgument(arg, fn.line, symbols, templateSymbols));
-    const body = applyTemplateSymbol(expression.callee, args, fn.line, templateSymbols, (arg, lineNumber) => renderTypeInterpolation(arg, lineNumber, symbols, templateSymbols));
+    const args = expression.args.map((arg) => expandTypedTemplateArgument(arg, fn.line, symbols, callableSymbols));
+    const body = applyCallableSymbol(expression.callee, args, fn.line, callableSymbols, (arg, lineNumber) => renderTypeInterpolation(arg, lineNumber, symbols, callableSymbols));
     return expandDefineFnVariadics(fn, body);
   }
-  throw new Error(`Line ${fn.line}: template-like fn must have a return or use statement`);
+  throw new Error(`Line ${fn.line}: compile-time fn must have a return or use statement`);
 }
 
 function expandDefineFnVariadics(fn: FnNode, body: string): string {
@@ -228,14 +224,13 @@ function expandTypedTemplateArgument(
   arg: string,
   line: number,
   symbols: Map<string, TypeSymbol>,
-  templateSymbols: Map<string, TemplateSymbol>
+  callableSymbols: Map<string, CallableSymbol>
 ): string {
-  return expandTemplateArgument(
+  return expandCallableArgument(
     arg,
     line,
-    templateSymbols,
-    new Set(),
-    (typeArg, lineNumber) => renderTypeInterpolation(typeArg, lineNumber, symbols, templateSymbols)
+    callableSymbols,
+    (typeArg, lineNumber) => renderTypeInterpolation(typeArg, lineNumber, symbols, callableSymbols)
   );
 }
 
@@ -243,10 +238,10 @@ function renderTypeInterpolation(
   arg: string,
   line: number,
   symbols: Map<string, TypeSymbol>,
-  templateSymbols: Map<string, TemplateSymbol>
+  callableSymbols: Map<string, CallableSymbol>
 ): string {
   try {
-    return resolveTypeExpression(arg, line, symbols, templateSymbols);
+    return resolveTypeExpression(arg, line, symbols, callableSymbols);
   } catch {
     return arg;
   }
@@ -256,12 +251,12 @@ function resolveMacroArg(
   arg: string,
   line: number,
   symbols: Map<string, TypeSymbol>,
-  templateSymbols: Map<string, TemplateSymbol>
+  callableSymbols: Map<string, CallableSymbol>
 ): string {
   try {
-    return resolveTypeExpression(arg, line, symbols, templateSymbols);
+    return resolveTypeExpression(arg, line, symbols, callableSymbols);
   } catch {
-    return expandTemplateArgument(arg, line, templateSymbols, new Set(), (typeArg, lineNumber) => renderTypeInterpolation(typeArg, lineNumber, symbols, templateSymbols));
+    return expandCallableArgument(arg, line, callableSymbols, (typeArg, lineNumber) => renderTypeInterpolation(typeArg, lineNumber, symbols, callableSymbols));
   }
 }
 
@@ -269,15 +264,15 @@ function makeFnSignature(
   fn: FnNode,
   fnCName: string,
   symbols: Map<string, TypeSymbol>,
-  templateSymbols: Map<string, TemplateSymbol>,
+  callableSymbols: Map<string, CallableSymbol>,
   leadingParams: string[] = []
 ): string {
   const specifiers = getFnSpecifiers(fn);
   const prefix = specifiers ? `${specifiers} ` : '';
-  const returnC = resolveFnReturnType(fn, symbols, templateSymbols);
+  const returnC = resolveFnReturnType(fn, symbols, callableSymbols);
   const params = [
     ...leadingParams,
-    ...fn.params.map((p) => p.variadic ? '...' : renderFnParam(p, symbols, templateSymbols))
+    ...fn.params.map((p) => p.variadic ? '...' : renderFnParam(p, symbols, callableSymbols))
   ];
   const paramsC = params.length > 0 ? params.join(', ') : 'void';
   return `${prefix}${returnC} ${fnCName}(${paramsC})`;
@@ -286,38 +281,36 @@ function makeFnSignature(
 function resolveStructMethodReturnType(
   fn: FnNode,
   struct: StructNode,
-  paramTemplates: Map<string, TemplateNode>,
   paramStructs: Map<string, StructNode>,
   symbols: Map<string, TypeSymbol>,
-  templateSymbols: Map<string, TemplateSymbol>
+  callableSymbols: Map<string, CallableSymbol>
 ): string {
   if (fn.returnType === 'none') { return 'void'; }
-  if (fn.returnType !== 'any') { return resolveTypeExpression(fn.returnType, fn.line, symbols, templateSymbols); }
+  if (fn.returnType !== 'any') { return resolveTypeExpression(fn.returnType, fn.line, symbols, callableSymbols); }
   const fieldName = inferReturnedSelfField(fn);
   if (!hasReturnStatement(fn)) { return 'void'; }
   if (!fieldName) { throw new Error(`Line ${fn.bodyLine || fn.line}: cannot infer any return type`); }
-  const field = getStructFields(struct, paramTemplates, paramStructs).find((candidate) => candidate.name === fieldName);
+  const field = getStructFields(struct, paramStructs).find((candidate) => candidate.name === fieldName);
   if (!field) {
     throw new Error(`Line ${fn.bodyLine || fn.line}: cannot infer any return type, unknown field "self.${fieldName}"`);
   }
-  return resolveTypeExpression(field.target, field.line, symbols, templateSymbols);
+  return resolveTypeExpression(field.target, field.line, symbols, callableSymbols);
 }
 
 function makeStructMethodSignature(
   fn: FnNode,
   fnCName: string,
   symbols: Map<string, TypeSymbol>,
-  templateSymbols: Map<string, TemplateSymbol>,
+  callableSymbols: Map<string, CallableSymbol>,
   selfTypeName: string,
   struct: StructNode,
-  paramTemplates: Map<string, TemplateNode>,
   paramStructs: Map<string, StructNode>
 ): string {
   const specifiers = getFnSpecifiers(fn);
   const prefix = specifiers ? `${specifiers} ` : '';
-  const returnC = resolveStructMethodReturnType(fn, struct, paramTemplates, paramStructs, symbols, templateSymbols);
+  const returnC = resolveStructMethodReturnType(fn, struct, paramStructs, symbols, callableSymbols);
   const selfPrefix = fn.selfMutable ? '' : 'const ';
-  const params = [`${selfPrefix}${selfTypeName} *self`, ...fn.params.map((p) => p.variadic ? '...' : renderFnParam(p, symbols, templateSymbols))];
+  const params = [`${selfPrefix}${selfTypeName} *self`, ...fn.params.map((p) => p.variadic ? '...' : renderFnParam(p, symbols, callableSymbols))];
   return `${prefix}${returnC} ${fnCName}(${params.join(', ')})`;
 }
 
@@ -367,12 +360,12 @@ function renderLetDefinition(
   letNode: import('./parser').LetNode,
   cName: string,
   symbols: Map<string, TypeSymbol>,
-  templateSymbols: Map<string, TemplateSymbol>,
+  callableSymbols: Map<string, CallableSymbol>,
   isPrivate: boolean
 ): string {
   const storage = isPrivate ? 'static ' : '';
-  const typeName = resolveTypeExpression(letNode.type, letNode.line, symbols, templateSymbols);
-  const expanded = expandTypedTemplateArgument(letNode.expr, letNode.line, symbols, templateSymbols);
+  const typeName = resolveTypeExpression(letNode.type, letNode.line, symbols, callableSymbols);
+  const expanded = expandTypedTemplateArgument(letNode.expr, letNode.line, symbols, callableSymbols);
   return `${storage}${renderLetTypePrefix(letNode)}${typeName} ${cName} = ${expanded};`;
 }
 
@@ -380,43 +373,43 @@ function renderLetDeclaration(
   letNode: import('./parser').LetNode,
   cName: string,
   symbols: Map<string, TypeSymbol>,
-  templateSymbols: Map<string, TemplateSymbol>
+  callableSymbols: Map<string, CallableSymbol>
 ): string {
-  const typeName = resolveTypeExpression(letNode.type, letNode.line, symbols, templateSymbols);
+  const typeName = resolveTypeExpression(letNode.type, letNode.line, symbols, callableSymbols);
   return `extern ${renderLetTypePrefix(letNode)}${typeName} ${cName};`;
 }
 
 function renderFnBody(
   fn: FnNode,
   symbols: Map<string, TypeSymbol>,
-  templateSymbols: Map<string, TemplateSymbol>,
+  callableSymbols: Map<string, CallableSymbol>,
   methodSelfPointer = false
 ): string[] {
-  return fn.body.map((line) => renderFnBodyLine(line, fn.line, symbols, templateSymbols, methodSelfPointer));
+  return fn.body.map((line) => renderFnBodyLine(line, fn.line, symbols, callableSymbols, methodSelfPointer));
 }
 
 function renderFnBodyLine(
   line: string,
   fnLine: number,
   symbols: Map<string, TypeSymbol>,
-  templateSymbols: Map<string, TemplateSymbol>,
+  callableSymbols: Map<string, CallableSymbol>,
   methodSelfPointer: boolean
 ): string {
   const letStatement = parseLetStatement(line);
   if (letStatement) {
-    const typeName = resolveTypeExpression(letStatement.type, fnLine, symbols, templateSymbols);
+    const typeName = resolveTypeExpression(letStatement.type, fnLine, symbols, callableSymbols);
     const expr = renderFnExpression(letStatement.expr, methodSelfPointer);
-    const expanded = expandTypedTemplateArgument(expr, fnLine, symbols, templateSymbols);
+    const expanded = expandTypedTemplateArgument(expr, fnLine, symbols, callableSymbols);
     return `  ${typeName} ${letStatement.name} = ${expanded};`;
   }
   const exprOfMatch = line.match(/^use\s+c\.expr\((.*)\)$/);
   if (exprOfMatch) {
-    return `  ${renderRawCExpr(exprOfMatch[1].trim(), fnLine, (arg, lineNumber) => renderTypeInterpolation(arg, lineNumber, symbols, templateSymbols))}`;
+    return `  ${renderRawCExpr(exprOfMatch[1].trim(), fnLine, (arg, lineNumber) => renderTypeInterpolation(arg, lineNumber, symbols, callableSymbols))}`;
   }
   const returnStatement = parseReturnStatement(line);
   if (returnStatement) {
     const expr = renderFnExpression(returnStatement.expr, methodSelfPointer);
-    const expanded = expandTypedTemplateArgument(expr, fnLine, symbols, templateSymbols);
+    const expanded = expandTypedTemplateArgument(expr, fnLine, symbols, callableSymbols);
     return `  return ${expanded};`;
   }
   const assignment = parseAssignmentStatement(line);
@@ -426,13 +419,13 @@ function renderFnBodyLine(
     }
     const target = renderFnExpression(assignment.target, methodSelfPointer);
     const expr = renderFnExpression(assignment.expr, methodSelfPointer);
-    const expanded = expandTypedTemplateArgument(expr, fnLine, symbols, templateSymbols);
+    const expanded = expandTypedTemplateArgument(expr, fnLine, symbols, callableSymbols);
     return `  ${target} = ${expanded};`;
   }
   if (/^use\s+/.test(line)) {
     const expression = parseUseExpression(renderFnExpression(line, methodSelfPointer), fnLine);
-    const args = expression.args.map((arg) => expandTypedTemplateArgument(arg, fnLine, symbols, templateSymbols));
-    const expanded = applyTemplateSymbol(expression.callee, args, fnLine, templateSymbols, (typeArg, lineNumber) => resolveTypeExpression(typeArg, lineNumber, symbols, templateSymbols));
+    const args = expression.args.map((arg) => expandTypedTemplateArgument(arg, fnLine, symbols, callableSymbols));
+    const expanded = applyCallableSymbol(expression.callee, args, fnLine, callableSymbols, (typeArg, lineNumber) => resolveTypeExpression(typeArg, lineNumber, symbols, callableSymbols));
     return `  ${expanded};`;
   }
   throw new Error(`Line ${fnLine}: function bodies only support declarations, assignments, returns, and use expressions`);
@@ -474,7 +467,7 @@ function getEnumOutputTarget(declaration: import('./parser').EnumNode): OutputTa
     }
   }
   if (hasAttr(declaration.attributes, 'intrinsic')) {
-    throw new Error(`Line ${declaration.line}: @intrinsic is only supported on alias and template declarations`);
+    throw new Error(`Line ${declaration.line}: @intrinsic is only supported on alias and compile-time fn declarations`);
   }
   return hasAttr(declaration.attributes, 'public') ? 'both' : 'header';
 }
@@ -483,10 +476,8 @@ export function renderHeader(
   module: ModuleArtifact,
   includes: string[],
   symbols: Map<string, TypeSymbol>,
-  templateSymbols: Map<string, TemplateSymbol>,
-  paramTemplates: Map<string, TemplateNode>,
-  paramStructs: Map<string, StructNode>,
-  bodyTemplates: Map<string, TemplateNode>
+  callableSymbols: Map<string, CallableSymbol>,
+  paramStructs: Map<string, StructNode>
 ): string {
   const lines: string[] = [];
   pushDoc(lines, module.section.attributes);
@@ -501,14 +492,14 @@ export function renderHeader(
     if (declaration.kind === 'alias') {
       if (hasAttr(declaration.attributes, 'intrinsic')) { continue; }
       pushDoc(lines, declaration.attributes);
-      const type = resolveTypeExpression(declaration.target, declaration.line, symbols, templateSymbols);
+      const type = resolveTypeExpression(declaration.target, declaration.line, symbols, callableSymbols);
       const cName = makeTypedefName(allSymbolParts, declaration.name);
       const aliasKey = makeTypeKey([...module.typeParts, ...symbolParts], declaration.name);
-      const defineOnly = symbols.get(aliasKey)?.defineOnly ?? shouldDefineAlias(declaration.target, declaration.line, symbols, templateSymbols);
+      const defineOnly = symbols.get(aliasKey)?.defineOnly ?? shouldDefineAlias(declaration.target, declaration.line, symbols, callableSymbols);
       lines.push(defineOnly ? `#define ${cName} ${type}` : `typedef ${type} ${cName};`);
       continue;
     }
-    const type = resolveTypeExpression(declaration.target, declaration.line, symbols, templateSymbols);
+    const type = resolveTypeExpression(declaration.target, declaration.line, symbols, callableSymbols);
     const cName = makeTypedefName(allSymbolParts, declaration.name);
     pushDoc(lines, declaration.attributes);
     lines.push(`typedef ${type} ${cName};`);
@@ -523,45 +514,6 @@ export function renderHeader(
     });
   }
 
-  for (const { template, symbolParts } of collectScopeTemplates(module.section, [])) {
-    const allSymbolParts = [...module.symbolParts, ...symbolParts];
-    if (template.fields.length > 0 && template.params.length > 0) {
-      const paramNames = new Set(template.params.map((p) => p.name));
-      const paramList = template.params.map((p) => p.name).join(', ');
-      const fieldDefs = template.fields.map((field, index) => {
-        const typeName = paramNames.has(field.target)
-          ? field.target
-          : resolveTypeExpression(field.target, field.line, symbols, templateSymbols);
-        const semi = index < template.fields.length - 1 ? ';' : '';
-        return `${renderFieldDeclaration(field, typeName, template)}${semi}`;
-      }).join(' ');
-      pushDoc(lines, template.attributes);
-      lines.push(`#define ${makeMacroName(allSymbolParts, template.name)}(${paramList}) ${fieldDefs}`);
-      continue;
-    }
-    if (template.fields.length > 0) {
-      const cName = makeTypedefName(allSymbolParts, template.name);
-      pushDoc(lines, template.attributes);
-      lines.push(`typedef struct ${cName} {`);
-      for (const field of template.fields) {
-        const typeName = resolveTypeExpression(field.target, field.line, symbols, templateSymbols);
-        pushDoc(lines, field.attributes, '  ');
-        lines.push(`  ${renderFieldDeclaration(field, typeName, template)};`);
-      }
-      lines.push(`} ${cName};`);
-      continue;
-    }
-    const typeKeyParts = [...module.typeParts, ...symbolParts];
-    if (typeKeyParts[typeKeyParts.length - 1] !== template.name) { typeKeyParts.push(template.name); }
-    if (templateSymbols.get(typeKeyParts.join('.'))?.intrinsicOnly) { continue; }
-    const paramList = template.params.map((p) => (p.variadic ? '...' : p.name)).join(', ');
-    const body = template.bodyInline
-      ? expandTemplateBodyInline(template, templateSymbols, bodyTemplates)
-      : expandTemplateBody(template, templateSymbols);
-    pushDoc(lines, template.attributes);
-    lines.push(`#define ${makeMacroName(allSymbolParts, template.name)}(${paramList}) ${body}`);
-  }
-
   for (const { struct, symbolParts } of collectScopeParameterizedStructs(module.section, [])) {
     const allSymbolParts = [...module.symbolParts, ...symbolParts];
     const paramNames = new Set(struct.params.map((p) => p.name));
@@ -570,19 +522,19 @@ export function renderHeader(
     const fieldDefs = struct.fields.map((field, index) => {
       const typeName = paramNames.has(field.target)
         ? field.target
-        : resolveTypeExpression(field.target, field.line, symbols, templateSymbols);
+        : resolveTypeExpression(field.target, field.line, symbols, callableSymbols);
       const semi = index < struct.fields.length - 1 ? ';' : '';
-      return `${renderFieldDeclaration(field, typeName, undefined, mutableFields)}${semi}`;
+      return `${renderFieldDeclaration(field, typeName, mutableFields)}${semi}`;
     }).join(' ');
     pushDoc(lines, struct.attributes);
     lines.push(`#define ${makeMacroName(allSymbolParts, struct.name)}(${paramList}) ${fieldDefs}`);
   }
 
   for (const { fn, symbolParts } of collectScopeFns(module.section, [])) {
-    if (!isTemplateLikeFn(fn) || hasAttr(fn.attributes, 'intrinsic')) { continue; }
+    if (!isCompileTimeFn(fn) || hasAttr(fn.attributes, 'intrinsic')) { continue; }
     const allSymbolParts = [...module.symbolParts, ...symbolParts];
     pushDoc(lines, fn.attributes);
-    lines.push(`#define ${makeMacroName(allSymbolParts, fn.name)}(${renderMacroParamList(fn.params)}) ${renderDefineFnBody(fn, symbols, templateSymbols)}`);
+    lines.push(`#define ${makeMacroName(allSymbolParts, fn.name)}(${renderMacroParamList(fn.params)}) ${renderDefineFnBody(fn, symbols, callableSymbols)}`);
   }
 
   for (const { struct, symbolParts } of collectScopeStructs(module.section, [])) {
@@ -593,14 +545,14 @@ export function renderHeader(
     pushDoc(lines, struct.attributes);
     lines.push(`typedef struct ${tagName} {`);
     for (const field of struct.fields) {
-      const typeName = resolveTypeExpression(field.target, field.line, symbols, templateSymbols);
+      const typeName = resolveTypeExpression(field.target, field.line, symbols, callableSymbols);
       pushDoc(lines, field.attributes, '  ');
       lines.push(`  ${renderFieldDeclaration(field, typeName)};`);
     }
     for (const use of (struct.uses ?? [])) {
       if (use.inline) {
-        for (const field of expandStructUse(use.expr, struct.line, paramTemplates, paramStructs)) {
-          const typeName = resolveTypeExpression(field.target, field.line, symbols, templateSymbols);
+        for (const field of expandStructUse(use.expr, struct.line, paramStructs)) {
+          const typeName = resolveTypeExpression(field.target, field.line, symbols, callableSymbols);
           pushDoc(lines, field.attributes, '  ');
           lines.push(`  ${renderFieldDeclaration(field, typeName)};`);
         }
@@ -608,9 +560,9 @@ export function renderHeader(
       }
       const call = parseCallExpression(use.expr, struct.line);
       if (!call) { continue; }
-      const tmpl = templateSymbols.get(call.callee);
+      const tmpl = callableSymbols.get(call.callee);
       if (!tmpl) { continue; }
-      const resolvedArgs = call.args.map((arg) => resolveMacroArg(arg, struct.line, symbols, templateSymbols));
+      const resolvedArgs = call.args.map((arg) => resolveMacroArg(arg, struct.line, symbols, callableSymbols));
       lines.push(`  ${tmpl.macroName}(${resolvedArgs.join(', ')});`);
     }
     lines.push(`} ${typedefName};`);
@@ -618,11 +570,11 @@ export function renderHeader(
       const target = getFnOutputTarget(fn);
       if (target === 'source') { continue; }
       const fnCName = makeStructMethodCName(module, symbolParts, struct.name, fn.name);
-      const signature = makeStructMethodSignature(fn, fnCName, symbols, templateSymbols, typedefName, struct, paramTemplates, paramStructs);
-      pushFnDoc(lines, fn, resolveStructMethodReturnType(fn, struct, paramTemplates, paramStructs, symbols, templateSymbols), true);
+      const signature = makeStructMethodSignature(fn, fnCName, symbols, callableSymbols, typedefName, struct, paramStructs);
+      pushFnDoc(lines, fn, resolveStructMethodReturnType(fn, struct, paramStructs, symbols, callableSymbols), true);
       if (hasAttr(fn.attributes, 'inline')) {
         lines.push(`${signature} {`);
-        lines.push(...renderFnBody(fn, symbols, templateSymbols, true));
+        lines.push(...renderFnBody(fn, symbols, callableSymbols, true));
         lines.push('}');
       } else {
         lines.push(`${signature};`);
@@ -634,19 +586,19 @@ export function renderHeader(
     if (getLetOutputTarget(letNode) === 'source') { continue; }
     const cName = makeLetCName(module, symbolParts, letNode.name);
     pushDoc(lines, letNode.attributes);
-    lines.push(renderLetDeclaration(letNode, cName, symbols, templateSymbols));
+    lines.push(renderLetDeclaration(letNode, cName, symbols, callableSymbols));
   }
 
   for (const { fn, symbolParts: extraParts } of collectScopeFns(module.section, [])) {
-    if (isTemplateLikeFn(fn)) { continue; }
+    if (isCompileTimeFn(fn)) { continue; }
     const target = getFnOutputTarget(fn);
     if (target === 'source') { continue; }
     const fnCName = makeFnCName(module, extraParts, fn.name);
-    const signature = makeFnSignature(fn, fnCName, symbols, templateSymbols);
-    pushFnDoc(lines, fn, resolveFnReturnType(fn, symbols, templateSymbols), false);
+    const signature = makeFnSignature(fn, fnCName, symbols, callableSymbols);
+    pushFnDoc(lines, fn, resolveFnReturnType(fn, symbols, callableSymbols), false);
     if (hasAttr(fn.attributes, 'inline')) {
       lines.push(`${signature} {`);
-      lines.push(...renderFnBody(fn, symbols, templateSymbols));
+      lines.push(...renderFnBody(fn, symbols, callableSymbols));
       lines.push('}');
     } else {
       lines.push(`${signature};`);
@@ -660,8 +612,7 @@ export function renderHeader(
 export function renderSource(
   module: ModuleArtifact,
   symbols: Map<string, TypeSymbol>,
-  templateSymbols: Map<string, TemplateSymbol>,
-  paramTemplates: Map<string, TemplateNode>,
+  callableSymbols: Map<string, CallableSymbol>,
   paramStructs: Map<string, StructNode>
 ): string | undefined {
   const lines = [`#include <${module.includePath}>`, ''];
@@ -687,18 +638,18 @@ export function renderSource(
     if (target !== 'source' && target !== 'both') { continue; }
     const cName = makeLetCName(module, symbolParts, letNode.name);
     if (target === 'source') { pushDoc(lines, letNode.attributes); }
-    lines.push(renderLetDefinition(letNode, cName, symbols, templateSymbols, target === 'source'));
+    lines.push(renderLetDefinition(letNode, cName, symbols, callableSymbols, target === 'source'));
     hasDefinitions = true;
   }
 
   for (const { fn, symbolParts: extraParts } of collectScopeFns(module.section, [])) {
-    if (isTemplateLikeFn(fn)) { continue; }
+    if (isCompileTimeFn(fn)) { continue; }
     const target = getFnOutputTarget(fn);
     if (target !== 'source' && target !== 'both') { continue; }
     const fnCName = makeFnCName(module, extraParts, fn.name);
-    if (target === 'source') { pushFnDoc(lines, fn, resolveFnReturnType(fn, symbols, templateSymbols), false); }
-    lines.push(`${makeFnSignature(fn, fnCName, symbols, templateSymbols)} {`);
-    lines.push(...renderFnBody(fn, symbols, templateSymbols));
+    if (target === 'source') { pushFnDoc(lines, fn, resolveFnReturnType(fn, symbols, callableSymbols), false); }
+    lines.push(`${makeFnSignature(fn, fnCName, symbols, callableSymbols)} {`);
+    lines.push(...renderFnBody(fn, symbols, callableSymbols));
     lines.push('}');
     hasDefinitions = true;
   }
@@ -712,10 +663,10 @@ export function renderSource(
       if (target !== 'source' && target !== 'both') { continue; }
       const fnCName = makeStructMethodCName(module, symbolParts, struct.name, fn.name);
       if (target === 'source') {
-        pushFnDoc(lines, fn, resolveStructMethodReturnType(fn, struct, paramTemplates, paramStructs, symbols, templateSymbols), true);
+        pushFnDoc(lines, fn, resolveStructMethodReturnType(fn, struct, paramStructs, symbols, callableSymbols), true);
       }
-      lines.push(`${makeStructMethodSignature(fn, fnCName, symbols, templateSymbols, typedefName, struct, paramTemplates, paramStructs)} {`);
-      lines.push(...renderFnBody(fn, symbols, templateSymbols, true));
+      lines.push(`${makeStructMethodSignature(fn, fnCName, symbols, callableSymbols, typedefName, struct, paramStructs)} {`);
+      lines.push(...renderFnBody(fn, symbols, callableSymbols, true));
       lines.push('}');
       hasDefinitions = true;
     }

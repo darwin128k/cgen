@@ -934,7 +934,6 @@ function kindToVscodeKind(kind: string): vscode.CompletionItemKind {
     case 'alias': return vscode.CompletionItemKind.TypeParameter;
     case 'enum': return vscode.CompletionItemKind.Enum;
     case 'struct': return vscode.CompletionItemKind.Struct;
-    case 'template': return vscode.CompletionItemKind.Function;
     case 'fn': return vscode.CompletionItemKind.Function;
     case 'field': return vscode.CompletionItemKind.Field;
     case 'param': return vscode.CompletionItemKind.Variable;

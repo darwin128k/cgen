@@ -3,10 +3,10 @@ import * as vscode from 'vscode';
 import { type FileIndexEntry, hashSource } from './indexer';
 import { parseDsl, createSection, type SectionNode, type ParsedDsl } from './parser';
 import { formatCgen } from './formatter';
-import { type SymbolUsageIndex, type ModuleArtifact, type TypeSymbol, type TemplateSymbol } from './cgenTypes';
-import { type TemplateNode, type StructNode } from './parser';
+import { type SymbolUsageIndex, type ModuleArtifact, type TypeSymbol, type CallableSymbol } from './cgenTypes';
+import { type StructNode } from './parser';
 import { loadConfig } from './config';
-import { buildTemplateSymbols, buildTypeSymbols, buildParamTemplateMap, buildBodyTemplateMap, buildParamStructMap } from './symbols';
+import { buildCallableSymbols, buildTypeSymbols, buildParamStructMap } from './symbols';
 import { collectModules, resolveModuleDependencies, buildSymbolUsageIndex, reduceTransitiveDependencies } from './resolver';
 import { renderHeader, renderSource } from './renderer';
 import {
@@ -29,10 +29,8 @@ interface DslArtifacts {
   root: SectionNode;
   modules: ModuleArtifact[];
   symbols: Map<string, TypeSymbol>;
-  templateSymbols: Map<string, TemplateSymbol>;
-  paramTemplates: Map<string, TemplateNode>;
+  callableSymbols: Map<string, CallableSymbol>;
   paramStructs: Map<string, StructNode>;
-  bodyTemplates: Map<string, TemplateNode>;
   usage: SymbolUsageIndex;
   perFileData: FileIndexEntry[];
 }
@@ -125,22 +123,20 @@ async function buildDslArtifacts(
     if (merged.diagnostics.length > 0) { throw new Error(merged.diagnostics.join('\n')); }
 
     const modules = collectModules(merged.root);
-    const templateSymbols = buildTemplateSymbols(modules);
-    const symbols = buildTypeSymbols(modules, templateSymbols);
-    const paramTemplates = buildParamTemplateMap(modules);
+    const callableSymbols = buildCallableSymbols(modules);
+    const symbols = buildTypeSymbols(modules, callableSymbols);
     const paramStructs = buildParamStructMap(modules);
-    const bodyTemplates = buildBodyTemplateMap(modules);
 
-    resolveModuleDependencies(modules, symbols, templateSymbols, paramTemplates, paramStructs);
+    resolveModuleDependencies(modules, symbols, callableSymbols, paramStructs);
     const usage = buildSymbolUsageIndex(modules);
 
     for (const module of modules) {
       if (module.headerPathParts.length === 0) { continue; }
-      renderHeader(module, [], symbols, templateSymbols, paramTemplates, paramStructs, bodyTemplates);
-      renderSource(module, symbols, templateSymbols, paramTemplates, paramStructs);
+      renderHeader(module, [], symbols, callableSymbols, paramStructs);
+      renderSource(module, symbols, callableSymbols, paramStructs);
     }
 
-    return { root: merged.root, modules, symbols, templateSymbols, paramTemplates, paramStructs, bodyTemplates, usage, perFileData };
+    return { root: merged.root, modules, symbols, callableSymbols, paramStructs, usage, perFileData };
   } catch (e) {
     throw new DslError(e instanceof Error ? e.message : String(e), merged.root, perFileData);
   }
@@ -166,7 +162,7 @@ export async function generateDsl(
   if (options.build && !config.build) {
     throw new Error('cgen.json must contain build settings to generate and build');
   }
-  const { root, modules, symbols, templateSymbols, paramTemplates, paramStructs, bodyTemplates, usage, perFileData } = await buildDslArtifacts(workspaceFolder, extensionUri, source, options);
+  const { root, modules, symbols, callableSymbols, paramStructs, usage, perFileData } = await buildDslArtifacts(workspaceFolder, extensionUri, source, options);
 
   const generated: string[] = [];
   const includeRoot = resolveWorkspacePath(workspaceFolder, config.generate.include);
@@ -186,12 +182,12 @@ export async function generateDsl(
       .map((candidate) => candidate.includePath)
       .filter((p) => p.length > 0)
       .sort();
-    const text = renderHeader(module, includes, symbols, templateSymbols, paramTemplates, paramStructs, bodyTemplates);
+    const text = renderHeader(module, includes, symbols, callableSymbols, paramStructs);
     await vscode.workspace.fs.createDirectory(vscode.Uri.file(path.dirname(headerPath)));
     await vscode.workspace.fs.writeFile(vscode.Uri.file(headerPath), Buffer.from(text, 'utf8'));
     generated.push(headerPath);
 
-    const sourceText = renderSource(module, symbols, templateSymbols, paramTemplates, paramStructs);
+    const sourceText = renderSource(module, symbols, callableSymbols, paramStructs);
     if (sourceText) {
       const sourcePath = path.join(sourceRoot, ...module.context.pathParts, `${module.section.name}.c`);
       await vscode.workspace.fs.createDirectory(vscode.Uri.file(path.dirname(sourcePath)));
