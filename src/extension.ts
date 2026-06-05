@@ -20,6 +20,7 @@ let postProgressMessage: ((active: boolean) => void) | undefined;
 let postDiagnosticsMessage: ((diagnostics: ParsedDiagnostic[]) => void) | undefined;
 let nativeDiagnostics: vscode.DiagnosticCollection | undefined;
 let currentEditorContent = '';
+let currentEditorUri: vscode.Uri | undefined;
 const nativeAnalysisTimers = new Map<string, NodeJS.Timeout>();
 const nativeAnalysisVersions = new Map<string, number>();
 
@@ -227,6 +228,8 @@ async function openDslEditor(context: vscode.ExtensionContext) {
   }
 
   let currentContent = initialValue;
+  currentEditorContent = currentContent;
+  currentEditorUri = currentFileUri() ?? scratchUri;
 
   async function postFormatPolicy() {
     await panel.webview.postMessage({ type: 'formatPolicy', policy: getFormatPolicy(currentFileUri() ?? scratchUri) });
@@ -326,6 +329,7 @@ async function openDslEditor(context: vscode.ExtensionContext) {
     if (message.type === 'change' && typeof message.text === 'string') {
       currentContent = message.text;
       currentEditorContent = message.text;
+      currentEditorUri = currentFileUri() ?? scratchUri;
       await vscode.workspace.fs.createDirectory(vscode.Uri.joinPath(workspaceFolder.uri, '.cgen'));
       await vscode.workspace.fs.writeFile(scratchUri, Buffer.from(message.text, 'utf8'));
       if (typeof message.cursor === 'number') {
@@ -390,6 +394,8 @@ async function openDslEditor(context: vscode.ExtensionContext) {
           const bytes = await vscode.workspace.fs.readFile(uris[0]);
           currentFilePath = uris[0].fsPath;
           currentContent = Buffer.from(bytes).toString('utf8');
+          currentEditorContent = currentContent;
+          currentEditorUri = currentFileUri() ?? scratchUri;
           const name = path.basename(uris[0].fsPath);
           panel.title = `CGen — ${name}`;
           await panel.webview.postMessage({ type: 'load', text: currentContent });
@@ -425,7 +431,7 @@ async function openDslEditor(context: vscode.ExtensionContext) {
         workspaceFolder,
         context.extensionUri,
         message.text,
-        { build: shouldBuild }
+        { build: shouldBuild, primaryUri: currentFileUri() ?? scratchUri }
       );
       const projectIndex = await getProjectIndex(context, workspaceFolder);
       projectIndex?.updateFromFiles(perFileData);
@@ -466,7 +472,12 @@ async function generateFromCurrentFile(context: vscode.ExtensionContext) {
   }
 
   try {
-    const { files, perFileData, usage } = await generateDsl(workspaceFolder, context.extensionUri, editor.document.getText());
+    const { files, perFileData, usage } = await generateDsl(
+      workspaceFolder,
+      context.extensionUri,
+      editor.document.getText(),
+      { primaryUri: editor.document.uri }
+    );
     const projectIndex = await getProjectIndex(context, workspaceFolder);
     projectIndex?.updateFromFiles(perFileData);
     projectIndex?.updateSymbolUsage(usage);
@@ -629,7 +640,12 @@ async function initializeProjectIndex(context: vscode.ExtensionContext): Promise
       usageTimer = setTimeout(async () => {
         index.onBusyChange?.(true);
         try {
-          const { perFileData, usage } = await resolveDslUsage(workspaceFolder, context.extensionUri, currentEditorContent);
+          const { perFileData, usage } = await resolveDslUsage(
+            workspaceFolder,
+            context.extensionUri,
+            currentEditorContent,
+            { primaryUri: currentEditorUri }
+          );
           index.updateFromFiles(perFileData);
           index.updateSymbolUsage(usage);
           postDiagnosticsMessage?.([]);
@@ -884,7 +900,12 @@ function scheduleNativeSemanticDiagnostics(context: vscode.ExtensionContext, doc
     if (nativeAnalysisVersions.get(key) !== version) { return; }
 
     try {
-      const { perFileData, usage } = await resolveDslUsage(workspaceFolder, context.extensionUri, source);
+      const { perFileData, usage } = await resolveDslUsage(
+        workspaceFolder,
+        context.extensionUri,
+        source,
+        { primaryUri: uri }
+      );
       if (nativeAnalysisVersions.get(key) !== version) { return; }
       const projectIndex = await getProjectIndex(context, workspaceFolder);
       projectIndex?.updateFromFiles(perFileData);

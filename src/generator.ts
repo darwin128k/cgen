@@ -36,6 +36,10 @@ interface DslArtifacts {
   perFileData: FileIndexEntry[];
 }
 
+interface DslSourceOptions {
+  primaryUri?: vscode.Uri;
+}
+
 function mergeDsls(parsedList: ParsedDsl[]): ParsedDsl {
   const root = createSection('root', '', 0);
   const diagnostics: string[] = [];
@@ -49,9 +53,13 @@ function mergeDsls(parsedList: ParsedDsl[]): ParsedDsl {
 async function collectAllDslSources(
   workspaceFolder: vscode.WorkspaceFolder,
   extensionUri: vscode.Uri,
-  primarySource: string
+  primarySource: string,
+  options: DslSourceOptions = {}
 ): Promise<Array<{ relativePath: string | null; source: string }>> {
   const primaryFormatted = formatCgen(primarySource);
+  const primaryRelativePath = options.primaryUri && options.primaryUri.scheme === 'file'
+    ? path.relative(workspaceFolder.uri.fsPath, options.primaryUri.fsPath).replace(/\\/g, '/')
+    : undefined;
   const sources: Array<{ relativePath: string | null; source: string }> = [];
   const seen = new Set<string>();
 
@@ -79,6 +87,7 @@ async function collectAllDslSources(
 
   for (const uri of files) {
     const relativePath = path.relative(workspaceFolder.uri.fsPath, uri.fsPath).replace(/\\/g, '/');
+    if (primaryRelativePath === relativePath) { continue; }
     const bytes = await vscode.workspace.fs.readFile(uri);
     const fileSource = formatCgen(Buffer.from(bytes).toString('utf8'));
     if (!seen.has(fileSource)) {
@@ -88,7 +97,7 @@ async function collectAllDslSources(
   }
 
   if (primaryFormatted && !seen.has(primaryFormatted)) {
-    sources.push({ relativePath: null, source: primaryFormatted });
+    sources.push({ relativePath: primaryRelativePath ?? null, source: primaryFormatted });
   }
 
   return sources;
@@ -97,9 +106,10 @@ async function collectAllDslSources(
 async function buildDslArtifacts(
   workspaceFolder: vscode.WorkspaceFolder,
   extensionUri: vscode.Uri,
-  source: string
+  source: string,
+  options: DslSourceOptions = {}
 ): Promise<DslArtifacts> {
-  const allSources = await collectAllDslSources(workspaceFolder, extensionUri, source);
+  const allSources = await collectAllDslSources(workspaceFolder, extensionUri, source, options);
   const parsedList = allSources.map((s) => parseDsl(s.source));
   const merged = mergeDsls(parsedList);
 
@@ -137,9 +147,10 @@ async function buildDslArtifacts(
 export async function resolveDslUsage(
   workspaceFolder: vscode.WorkspaceFolder,
   extensionUri: vscode.Uri,
-  source: string
+  source: string,
+  options: DslSourceOptions = {}
 ): Promise<{ root: SectionNode; usage: SymbolUsageIndex; perFileData: FileIndexEntry[] }> {
-  const { root, usage, perFileData } = await buildDslArtifacts(workspaceFolder, extensionUri, source);
+  const { root, usage, perFileData } = await buildDslArtifacts(workspaceFolder, extensionUri, source, options);
   return { root, usage, perFileData };
 }
 
@@ -147,13 +158,13 @@ export async function generateDsl(
   workspaceFolder: vscode.WorkspaceFolder,
   extensionUri: vscode.Uri,
   source: string,
-  options: { build?: boolean } = {}
+  options: { build?: boolean; primaryUri?: vscode.Uri } = {}
 ): Promise<{ files: string[]; root: SectionNode; usage: SymbolUsageIndex; perFileData: FileIndexEntry[] }> {
   const config = await loadConfig(workspaceFolder);
   if (options.build && !config.build) {
     throw new Error('cgen.json must contain build settings to generate and build');
   }
-  const { root, modules, symbols, templateSymbols, paramTemplates, bodyTemplates, usage, perFileData } = await buildDslArtifacts(workspaceFolder, extensionUri, source);
+  const { root, modules, symbols, templateSymbols, paramTemplates, bodyTemplates, usage, perFileData } = await buildDslArtifacts(workspaceFolder, extensionUri, source, options);
 
   const generated: string[] = [];
   const includeRoot = resolveWorkspacePath(workspaceFolder, config.generate.include);
