@@ -20,6 +20,8 @@ let postProgressMessage: ((active: boolean) => void) | undefined;
 let postDiagnosticsMessage: ((diagnostics: ParsedDiagnostic[]) => void) | undefined;
 let nativeDiagnostics: vscode.DiagnosticCollection | undefined;
 let currentEditorContent = '';
+const nativeAnalysisTimers = new Map<string, NodeJS.Timeout>();
+const nativeAnalysisVersions = new Map<string, number>();
 
 interface FormatPolicy {
   formatOnSave: boolean;
@@ -42,14 +44,33 @@ export function activate(context: vscode.ExtensionContext) {
   projectIndexPromise = initializeProjectIndex(context);
   context.subscriptions.push(
     vscode.workspace.onDidChangeTextDocument((e) => {
-      if (e.document.languageId === 'cgen') { refreshNativeDiagnostics(e.document); }
+      if (e.document.languageId === 'cgen') {
+        refreshNativeDiagnostics(e.document);
+        scheduleNativeSemanticDiagnostics(context, e.document);
+      }
+    }),
+    vscode.workspace.onDidOpenTextDocument((doc) => {
+      if (doc.languageId === 'cgen') {
+        refreshNativeDiagnostics(doc);
+        scheduleNativeSemanticDiagnostics(context, doc);
+      }
     }),
     vscode.workspace.onDidCloseTextDocument((doc) => {
-      if (doc.languageId === 'cgen') { nativeDiagnostics?.delete(doc.uri); }
+      if (doc.languageId === 'cgen') {
+        nativeDiagnostics?.delete(doc.uri);
+        const key = doc.uri.toString();
+        const timer = nativeAnalysisTimers.get(key);
+        if (timer) { clearTimeout(timer); }
+        nativeAnalysisTimers.delete(key);
+        nativeAnalysisVersions.delete(key);
+      }
     }),
   );
   for (const doc of vscode.workspace.textDocuments) {
-    if (doc.languageId === 'cgen') { refreshNativeDiagnostics(doc); }
+    if (doc.languageId === 'cgen') {
+      refreshNativeDiagnostics(doc);
+      scheduleNativeSemanticDiagnostics(context, doc);
+    }
   }
   context.subscriptions.push(
     vscode.commands.registerCommand('cgen.openDslEditor', () => openDslEditor(context)),
@@ -119,6 +140,11 @@ function makeCompletionInsertText(label: string): string | vscode.SnippetString 
 }
 
 export function deactivate() {
+  for (const timer of nativeAnalysisTimers.values()) {
+    clearTimeout(timer);
+  }
+  nativeAnalysisTimers.clear();
+  nativeAnalysisVersions.clear();
   projectIndexPromise?.then((index) => index?.dispose(), () => undefined);
 }
 
@@ -413,6 +439,7 @@ async function openDslEditor(context: vscode.ExtensionContext) {
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       await panel.webview.postMessage({ type: 'error', diagnostics: parseErrorDiagnostics(msg), jump: true });
+      applyErrorNativeDiagnostics(error, currentFileUri() ?? scratchUri);
       vscode.window.showErrorMessage(msg);
     } finally {
       postProgressMessage?.(false);
@@ -445,6 +472,7 @@ async function generateFromCurrentFile(context: vscode.ExtensionContext) {
     projectIndex?.updateSymbolUsage(usage);
     vscode.window.showInformationMessage(`CGen generated ${files.length} file(s).`);
   } catch (error) {
+    applyErrorNativeDiagnostics(error, editor.document.uri);
     vscode.window.showErrorMessage(error instanceof Error ? error.message : String(error));
   }
 }
@@ -605,7 +633,7 @@ async function initializeProjectIndex(context: vscode.ExtensionContext): Promise
           index.updateFromFiles(perFileData);
           index.updateSymbolUsage(usage);
           postDiagnosticsMessage?.([]);
-          nativeDiagnostics?.clear();
+          refreshOpenNativeDiagnostics();
         } catch (error) {
           const msg = error instanceof Error ? error.message : String(error);
           postDiagnosticsMessage?.(parseErrorDiagnostics(msg));
@@ -780,7 +808,7 @@ function escapeHtml(value: string): string {
 
 function refreshNativeDiagnostics(document: vscode.TextDocument): void {
   if (!nativeDiagnostics) { return; }
-  const { diagnostics } = parseDsl(formatCgen(document.getText()));
+  const { diagnostics } = parseDsl(document.getText());
   applyNativeDiagnostics(document.uri, diagnostics);
 }
 
@@ -798,12 +826,84 @@ function applyNativeDiagnostics(uri: vscode.Uri, errors: string[]): void {
     if (doc) {
       const safeLine = Math.min(lineIndex, doc.lineCount - 1);
       const docLine = doc.lineAt(safeLine);
-      range = new vscode.Range(safeLine, docLine.firstNonWhitespaceCharacterIndex, safeLine, docLine.text.length);
+      const firstNonWhitespace = docLine.firstNonWhitespaceCharacterIndex;
+      const startCharacter = firstNonWhitespace < docLine.text.length ? firstNonWhitespace : 0;
+      const endCharacter = Math.max(startCharacter + 1, docLine.text.length);
+      range = doc.validateRange(new vscode.Range(safeLine, startCharacter, safeLine, endCharacter));
     } else {
       range = new vscode.Range(lineIndex, 0, lineIndex, Number.MAX_SAFE_INTEGER);
     }
-    return new vscode.Diagnostic(range, message, vscode.DiagnosticSeverity.Error);
+    const diagnostic = new vscode.Diagnostic(range, message, vscode.DiagnosticSeverity.Error);
+    diagnostic.source = 'cgen';
+    return diagnostic;
   }));
+}
+
+function applyErrorNativeDiagnostics(error: unknown, fallbackUri?: vscode.Uri): void {
+  if (!nativeDiagnostics) { return; }
+
+  const message = error instanceof Error ? error.message : String(error);
+  if (error instanceof DslError) {
+    const workspaceFolder = getWorkspaceFolder();
+    let appliedFallback = false;
+    for (const file of error.perFileData) {
+      if (file.relativePath && workspaceFolder) {
+        applyNativeDiagnostics(vscode.Uri.joinPath(workspaceFolder.uri, file.relativePath), file.diagnostics);
+      } else if (fallbackUri && file.diagnostics.length > 0) {
+        applyNativeDiagnostics(fallbackUri, file.diagnostics);
+        appliedFallback = true;
+      }
+    }
+    if (appliedFallback || parseErrorDiagnostics(message).length === 0) {
+      return;
+    }
+  }
+
+  if (fallbackUri) {
+    applyNativeDiagnostics(fallbackUri, [message]);
+  }
+}
+
+function scheduleNativeSemanticDiagnostics(context: vscode.ExtensionContext, document: vscode.TextDocument): void {
+  if (!nativeDiagnostics || document.languageId !== 'cgen') { return; }
+  const workspaceFolder = vscode.workspace.getWorkspaceFolder(document.uri) ?? getWorkspaceFolder();
+  if (!workspaceFolder) { return; }
+
+  const key = document.uri.toString();
+  const version = (nativeAnalysisVersions.get(key) ?? 0) + 1;
+  nativeAnalysisVersions.set(key, version);
+  const existing = nativeAnalysisTimers.get(key);
+  if (existing) { clearTimeout(existing); }
+
+  const source = document.getText();
+  const uri = document.uri;
+  const timer = setTimeout(async () => {
+    nativeAnalysisTimers.delete(key);
+    const openDocument = vscode.workspace.textDocuments.find((candidate) => candidate.uri.toString() === key);
+    if (!openDocument || openDocument.languageId !== 'cgen') { return; }
+    if (nativeAnalysisVersions.get(key) !== version) { return; }
+
+    try {
+      const { perFileData, usage } = await resolveDslUsage(workspaceFolder, context.extensionUri, source);
+      if (nativeAnalysisVersions.get(key) !== version) { return; }
+      const projectIndex = await getProjectIndex(context, workspaceFolder);
+      projectIndex?.updateFromFiles(perFileData);
+      projectIndex?.updateSymbolUsage(usage);
+      refreshOpenNativeDiagnostics();
+    } catch (error) {
+      if (nativeAnalysisVersions.get(key) !== version) { return; }
+      applyErrorNativeDiagnostics(error, uri);
+    }
+  }, 500);
+  nativeAnalysisTimers.set(key, timer);
+}
+
+function refreshOpenNativeDiagnostics(): void {
+  for (const document of vscode.workspace.textDocuments) {
+    if (document.languageId === 'cgen') {
+      refreshNativeDiagnostics(document);
+    }
+  }
 }
 
 function kindToVscodeKind(kind: string): vscode.CompletionItemKind {

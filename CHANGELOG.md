@@ -32,6 +32,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Documentation attached to `return` statements is collected into the function's Doxygen `@return` tag
 - Simplified `@doc` completion to a selected `@doc("...")` placeholder
 
+### Fixed
+
+- Standard VS Code editor diagnostics now update on open, typing, and generation, including semantic/project errors
+- Native diagnostics no longer disappear after background index refreshes
+
 ## [0.0.78] - 2026-06-04
 
 ### Added
