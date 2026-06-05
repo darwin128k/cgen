@@ -193,7 +193,7 @@ function findCurrentTemplate(textBeforeLine: string, currentIndent?: number, tex
       continue;
     }
 
-    if (/^fn\s+[A-Za-z_][A-Za-z0-9_]*\s*->\s*.+:\s*$/.test(line)) {
+    if (/^fn\s+[A-Za-z_][A-Za-z0-9_]*(?:\s*->\s*.+)?\s*:\s*$/.test(line)) {
       currentFn = { indent, params: [] };
       continue;
     }

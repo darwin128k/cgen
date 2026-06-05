@@ -20,6 +20,7 @@ export interface FnNode {
   name: string;
   params: FnParam[];
   returnType: string;
+  returnTypeInferred: boolean;
   body: string[];
   bodyLine: number;
   returnAttributes: Attribute[];
@@ -181,6 +182,7 @@ export function parseDsl(source: string): ParsedDsl {
     const line = withoutComment.trim();
 
     if (currentFn && indent <= currentFn.indent) {
+      finalizeFnReturnType(currentFn.node);
       currentFn = undefined;
     }
 
@@ -385,6 +387,9 @@ export function parseDsl(source: string): ParsedDsl {
   if (pendingAttributes.length > 0) {
     diagnostics.push(`Line ${pendingAttributes[0].line}: attribute is not attached to any DSL object`);
   }
+  if (currentFn) {
+    finalizeFnReturnType(currentFn.node);
+  }
 
   return { root, diagnostics };
 }
@@ -546,7 +551,8 @@ function parseFn(line: string, lineNumber: number, diagnostics?: string[]): FnNo
   }
 
   const returnMatch = rest.match(/^->\s*(.+?)\s*:\s*$/);
-  if (!returnMatch) {
+  const inferredMatch = rest.match(/^:\s*$/);
+  if (!returnMatch && !inferredMatch) {
     return undefined;
   }
 
@@ -554,7 +560,8 @@ function parseFn(line: string, lineNumber: number, diagnostics?: string[]): FnNo
     kind: 'fn',
     name,
     params: [],
-    returnType: returnMatch[1].trim(),
+    returnType: returnMatch ? returnMatch[1].trim() : 'auto',
+    returnTypeInferred: !returnMatch,
     body: [],
     bodyLine: 0,
     returnAttributes: [],
@@ -562,6 +569,11 @@ function parseFn(line: string, lineNumber: number, diagnostics?: string[]): FnNo
     selfMutable: false,
     line: lineNumber
   };
+}
+
+function finalizeFnReturnType(fn: FnNode): void {
+  if (!fn.returnTypeInferred) { return; }
+  fn.returnType = fn.body.some((line) => /^return(?:\s+|$)/.test(line)) ? 'any' : 'none';
 }
 
 function parseFnParam(text: string, lineNumber: number, attributes: Attribute[] = []): FnParam | undefined {

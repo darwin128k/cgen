@@ -153,7 +153,11 @@ function resolveFnReturnType(
 ): string {
   if (fn.returnType === 'none') { return 'void'; }
   if (fn.returnType !== 'any') { return resolveTypeExpression(fn.returnType, fn.line, symbols, templateSymbols); }
-  throw new Error(`Line ${fn.line}: any return type is only supported for struct methods`);
+  throw new Error(
+    fn.returnTypeInferred
+      ? `Line ${fn.line}: cannot infer return type for non-method function`
+      : `Line ${fn.line}: any return type is only supported for struct methods`
+  );
 }
 
 function renderFnParam(

@@ -13,6 +13,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - `project.type` support for executable, static, shared, interface, and auto CMake targets
 - Explicit `Ctrl+Shift+I` formatting shortcut for `.cgen` documents
 - Module-level `let name -> T = expr` declarations for generated globals
+- Optional function return type syntax: `fn name:` infers `none` or method `any` from the body
 
 ### Changed
 

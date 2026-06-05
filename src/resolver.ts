@@ -312,7 +312,11 @@ export function resolveModuleDependencies(
         }
       }
       if (fn.returnType === 'any') {
-        throw new Error(`Line ${fn.line}: any return type is only supported for struct methods`);
+        throw new Error(
+          fn.returnTypeInferred
+            ? `Line ${fn.line}: cannot infer return type for non-method function`
+            : `Line ${fn.line}: any return type is only supported for struct methods`
+        );
       }
       for (const symbol of getTypeExpressionSymbols(fn.returnType, fn.line, symbols, templateSymbols)) {
         addSymbolDep(module, symbol);

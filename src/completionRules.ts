@@ -14,7 +14,7 @@ export const contextCandidates: Readonly<Record<string, readonly string[]>> = {
     'enum name -> type:',
     'struct name:',
     'template name:',
-    'fn name -> type:',
+    'fn name:',
     'let name -> type = value',
     'scope name:',
   ],
@@ -23,7 +23,7 @@ export const contextCandidates: Readonly<Record<string, readonly string[]>> = {
     'enum name -> type:',
     'struct name:',
     'template name:',
-    'fn name -> type:',
+    'fn name:',
     'let name -> type = value',
     'scope name:',
   ],
@@ -37,7 +37,7 @@ export const contextCandidates: Readonly<Record<string, readonly string[]>> = {
   'struct.body': [
     'field name -> type',
     'use c.ptr(value)',
-    'fn name -> none:',
+    'fn name:',
   ],
   'template.body': [
     'name',

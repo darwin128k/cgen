@@ -419,16 +419,18 @@ struct point:
     @mutable
     field y as c.int
 
-    fn get_x -> any:
+    fn get_x:
         return self.x
 
     @mutable
-    fn set_x -> none:
+    fn set_x:
         param value as c.int
         self.x = value
 ```
 
 Inside a struct, `self` is the implicit first parameter — a const pointer to the struct type by default. Put `@mutable` before a method to get a non-const `self` pointer.
+
+Function return types may be written explicitly with `-> T`, or omitted. When omitted, CGen infers `none` for functions without `return` and `any` for functions with `return`. `any` return inference is currently supported for struct methods that return a single `self.field`; standalone functions with a return value still need an explicit `-> T`.
 
 Function parameters are const by default. Put `@mutable` before the parameter when the generated C parameter should not be const:
 
@@ -481,7 +483,7 @@ Public module `let`s emit an `extern` declaration in the header and one definiti
 
 `none` is the DSL spelling for no return value and generates C `void`.
 
-When a struct method has `-> any`, CGen infers the return type from a single `return self.field`. If the method has no `return`, `any` resolves to `none`.
+When a struct method has `-> any` or an omitted return type with a `return`, CGen infers the return type from a single `return self.field`. If the method has no `return`, omitted return type resolves to `none`.
 
 Struct methods receive a const `self` pointer by default, so assigning to `self.field` is rejected. Put `@mutable` before the method to allow field assignment:
 
