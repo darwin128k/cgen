@@ -386,10 +386,10 @@ function validateStructMethodBody(
       throw new Error(`Line ${fn.bodyLine || fn.line}: unknown self field "${assignment.target}"`);
     }
     if (!fn.selfMutable) {
-      throw new Error(`Line ${fn.bodyLine || fn.line}: cannot assign to "${assignment.target}" in a const method; use @mutable on fn`);
+      throw new Error(`Line ${fn.bodyLine || fn.line}: cannot assign to "${assignment.target}" in a const method`);
     }
     if (!field.mutable) {
-      throw new Error(`Line ${fn.bodyLine || fn.line}: cannot assign to const field "${assignment.target}"; use @mutable on field or template`);
+      throw new Error(`Line ${fn.bodyLine || fn.line}: cannot assign to const field "${assignment.target}"`);
     }
   }
 }

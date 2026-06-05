@@ -239,7 +239,14 @@ function ensureStripeCount(): void {
 
   stripeCount = needed;
   stripes.innerHTML = `<div id="stripeContent">${Array.from({ length: stripeCount }, () => '<div class="stripe-line"></div>').join('')}</div>`;
+  invalidateStripeMarkers();
   renderStripeMarkers();
+}
+
+function invalidateStripeMarkers(): void {
+  stripeActiveLineIndex = -1;
+  stripeHasSelection = source.selectionStart === source.selectionEnd;
+  stripeDiagnosticKey = '__invalid__';
 }
 
 function getEditorPaddingTop(): number {
