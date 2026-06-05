@@ -29,6 +29,43 @@ export function applyRawBody(
   return result;
 }
 
+function parseCExprFormat(source: string, line: number): { format: string; args: string[] } | undefined {
+  const args = splitCallArgs(source, line);
+  const quoted = args[0]?.match(/^"(.*)"$/);
+  if (!quoted) { return undefined; }
+  return { format: quoted[1], args: args.slice(1) };
+}
+
+export function buildRawCExprBody(source: string, line: number): string {
+  const parsed = parseCExprFormat(source, line);
+  if (parsed) {
+    let index = 0;
+    return parsed.format
+      .replace(/%t\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (_match, name: string) => `\${${name} as type}`)
+      .replace(/%t/g, () => {
+        const arg = parsed.args[index++]?.trim() ?? '';
+        return `\${${arg} as type}`;
+      });
+  }
+  const arg = source.trim();
+  const quoted = arg.match(/^"(.*)"$/);
+  if (quoted) { return quoted[1]; }
+  return /^[A-Za-z_][A-Za-z0-9_]*$/.test(arg) ? `\${${arg}}` : arg;
+}
+
+export function renderRawCExpr(
+  source: string,
+  line: number,
+  resolveTypeArg: TypeResolver
+): string {
+  const parsed = parseCExprFormat(source, line);
+  if (!parsed) { return source.trim().match(/^"(.*)"$/)?.[1] ?? source.trim(); }
+  let index = 0;
+  return parsed.format
+    .replace(/%t\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (_match, name: string) => resolveTypeArg(name, line))
+    .replace(/%t/g, () => resolveTypeArg(parsed.args[index++]?.trim() ?? '', line));
+}
+
 export function hasBalancedParens(source: string): boolean {
   let depth = 0;
   for (const char of source) {

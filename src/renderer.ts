@@ -27,6 +27,8 @@ import {
   parseAssignmentStatement,
   parseFnExprArgument,
   renderFnExpression,
+  buildRawCExprBody,
+  renderRawCExpr,
 } from './expander';
 import {
   collectScopeTemplates,
@@ -195,9 +197,7 @@ function renderDefineFnBody(
   const exprOf = line.match(/^return\s+c\.expr\((.*)\)(?:\s+as\s+.+)?$/)
     ?? line.match(/^use\s+c\.expr\((.*)\)$/);
   if (exprOf) {
-    const arg = exprOf[1].trim();
-    const parsed = parseFnExprArgument(arg);
-    const body = /^[A-Za-z_][A-Za-z0-9_]*$/.test(parsed) ? `\${${parsed}}` : parsed;
+    const body = buildRawCExprBody(exprOf[1].trim(), fn.line);
     return expandDefineFnVariadics(fn, applyRawBody(body, fn.params.map((p) => p.name), fn.params.map((p) => p.name)));
   }
   const returnStatement = parseReturnStatement(line);
@@ -410,7 +410,9 @@ function renderFnBodyLine(
     return `  ${typeName} ${letStatement.name} = ${expanded};`;
   }
   const exprOfMatch = line.match(/^use\s+c\.expr\((.*)\)$/);
-  if (exprOfMatch) { return `  ${parseFnExprArgument(exprOfMatch[1].trim())}`; }
+  if (exprOfMatch) {
+    return `  ${renderRawCExpr(exprOfMatch[1].trim(), fnLine, (arg, lineNumber) => renderTypeInterpolation(arg, lineNumber, symbols, templateSymbols))}`;
+  }
   const returnStatement = parseReturnStatement(line);
   if (returnStatement) {
     const expr = renderFnExpression(returnStatement.expr, methodSelfPointer);

@@ -16,6 +16,7 @@ import {
   parseCallExpression,
   applyRawBody,
   expandStructUse,
+  buildRawCExprBody,
 } from './expander';
 
 export function collectScopeTemplates(
@@ -236,10 +237,7 @@ function getRawFnBody(fn: FnNode): string | undefined {
   const exprOf = line.match(/^return\s+c\.expr\((.*)\)(?:\s+as\s+.+)?$/)
     ?? line.match(/^use\s+c\.expr\((.*)\)$/);
   if (!exprOf) { return undefined; }
-  const arg = exprOf[1].trim();
-  const quoted = arg.match(/^"(.*)"$/)?.[1];
-  if (quoted !== undefined) { return quoted; }
-  return /^[A-Za-z_][A-Za-z0-9_]*$/.test(arg) ? `\${${arg}}` : arg;
+  return buildRawCExprBody(exprOf[1].trim(), fn.line);
 }
 
 export function buildTypeSymbols(modules: ModuleArtifact[], templateSymbols: Map<string, TemplateSymbol>): Map<string, TypeSymbol> {
