@@ -15,6 +15,7 @@ export const contextCandidates: Readonly<Record<string, readonly string[]>> = {
     'struct name:',
     'template name:',
     'fn name -> type:',
+    'let name -> type = value',
     'scope name:',
   ],
   'declaration.scope': [
@@ -23,6 +24,7 @@ export const contextCandidates: Readonly<Record<string, readonly string[]>> = {
     'struct name:',
     'template name:',
     'fn name -> type:',
+    'let name -> type = value',
     'scope name:',
   ],
   'fn.body': [

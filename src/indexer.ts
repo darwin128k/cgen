@@ -3,7 +3,7 @@ import * as vscode from 'vscode';
 import { makePublicPath, type SectionKind, type SectionNode } from './parser';
 import type { SymbolUsageIndex } from './cgenTypes';
 
-type SymbolKind = 'alias' | 'enum' | 'template' | 'struct' | 'fn';
+type SymbolKind = 'alias' | 'enum' | 'template' | 'struct' | 'fn' | 'let';
 
 export interface IndexedNode {
   kind: SectionKind;
@@ -381,6 +381,9 @@ function extractFromRoot(root: SectionNode): { sections: StoredSection[]; symbol
     }
     for (const fn of node.fns) {
       symbols.push({ kind: 'fn', name: fn.name, path: makePublicPath([...pathParts, fn.name]).join('.'), parentPath: symbolParentPath, params: fn.params.map((p) => p.name).join(',') });
+    }
+    for (const letNode of node.lets) {
+      symbols.push({ kind: 'let', name: letNode.name, path: makePublicPath([...pathParts, letNode.name]).join('.'), parentPath: symbolParentPath, params: '' });
     }
 
     for (const child of node.children) {

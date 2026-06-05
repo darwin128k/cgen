@@ -57,6 +57,19 @@ export function collectScopeFns(
   return result;
 }
 
+export function collectScopeLets(
+  section: SectionNode,
+  extraParts: string[]
+): Array<{ letNode: import('./parser').LetNode; symbolParts: string[] }> {
+  const result = section.lets.map((letNode) => ({ letNode, symbolParts: extraParts }));
+  for (const child of section.children) {
+    if (child.kind === 'scope') {
+      result.push(...collectScopeLets(child, [...extraParts, child.name]));
+    }
+  }
+  return result;
+}
+
 export function collectScopeRecordTemplates(
   section: SectionNode,
   extraParts: string[]

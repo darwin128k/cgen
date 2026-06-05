@@ -28,6 +28,16 @@ export interface FnNode {
   line: number;
 }
 
+export interface LetNode {
+  kind: 'let';
+  name: string;
+  type: string;
+  expr: string;
+  mutable: boolean;
+  attributes: Attribute[];
+  line: number;
+}
+
 export interface TemplateParam {
   variadic: boolean;
   name: string;
@@ -106,6 +116,7 @@ export interface SectionNode {
   templates: TemplateNode[];
   structs: StructNode[];
   fns: FnNode[];
+  lets: LetNode[];
   children: SectionNode[];
   line: number;
 }
@@ -359,6 +370,15 @@ export function parseDsl(source: string): ParsedDsl {
     }
     if (fnNode === null) { return; }
 
+    const letNode = parseLet(line, lineNumber);
+    if (letNode) {
+      letNode.attributes = [...parentFrame.inheritedAttributes, ...pendingAttributes];
+      letNode.mutable = letNode.attributes.some((a) => a.name === 'mutable');
+      pendingAttributes = [];
+      parent.lets.push(letNode);
+      return;
+    }
+
     diagnostics.push(`Line ${lineNumber}: cannot parse "${line}"`);
   });
 
@@ -406,6 +426,7 @@ export function createSection(kind: SectionKind, name: string, line: number): Se
     templates: [],
     structs: [],
     fns: [],
+    lets: [],
     children: [],
     line
   };
@@ -564,6 +585,22 @@ function parseFnParam(text: string, lineNumber: number, attributes: Attribute[] 
     };
   }
   return undefined;
+}
+
+function parseLet(line: string, lineNumber: number): LetNode | undefined {
+  const match = line.match(/^let\s+([A-Za-z_][A-Za-z0-9_]*)(?:\s+as\s+|\s+->\s*)(.+?)\s*=\s*(.+)$/);
+  if (!match) {
+    return undefined;
+  }
+  return {
+    kind: 'let',
+    name: match[1],
+    type: match[2].trim(),
+    expr: match[3].trim(),
+    mutable: false,
+    attributes: [],
+    line: lineNumber
+  };
 }
 
 function parseTemplate(line: string, lineNumber: number, diagnostics?: string[]): TemplateNode | null | undefined {

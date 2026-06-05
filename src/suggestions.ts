@@ -17,7 +17,7 @@ export interface SuggestionResult {
 }
 
 type SectionKind = 'root' | 'package' | 'module' | 'scope';
-type SymbolKind = 'alias' | 'enum' | 'template' | 'struct' | 'fn';
+type SymbolKind = 'alias' | 'enum' | 'template' | 'struct' | 'fn' | 'let';
 
 interface DslNode {
   kind: SectionKind;

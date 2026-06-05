@@ -30,6 +30,7 @@ import {
   collectScopeTemplates,
   collectScopeStructs,
   collectScopeFns,
+  collectScopeLets,
   collectScopeTypeDeclarations,
   resolveTypeExpression,
   shouldDefineAlias,
@@ -225,11 +226,63 @@ function makeFnCName(module: ModuleArtifact, symbolParts: string[], fnName: stri
   return nameParts.join('_');
 }
 
+function makeLetCName(module: ModuleArtifact, symbolParts: string[], letName: string): string {
+  const nameParts = [...module.symbolParts, ...symbolParts];
+  if (nameParts[nameParts.length - 1] !== letName) { nameParts.push(letName); }
+  return nameParts.join('_');
+}
+
 function makeStructMethodCName(module: ModuleArtifact, symbolParts: string[], structName: string, fnName: string): string {
   const nameParts = [...module.symbolParts, ...symbolParts];
   if (nameParts[nameParts.length - 1] !== structName) { nameParts.push(structName); }
   if (nameParts[nameParts.length - 1] !== fnName) { nameParts.push(fnName); }
   return nameParts.join('_');
+}
+
+function validateModuleLet(letNode: import('./parser').LetNode): void {
+  for (const attribute of letNode.attributes.filter((candidate) => ['public', 'private', 'inline'].includes(candidate.name))) {
+    if (attribute.args.length > 0) {
+      throw new Error(`Line ${attribute.line}: @${attribute.name} does not accept arguments`);
+    }
+  }
+  if (hasAttr(letNode.attributes, 'public') && hasAttr(letNode.attributes, 'private')) {
+    throw new Error(`Line ${letNode.line}: let cannot be both @public and @private`);
+  }
+  if (hasAttr(letNode.attributes, 'inline')) {
+    throw new Error(`Line ${letNode.line}: @inline is only supported on fn`);
+  }
+}
+
+function getLetOutputTarget(letNode: import('./parser').LetNode): OutputTarget {
+  validateModuleLet(letNode);
+  return hasAttr(letNode.attributes, 'private') ? 'source' : 'both';
+}
+
+function renderLetTypePrefix(letNode: import('./parser').LetNode): string {
+  return letNode.mutable ? '' : 'const ';
+}
+
+function renderLetDefinition(
+  letNode: import('./parser').LetNode,
+  cName: string,
+  symbols: Map<string, TypeSymbol>,
+  templateSymbols: Map<string, TemplateSymbol>,
+  isPrivate: boolean
+): string {
+  const storage = isPrivate ? 'static ' : '';
+  const typeName = resolveTypeExpression(letNode.type, letNode.line, symbols, templateSymbols);
+  const expanded = expandTemplateArgument(letNode.expr, letNode.line, templateSymbols, new Set());
+  return `${storage}${renderLetTypePrefix(letNode)}${typeName} ${cName} = ${expanded};`;
+}
+
+function renderLetDeclaration(
+  letNode: import('./parser').LetNode,
+  cName: string,
+  symbols: Map<string, TypeSymbol>,
+  templateSymbols: Map<string, TemplateSymbol>
+): string {
+  const typeName = resolveTypeExpression(letNode.type, letNode.line, symbols, templateSymbols);
+  return `extern ${renderLetTypePrefix(letNode)}${typeName} ${cName};`;
 }
 
 function renderFnBody(
@@ -448,6 +501,13 @@ export function renderHeader(
     }
   }
 
+  for (const { letNode, symbolParts } of collectScopeLets(module.section, [])) {
+    if (getLetOutputTarget(letNode) === 'source') { continue; }
+    const cName = makeLetCName(module, symbolParts, letNode.name);
+    pushDoc(lines, letNode.attributes);
+    lines.push(renderLetDeclaration(letNode, cName, symbols, templateSymbols));
+  }
+
   for (const { fn, symbolParts: extraParts } of collectScopeFns(module.section, [])) {
     const target = getFnOutputTarget(fn);
     if (target === 'source') { continue; }
@@ -489,6 +549,15 @@ export function renderSource(
       lines.push(`const ${cName} ${memberName} = ${rawValue};`);
       hasDefinitions = true;
     }
+  }
+
+  for (const { letNode, symbolParts } of collectScopeLets(module.section, [])) {
+    const target = getLetOutputTarget(letNode);
+    if (target !== 'source' && target !== 'both') { continue; }
+    const cName = makeLetCName(module, symbolParts, letNode.name);
+    if (target === 'source') { pushDoc(lines, letNode.attributes); }
+    lines.push(renderLetDefinition(letNode, cName, symbols, templateSymbols, target === 'source'));
+    hasDefinitions = true;
   }
 
   for (const { fn, symbolParts: extraParts } of collectScopeFns(module.section, [])) {

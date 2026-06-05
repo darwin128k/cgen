@@ -12,6 +12,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Webview run actions menu with Generate, Build, and Generate & Build
 - `project.type` support for executable, static, shared, interface, and auto CMake targets
 - Explicit `Ctrl+Shift+I` formatting shortcut for `.cgen` documents
+- Module-level `let name -> T = expr` declarations for generated globals
 
 ### Changed
 

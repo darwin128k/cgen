@@ -19,6 +19,7 @@ import {
   collectScopeTemplates,
   collectScopeStructs,
   collectScopeFns,
+  collectScopeLets,
   collectScopeTypeDeclarations,
   getTypeExpressionSymbols,
   hasReturnStatement,
@@ -203,6 +204,13 @@ export function resolveModuleDependencies(
       for (const symbol of getTypeExpressionSymbols(declaration.target, declaration.line, symbols, templateSymbols)) {
         addSymbolDep(module, symbol);
       }
+    }
+
+    for (const { letNode } of collectScopeLets(module.section, [])) {
+      for (const symbol of getTypeExpressionSymbols(letNode.type, letNode.line, symbols, templateSymbols)) {
+        addSymbolDep(module, symbol);
+      }
+      addFnExpressionDependencies(module, letNode.expr, letNode.line, templateSymbols);
     }
 
     for (const { template } of collectScopeTemplates(module.section, [])) {

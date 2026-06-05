@@ -464,6 +464,21 @@ Function bodies support these statement forms:
 
 `expr` in a `let` or `return` statement may be a plain identifier, a field access (`self.field`), or a built-in template call such as `c.cast(type, val)` — it is expanded the same way as a template argument.
 
+Module bodies also support `let` declarations for generated globals:
+
+```cgen
+module limits:
+    let max_items -> c.int = 64
+
+    @mutable
+    let current_items -> c.int = 0
+
+    @private
+    let scale -> c.float = 1.0f
+```
+
+Public module `let`s emit an `extern` declaration in the header and one definition in the source file. They are `const` by default; put `@mutable` before the declaration for a mutable global. Put `@private` before the declaration to emit a `static` source-only definition.
+
 `none` is the DSL spelling for no return value and generates C `void`.
 
 When a struct method has `-> any`, CGen infers the return type from a single `return self.field`. If the method has no `return`, `any` resolves to `none`.
