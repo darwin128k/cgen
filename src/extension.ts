@@ -2,7 +2,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import * as childProcess from 'child_process';
 import * as vscode from 'vscode';
-import { buildProject, generateDsl, resolveDslUsage, DslError } from './cgen';
+import { buildProject, generateDsl, resolveDslUsage, DslError } from './generator';
 import { formatCgen } from './formatter';
 import { CgenProjectIndex } from './indexer';
 import { parseDsl } from './parser';

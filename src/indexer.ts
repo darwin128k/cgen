@@ -1,7 +1,7 @@
 import * as crypto from 'crypto';
 import * as vscode from 'vscode';
 import { makePublicPath, type SectionKind, type SectionNode } from './parser';
-import type { SymbolUsageIndex } from './cgen';
+import type { SymbolUsageIndex } from './cgenTypes';
 
 type SymbolKind = 'alias' | 'enum' | 'template' | 'struct' | 'fn';
 
