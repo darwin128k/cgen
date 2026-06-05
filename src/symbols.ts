@@ -177,8 +177,7 @@ export function buildTemplateSymbols(modules: ModuleArtifact[]): Map<string, Tem
         defineOnly: hasAttr(fn.attributes, 'define') || hasAttr(fn.attributes, 'intrinsic') || fn.params.some(isAnyParam),
         ...(rawBody ? {
           rawBody,
-          rawParams: fn.params.map((p) => p.name),
-          rawTypeParams: fn.params.filter(isTypeParam).map((p) => p.name)
+          rawParams: fn.params.map((p) => p.name)
         } : {})
       });
     }
@@ -201,8 +200,7 @@ export function buildTemplateSymbols(modules: ModuleArtifact[]): Map<string, Tem
         externHeader: getIncludeArg(struct.attributes) ?? undefined,
         intrinsicOnly: hasAttr(struct.attributes, 'intrinsic'),
         defineOnly: true,
-        rawParams: struct.params.map((p) => p.name),
-        rawTypeParams: struct.params.filter(isTypeParam).map((p) => p.name)
+        rawParams: struct.params.map((p) => p.name)
       });
     }
 
@@ -242,10 +240,6 @@ function getRawFnBody(fn: FnNode): string | undefined {
   const quoted = arg.match(/^"(.*)"$/)?.[1];
   if (quoted !== undefined) { return quoted; }
   return /^[A-Za-z_][A-Za-z0-9_]*$/.test(arg) ? `\${${arg}}` : arg;
-}
-
-export function isTypeParam(param: FnParam): boolean {
-  return param.attributes.some((attr) => attr.name === 'requires' && attr.args.includes('type'));
 }
 
 export function buildTypeSymbols(modules: ModuleArtifact[], templateSymbols: Map<string, TemplateSymbol>): Map<string, TypeSymbol> {
@@ -309,8 +303,13 @@ export function buildTypeSymbols(modules: ModuleArtifact[], templateSymbols: Map
   return symbols;
 }
 
-function isTypeTemplateParam(paramName: string | undefined): boolean {
-  return paramName === 'type';
+function getRawTypeInterpolationParams(rawBody: string | undefined): Set<string> {
+  const result = new Set<string>();
+  if (!rawBody) { return result; }
+  for (const match of rawBody.matchAll(/\$\{\s*([A-Za-z_][A-Za-z0-9_]*)\s+as\s+type\s*\}/g)) {
+    result.add(match[1]);
+  }
+  return result;
 }
 
 function expandTypeTemplateExpression(
@@ -320,18 +319,19 @@ function expandTypeTemplateExpression(
   symbols: Map<string, TypeSymbol>,
   templateSymbols: Map<string, TemplateSymbol>
 ): string {
-  const args = expression.args.map((arg, index) => {
-    const paramName = template.rawParams?.[index];
-    return isTypeTemplateParam(paramName) || template.rawTypeParams?.includes(paramName ?? '')
-      ? resolveTypeExpression(arg, line, symbols, templateSymbols)
-      : arg;
-  });
+  const typeParams = getRawTypeInterpolationParams(template.rawBody);
   for (const [index, paramName] of (template.rawParams ?? []).entries()) {
-    if ((isTypeTemplateParam(paramName) || template.rawTypeParams?.includes(paramName ?? '')) && expression.args[index] === undefined) {
+    if (typeParams.has(paramName) && expression.args[index] === undefined) {
       throw new Error(`Line ${line}: type template "${expression.callee}" expects argument "${paramName}"`);
     }
   }
-  return applyRawBody(template.rawBody!, template.rawParams ?? [], args);
+  return applyRawBody(
+    template.rawBody!,
+    template.rawParams ?? [],
+    expression.args,
+    line,
+    (arg, lineNumber) => resolveTypeExpression(arg, lineNumber, symbols, templateSymbols)
+  );
 }
 
 export function resolveTypeExpression(
@@ -375,8 +375,9 @@ export function getTypeExpressionSymbols(
     const template = templateSymbols.get(expression.callee);
     if (template?.rawBody !== undefined) {
       const result: TypeSymbol[] = [];
+      const typeParams = getRawTypeInterpolationParams(template.rawBody);
       for (let index = 0; index < expression.args.length; index += 1) {
-        if (isTypeTemplateParam(template.rawParams?.[index]) || template.rawTypeParams?.includes(template.rawParams?.[index] ?? '')) {
+        if (typeParams.has(template.rawParams?.[index] ?? '')) {
           result.push(...getTypeExpressionSymbols(expression.args[index], line, symbols, templateSymbols));
         }
       }

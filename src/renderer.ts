@@ -17,6 +17,7 @@ import {
   parseCallExpression,
   parseUseExpression,
   applyTemplateSymbol,
+  applyRawBody,
   expandTemplateArgument,
   expandTemplateBody,
   expandTemplateBodyInline,
@@ -197,7 +198,7 @@ function renderDefineFnBody(
     const arg = exprOf[1].trim();
     const parsed = parseFnExprArgument(arg);
     const body = /^[A-Za-z_][A-Za-z0-9_]*$/.test(parsed) ? `\${${parsed}}` : parsed;
-    return expandDefineFnVariadics(fn, body);
+    return expandDefineFnVariadics(fn, applyRawBody(body, fn.params.map((p) => p.name), fn.params.map((p) => p.name)));
   }
   const returnStatement = parseReturnStatement(line);
   if (returnStatement) {
@@ -206,7 +207,7 @@ function renderDefineFnBody(
   if (/^use\s+/.test(line)) {
     const expression = parseUseExpression(line, fn.line);
     const args = expression.args.map((arg) => expandTypedTemplateArgument(arg, fn.line, symbols, templateSymbols));
-    const body = applyTemplateSymbol(expression.callee, args, fn.line, templateSymbols, (arg, lineNumber) => resolveTypeExpression(arg, lineNumber, symbols, templateSymbols));
+    const body = applyTemplateSymbol(expression.callee, args, fn.line, templateSymbols, (arg, lineNumber) => renderTypeInterpolation(arg, lineNumber, symbols, templateSymbols));
     return expandDefineFnVariadics(fn, body);
   }
   throw new Error(`Line ${fn.line}: template-like fn must have a return or use statement`);
@@ -234,8 +235,21 @@ function expandTypedTemplateArgument(
     line,
     templateSymbols,
     new Set(),
-    (typeArg, lineNumber) => resolveTypeExpression(typeArg, lineNumber, symbols, templateSymbols)
+    (typeArg, lineNumber) => renderTypeInterpolation(typeArg, lineNumber, symbols, templateSymbols)
   );
+}
+
+function renderTypeInterpolation(
+  arg: string,
+  line: number,
+  symbols: Map<string, TypeSymbol>,
+  templateSymbols: Map<string, TemplateSymbol>
+): string {
+  try {
+    return resolveTypeExpression(arg, line, symbols, templateSymbols);
+  } catch {
+    return arg;
+  }
 }
 
 function resolveMacroArg(
@@ -247,7 +261,7 @@ function resolveMacroArg(
   try {
     return resolveTypeExpression(arg, line, symbols, templateSymbols);
   } catch {
-    return expandTemplateArgument(arg, line, templateSymbols, new Set());
+    return expandTemplateArgument(arg, line, templateSymbols, new Set(), (typeArg, lineNumber) => renderTypeInterpolation(typeArg, lineNumber, symbols, templateSymbols));
   }
 }
 

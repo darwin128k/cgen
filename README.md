@@ -651,11 +651,21 @@ typedef struct lh_point_t {
 |--------------------------|---------|
 | `param name`             | Regular parameter |
 | `param name as any`      | Same — `any` is an explicit "untyped" annotation, DSL-level only |
-| `@requires(type) param name` | Restricts an untyped parameter to DSL type arguments; useful for raw C expressions such as `sizeof(${T})` |
+| `${name as type}` inside `c.expr("...")` | Renders that interpolation as a DSL type (`c.int` becomes `int`) |
 | `param ... as name`      | Variadic — `name` becomes `__VA_ARGS__` in output. The `...` form without `as` is a parse error. |
 | `field name as type`     | Struct field |
 | `@mutable` before `field name as type` | Mutable struct field |
 | `@mutable` before parameterized `struct` | Field macro whose generated fields are mutable |
+
+Use `${name as type}` inside `c.expr("...")` when a raw C interpolation should be rendered through the DSL type resolver:
+
+```cgen
+fn sizeof:
+    param T
+    return c.expr("sizeof(${T as type})") as c.size
+```
+
+Calling `sizeof(c.int)` renders `sizeof(int)`. If the argument is already raw C type text, it is left unchanged.
 
 ### Built-in compile-time operations
 

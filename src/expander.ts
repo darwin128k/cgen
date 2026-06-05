@@ -8,8 +8,21 @@ import {
   escapeRegex,
 } from './cgenTypes';
 
-export function applyRawBody(body: string, paramNames: string[], args: string[]): string {
+type TypeResolver = (arg: string, line: number) => string;
+
+export function applyRawBody(
+  body: string,
+  paramNames: string[],
+  args: string[],
+  line = 0,
+  resolveTypeArg?: TypeResolver
+): string {
+  const paramMap = new Map(paramNames.map((name, index) => [name, args[index] ?? '']));
   let result = body;
+  result = result.replace(/\$\{\s*([A-Za-z_][A-Za-z0-9_]*)\s+as\s+type\s*\}/g, (_match, name: string) => {
+    const value = paramMap.get(name) ?? '';
+    return resolveTypeArg ? resolveTypeArg(value, line) : value;
+  });
   for (let i = 0; i < paramNames.length; i++) {
     result = result.replace(new RegExp(`\\$\\{${escapeRegex(paramNames[i])}\\}`, 'g'), args[i] ?? '');
   }
@@ -66,8 +79,6 @@ export function parseUseExpression(body: string, line: number): UseExpression {
   return expression;
 }
 
-type TypeResolver = (arg: string, line: number) => string;
-
 export function applyTemplateSymbol(
   templateKey: string,
   args: string[],
@@ -78,14 +89,7 @@ export function applyTemplateSymbol(
   const symbol = templateSymbols.get(templateKey);
   if (!symbol) { throw new Error(`Line ${line}: unknown template "${templateKey}"`); }
   if (symbol.rawBody !== undefined) {
-    const rawParams = symbol.rawParams ?? [];
-    const resolvedArgs = args.map((arg, index) => {
-      const name = rawParams[index];
-      return name && symbol.rawTypeParams?.includes(name) && resolveTypeArg
-        ? resolveTypeArg(arg, line)
-        : arg;
-    });
-    return applyRawBody(symbol.rawBody, rawParams, resolvedArgs);
+    return applyRawBody(symbol.rawBody, symbol.rawParams ?? [], args, line, resolveTypeArg);
   }
   return `${symbol.macroName}(${args.join(', ')})`;
 }
@@ -253,10 +257,43 @@ export function parseLetStatement(line: string): LetStatement | undefined {
 export function parseReturnStatement(line: string): ReturnStatement | undefined {
   const match = line.match(/^return\s+(.+)$/);
   if (!match) { return undefined; }
-  const typed = match[1].match(/^(.+)\s+as\s+(.+)$/);
-  return typed
-    ? { expr: typed[1].trim(), type: typed[2].trim() }
-    : { expr: match[1].trim() };
+  const typed = splitTrailingAsType(match[1]);
+  return typed ? { expr: typed.expr, type: typed.type } : { expr: match[1].trim() };
+}
+
+export function splitTrailingAsType(source: string): { expr: string; type: string } | undefined {
+  let depth = 0;
+  let quote = '';
+  let escaped = false;
+  let separator = -1;
+  for (let index = 0; index < source.length; index += 1) {
+    const char = source[index];
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (char === '\\' && quote) {
+      escaped = true;
+      continue;
+    }
+    if (quote) {
+      if (char === quote) { quote = ''; }
+      continue;
+    }
+    if (char === '"' || char === "'") {
+      quote = char;
+      continue;
+    }
+    if (char === '(') { depth += 1; continue; }
+    if (char === ')') { depth = Math.max(0, depth - 1); continue; }
+    if (depth === 0 && source.slice(index, index + 4) === ' as ') {
+      separator = index;
+    }
+  }
+  if (separator < 0) { return undefined; }
+  const expr = source.slice(0, separator).trim();
+  const type = source.slice(separator + 4).trim();
+  return expr && type ? { expr, type } : undefined;
 }
 
 export function parseAssignmentStatement(line: string): AssignmentStatement | undefined {

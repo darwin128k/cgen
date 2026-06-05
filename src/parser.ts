@@ -582,13 +582,51 @@ function parseFn(line: string, lineNumber: number, diagnostics?: string[]): FnNo
 function finalizeFnReturnType(fn: FnNode): void {
   if (!fn.returnTypeInferred) { return; }
   const typedReturns = fn.body
-    .map((line) => line.match(/^return\s+(.+)\s+as\s+(.+)$/)?.[2]?.trim())
+    .map((line) => {
+      const match = line.match(/^return\s+(.+)$/);
+      return match ? splitTrailingReturnAsType(match[1])?.type : undefined;
+    })
     .filter((type): type is string => !!type);
   if (typedReturns.length > 0) {
     fn.returnType = typedReturns[0];
     return;
   }
   fn.returnType = fn.body.some((line) => /^return(?:\s+|$)/.test(line)) ? 'any' : 'none';
+}
+
+function splitTrailingReturnAsType(source: string): { expr: string; type: string } | undefined {
+  let depth = 0;
+  let quote = '';
+  let escaped = false;
+  let separator = -1;
+  for (let index = 0; index < source.length; index += 1) {
+    const char = source[index];
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (char === '\\' && quote) {
+      escaped = true;
+      continue;
+    }
+    if (quote) {
+      if (char === quote) { quote = ''; }
+      continue;
+    }
+    if (char === '"' || char === "'") {
+      quote = char;
+      continue;
+    }
+    if (char === '(') { depth += 1; continue; }
+    if (char === ')') { depth = Math.max(0, depth - 1); continue; }
+    if (depth === 0 && source.slice(index, index + 4) === ' as ') {
+      separator = index;
+    }
+  }
+  if (separator < 0) { return undefined; }
+  const expr = source.slice(0, separator).trim();
+  const type = source.slice(separator + 4).trim();
+  return expr && type ? { expr, type } : undefined;
 }
 
 function parseFnParam(text: string, lineNumber: number, attributes: Attribute[] = []): FnParam | undefined {

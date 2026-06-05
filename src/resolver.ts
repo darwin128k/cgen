@@ -29,7 +29,6 @@ import {
   resolveTypeExpression,
   isTemplateLikeFn,
   collectScopeParameterizedStructs,
-  isTypeParam,
 } from './symbols';
 import { expandStructUse } from './expander';
 
@@ -301,8 +300,7 @@ export function resolveModuleDependencies(
 
     for (const { struct } of collectScopeParameterizedStructs(module.section, [])) {
       for (const param of struct.params) {
-        if (!isTypeParam(param) && param.type === 'any') { continue; }
-        if (isTypeParam(param)) { continue; }
+        if (param.type === 'any') { continue; }
         for (const symbol of getTypeExpressionSymbols(param.type, param.line, symbols, templateSymbols)) {
           addSymbolDep(module, symbol);
         }
@@ -367,12 +365,13 @@ export function resolveModuleDependencies(
     for (const { fn } of collectScopeFns(module.section, [])) {
       if (isTemplateLikeFn(fn)) {
         for (const p of fn.params) {
-          if (p.variadic || p.type === 'any' || isTypeParam(p)) { continue; }
+          if (p.variadic || p.type === 'any') { continue; }
           for (const symbol of getTypeExpressionSymbols(p.type, p.line, symbols, templateSymbols)) {
             addSymbolDep(module, symbol);
           }
         }
-        if (fn.returnType !== 'any' && fn.returnType !== 'none') {
+        const paramNames = new Set(fn.params.map((p) => p.name));
+        if (fn.returnType !== 'any' && fn.returnType !== 'none' && !paramNames.has(fn.returnType)) {
           for (const symbol of getTypeExpressionSymbols(fn.returnType, fn.line, symbols, templateSymbols)) {
             addSymbolDep(module, symbol);
           }
