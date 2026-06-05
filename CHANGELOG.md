@@ -14,6 +14,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Explicit `Ctrl+Shift+I` formatting shortcut for `.cgen` documents
 - Module-level `let name as T = expr` declarations for generated globals
 - Typed return statements with `return expr as T`
+- Best-effort semantic type checking for function bodies, struct methods, and typed template parameters
 
 ### Changed
 

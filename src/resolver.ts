@@ -26,8 +26,19 @@ import {
   hasReturnStatement,
   inferReturnedSelfField,
   getStructFields,
+  resolveTypeExpression,
 } from './symbols';
 import { expandStructUse } from './expander';
+
+interface TypeIdentity {
+  display: string;
+  key: string;
+}
+
+interface ValueType {
+  type: string;
+  mutable: boolean;
+}
 
 export function collectModules(root: SectionNode): ModuleArtifact[] {
   const modules: ModuleArtifact[] = [];
@@ -200,6 +211,24 @@ function addFnBodyDependencies(
   }
 }
 
+function isDslOnlyTemplateParamType(type: string): boolean {
+  return type === 'any' || type === 'template' || type === '...';
+}
+
+function addTemplateParamTypeDependencies(
+  module: ModuleArtifact,
+  template: TemplateNode,
+  symbols: Map<string, TypeSymbol>,
+  templateSymbols: Map<string, TemplateSymbol>
+): void {
+  for (const param of template.params) {
+    if (isDslOnlyTemplateParamType(param.type)) { continue; }
+    for (const symbol of getTypeExpressionSymbols(param.type, param.line, symbols, templateSymbols)) {
+      addSymbolDep(module, symbol);
+    }
+  }
+}
+
 export function resolveModuleDependencies(
   modules: ModuleArtifact[],
   symbols: Map<string, TypeSymbol>,
@@ -221,6 +250,7 @@ export function resolveModuleDependencies(
     }
 
     for (const { template } of collectScopeTemplates(module.section, [])) {
+      addTemplateParamTypeDependencies(module, template, symbols, templateSymbols);
       if (template.fields.length > 0 && template.params.length > 0) {
         const paramNames = new Set(template.params.map((p) => p.name));
         for (const field of template.fields) {
@@ -292,6 +322,7 @@ export function resolveModuleDependencies(
       for (const fn of struct.fns) {
         validateStructMethodBody(fn, struct, paramTemplates);
         validateFnReturnBody(fn);
+        validateFnBodyTypes(fn, symbols, templateSymbols, struct, paramTemplates);
         for (const p of fn.params) {
           if (p.variadic) { continue; }
           for (const symbol of getTypeExpressionSymbols(p.type, p.line, symbols, templateSymbols)) {
@@ -312,6 +343,7 @@ export function resolveModuleDependencies(
 
     for (const { fn } of collectScopeFns(module.section, [])) {
       validateFnReturnBody(fn);
+      validateFnBodyTypes(fn, symbols, templateSymbols);
       for (const p of fn.params) {
         if (p.variadic) { continue; }
         for (const symbol of getTypeExpressionSymbols(p.type, p.line, symbols, templateSymbols)) {
@@ -399,6 +431,200 @@ function validateFnReturnBody(fn: FnNode): void {
   }
   if (returnTypes.some((type) => type !== returnTypes[0])) {
     throw new Error(`Line ${fn.bodyLine || fn.line}: function return statements must use the same type`);
+  }
+}
+
+function typeIdentity(
+  target: string,
+  line: number,
+  symbols: Map<string, TypeSymbol>,
+  templateSymbols: Map<string, TemplateSymbol>,
+  seen = new Set<string>()
+): TypeIdentity {
+  if (target === 'none') { return { display: 'none', key: 'none' }; }
+
+  const expression = parseCallExpression(target, line);
+  if (expression) {
+    return {
+      display: target,
+      key: `c:${normalizeCType(resolveTypeExpression(target, line, symbols, templateSymbols))}`
+    };
+  }
+
+  const symbol = symbols.get(target);
+  if (!symbol) {
+    return {
+      display: target,
+      key: `c:${normalizeCType(resolveTypeExpression(target, line, symbols, templateSymbols))}`
+    };
+  }
+  if (symbol.kind === 'alias' && symbol.target) {
+    if (seen.has(symbol.key)) { throw new Error(`Line ${symbol.line}: cyclic type alias "${symbol.key}"`); }
+    seen.add(symbol.key);
+    const result = typeIdentity(symbol.target, line, symbols, templateSymbols, seen);
+    seen.delete(symbol.key);
+    return result;
+  }
+  return { display: symbol.key, key: `${symbol.kind}:${symbol.key}` };
+}
+
+function normalizeCType(type: string): string {
+  return type.replace(/\s+/g, ' ').replace(/\s+\*/g, '*').trim();
+}
+
+function assertAssignableType(
+  line: number,
+  targetType: string,
+  sourceType: string,
+  context: string,
+  symbols: Map<string, TypeSymbol>,
+  templateSymbols: Map<string, TemplateSymbol>
+): void {
+  const target = typeIdentity(targetType, line, symbols, templateSymbols);
+  const source = typeIdentity(sourceType, line, symbols, templateSymbols);
+  if (target.key !== source.key) {
+    throw new Error(`Line ${line}: cannot assign ${source.display} to ${target.display} in ${context}`);
+  }
+}
+
+function inferExpressionType(
+  expr: string,
+  line: number,
+  env: Map<string, ValueType>,
+  selfFields: Map<string, import('./parser').TemplateField> | undefined,
+  symbols: Map<string, TypeSymbol>,
+  templateSymbols: Map<string, TemplateSymbol>
+): string | undefined {
+  const selfField = expr.match(/^self\.([A-Za-z_][A-Za-z0-9_]*)$/)?.[1];
+  if (selfField) {
+    if (!selfFields) { throw new Error(`Line ${line}: self field access is only supported in struct methods`); }
+    const field = selfFields.get(selfField);
+    if (!field) { throw new Error(`Line ${line}: unknown self field "self.${selfField}"`); }
+    return field.target;
+  }
+
+  const value = env.get(expr);
+  if (value) { return value.type; }
+
+  const call = parseCallExpression(expr, line);
+  if (!call) { return undefined; }
+
+  if (call.callee === 'c.cast' && call.args.length >= 2) {
+    return call.args[0];
+  }
+
+  if (call.callee === 'c.sel' && call.args.length >= 3) {
+    const left = inferExpressionType(call.args[1], line, env, selfFields, symbols, templateSymbols);
+    const right = inferExpressionType(call.args[2], line, env, selfFields, symbols, templateSymbols);
+    if (left && right) {
+      assertAssignableType(line, left, right, `call "${call.callee}"`, symbols, templateSymbols);
+      return left;
+    }
+    return left ?? right;
+  }
+
+  if (['c.eq', 'c.ne', 'c.lt', 'c.le', 'c.gt', 'c.ge'].includes(call.callee) && symbols.has('c.bool')) {
+    return 'c.bool';
+  }
+
+  if (
+    [
+      'c.math.add',
+      'c.math.sub',
+      'c.math.mul',
+      'c.math.div',
+      'c.math.mod',
+      'c.math.bit.and',
+      'c.math.bit.or',
+      'c.math.bit.xor',
+      'c.math.bit.shl',
+      'c.math.bit.shr',
+      'c.math.bit.set',
+    ].includes(call.callee)
+  ) {
+    const left = inferExpressionType(call.args[0] ?? '', line, env, selfFields, symbols, templateSymbols);
+    const right = inferExpressionType(call.args[1] ?? '', line, env, selfFields, symbols, templateSymbols);
+    if (left && right) {
+      assertAssignableType(line, left, right, `call "${call.callee}"`, symbols, templateSymbols);
+      return left;
+    }
+    return left ?? right;
+  }
+
+  if (['c.math.neg', 'c.math.bit.not'].includes(call.callee)) {
+    return inferExpressionType(call.args[0] ?? '', line, env, selfFields, symbols, templateSymbols);
+  }
+
+  return undefined;
+}
+
+function validateFnBodyTypes(
+  fn: FnNode,
+  symbols: Map<string, TypeSymbol>,
+  templateSymbols: Map<string, TemplateSymbol>,
+  struct?: import('./parser').StructNode,
+  paramTemplates?: Map<string, TemplateNode>
+): void {
+  const env = new Map<string, ValueType>();
+  for (const param of fn.params) {
+    if (param.variadic) { continue; }
+    env.set(param.name, { type: param.type, mutable: param.mutable });
+  }
+
+  const selfFields = struct && paramTemplates
+    ? new Map(getStructFields(struct, paramTemplates).map((field) => [field.name, field]))
+    : undefined;
+
+  const expectedReturnTypes = fn.returnType === 'any' && struct && paramTemplates
+    ? inferStructMethodReturnTargets(fn, struct, paramTemplates)
+    : fn.returnType === 'none'
+      ? []
+      : [fn.returnType];
+
+  for (const line of fn.body) {
+    const letStatement = parseLetStatement(line);
+    if (letStatement) {
+      const exprType = inferExpressionType(letStatement.expr, fn.line, env, selfFields, symbols, templateSymbols);
+      if (exprType) {
+        assertAssignableType(fn.line, letStatement.type, exprType, `let "${letStatement.name}"`, symbols, templateSymbols);
+      }
+      env.set(letStatement.name, { type: letStatement.type, mutable: true });
+      continue;
+    }
+
+    const returnStatement = parseReturnStatement(line);
+    if (returnStatement) {
+      const exprType = inferExpressionType(returnStatement.expr, fn.line, env, selfFields, symbols, templateSymbols);
+      if (returnStatement.type && exprType) {
+        assertAssignableType(fn.line, returnStatement.type, exprType, 'return statement', symbols, templateSymbols);
+      }
+      if (!returnStatement.type && exprType && expectedReturnTypes.length === 1) {
+        assertAssignableType(fn.line, expectedReturnTypes[0], exprType, 'return statement', symbols, templateSymbols);
+      }
+      continue;
+    }
+
+    const assignment = parseAssignmentStatement(line);
+    if (assignment) {
+      let targetType: string | undefined;
+      if (assignment.target.startsWith('self.')) {
+        const fieldName = assignment.target.slice('self.'.length);
+        targetType = selfFields?.get(fieldName)?.target;
+      } else {
+        const target = env.get(assignment.target);
+        if (!target) {
+          throw new Error(`Line ${fn.bodyLine || fn.line}: unknown assignment target "${assignment.target}"`);
+        }
+        if (!target.mutable) {
+          throw new Error(`Line ${fn.bodyLine || fn.line}: cannot assign to const parameter "${assignment.target}"`);
+        }
+        targetType = target.type;
+      }
+      const exprType = inferExpressionType(assignment.expr, fn.line, env, selfFields, symbols, templateSymbols);
+      if (targetType && exprType) {
+        assertAssignableType(fn.line, targetType, exprType, `assignment to "${assignment.target}"`, symbols, templateSymbols);
+      }
+    }
   }
 }
 

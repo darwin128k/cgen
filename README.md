@@ -467,6 +467,8 @@ Function bodies support these statement forms:
 
 `expr` in a `let` or `return` statement may be a plain identifier, a field access (`self.field`), or a built-in template call such as `c.cast(type, val)` — it is expanded the same way as a template argument.
 
+CGen performs best-effort semantic type checks when both sides have known DSL types. It validates assignments to local values and `self.field`, typed returns, inferred `return self.field`, and built-in expressions such as `c.cast`, `c.sel`, comparisons, and `c.math.*`. Raw C expressions and literals remain unchecked and are left to the C compiler.
+
 Module bodies also support `let` declarations for generated globals:
 
 ```cgen
@@ -649,6 +651,7 @@ typedef struct lh_point_t {
 |--------------------------|---------|
 | `param name`             | Regular parameter |
 | `param name as any`      | Same — `any` is an explicit "untyped" annotation, DSL-level only |
+| `param name as type`     | Typed template parameter; contributes type dependencies and can be used by generated fields or raw type templates |
 | `param name as template` | Callable parameter — `name(args)` in the `use` body expands as a raw C call |
 | `param ... as name`      | Variadic — `name` becomes `__VA_ARGS__` in output. The `...` form without `as` is a parse error. |
 | `field name as type`     | Struct field; cannot mix with `param` or `use` in the same template |

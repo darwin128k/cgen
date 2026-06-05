@@ -42,6 +42,7 @@ export interface LetNode {
 export interface TemplateParam {
   variadic: boolean;
   name: string;
+  type: string;
   callable: boolean;
   line: number;
 }
@@ -648,11 +649,12 @@ function parseStruct(line: string, lineNumber: number): StructNode | undefined {
 function parseTemplateParam(line: string, lineNumber: number): TemplateParam | undefined {
   const variadicMatch = line.match(/^param\s+\.\.\.\s+as\s+([A-Za-z_][A-Za-z0-9_]*)$/);
   if (variadicMatch) {
-    return { variadic: true, callable: false, name: variadicMatch[1], line: lineNumber };
+    return { variadic: true, type: '...', callable: false, name: variadicMatch[1], line: lineNumber };
   }
   const normalMatch = line.match(/^param\s+([A-Za-z_][A-Za-z0-9_]*)(?:\s+as\s+(\S+))?$/);
   if (normalMatch) {
-    return { variadic: false, callable: normalMatch[2] === 'template', name: normalMatch[1], line: lineNumber };
+    const type = normalMatch[2] ?? 'any';
+    return { variadic: false, type, callable: type === 'template', name: normalMatch[1], line: lineNumber };
   }
   return undefined;
 }
