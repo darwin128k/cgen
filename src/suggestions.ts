@@ -464,11 +464,15 @@ function getCandidates(typed: string, contextPath: string[], currentState: Curre
   if (currentState.insideFn) {
     return uniqueInOrder([
       ...getContextSnippets(contextPath, currentState, index),
+      ...contextCandidates['attribute'],
       ...getExpressionCandidates(typed, contextPath, currentState, index)
     ]);
   }
 
-  return getContextSnippets(contextPath, currentState, index);
+  return uniqueInOrder([
+    ...getContextSnippets(contextPath, currentState, index),
+    ...contextCandidates['attribute'],
+  ]);
 }
 
 function getStaticContextKey(contextPath: string[], currentState: CurrentContextState, index: DslIndex): string {
