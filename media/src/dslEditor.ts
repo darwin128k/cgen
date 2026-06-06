@@ -1,6 +1,7 @@
 import { SnippetEngine } from './snippetEngine';
 import { formatCgenWithCursor } from '../../src/formatter';
 import keywords from '../../src/keywords.json';
+import { tokenizeLine as _tokenizeLine } from '../../src/tokenizer';
 import { contextCandidates } from '../../src/completionRules';
 
 declare function acquireVsCodeApi(): { postMessage(data: unknown): void };
@@ -70,10 +71,6 @@ let diagnostics: Diagnostic[] = [];
 let diagnosticLines: number[] = [];
 let activeLineIndex = 0;
 const indentText = '    ';
-const highlightRegex = new RegExp(
-  `(@[A-Za-z_][A-Za-z0-9_]*|\\bc\\.[A-Za-z_][A-Za-z0-9_.]*\\b|[()[\\]{}]|${keywords.map((k) => `\\b${k}\\b`).join('|')})`,
-  'g'
-);
 let cachedLineHTMLs: string[] = [];
 let cachedRawLines: string[] = [];
 let stripeCount = 0;
@@ -85,44 +82,22 @@ function escapeHtml(value: string): string {
     .replace(/>/g, '&gt;');
 }
 
-function highlightToken(token: string): string {
-  if (/^#.*$/.test(token)) {
-    return `<span class="comment">${escapeHtml(token)}</span>`;
-  }
-
-  if (/^@[A-Za-z_][A-Za-z0-9_]*$/.test(token)) {
-    return `<span class="attr">${escapeHtml(token)}</span>`;
-  }
-
-  if (keywords.includes(token as typeof keywords[number])) {
-    return `<span class="kw">${escapeHtml(token)}</span>`;
-  }
-
-  if (/^[()[\]{}]$/.test(token)) {
-    return `<span class="bracket">${escapeHtml(token)}</span>`;
-  }
-
-  if (/^c\./.test(token)) {
-    return `<span class="builtin">${escapeHtml(token)}</span>`;
-  }
-
-  return escapeHtml(token);
-}
+const CSS_CLASS: Record<string, string | null> = {
+  comment: 'comment',
+  attr:    'attr',
+  kw:      'kw',
+  builtin: 'builtin',
+  bracket: 'bracket',
+  string:  'string',
+  plain:   null,
+};
 
 function highlightLine(line: string): string {
-  const commentIndex = line.indexOf('#');
-  const rawCode = commentIndex === -1 ? line : line.slice(0, commentIndex);
-  const comment = commentIndex === -1 ? '' : line.slice(commentIndex);
-
-  const docMatch = rawCode.match(/^(\s*)(@(?:brief|doc))(\s*\(.*)/);
-  if (docMatch) {
-    const highlighted = `${escapeHtml(docMatch[1])}<span class="attr">${escapeHtml(docMatch[2])}</span>${escapeHtml(docMatch[3])}`;
-    return `${highlighted}${comment ? highlightToken(comment) : ''}`;
-  }
-
-  highlightRegex.lastIndex = 0;
-  const highlightedCode = escapeHtml(rawCode).replace(highlightRegex, highlightToken);
-  return `${highlightedCode}${comment ? highlightToken(comment) : ''}`;
+  return _tokenizeLine(line).map(({ type, text }: { type: string; text: string }) => {
+    const cls = CSS_CLASS[type];
+    const escaped = escapeHtml(text);
+    return cls ? `<span class="${cls}">${escaped}</span>` : escaped;
+  }).join('');
 }
 
 function highlightNavigationRange(lines: string[]): string {
