@@ -113,6 +113,13 @@ function highlightLine(line: string): string {
   const commentIndex = line.indexOf('#');
   const rawCode = commentIndex === -1 ? line : line.slice(0, commentIndex);
   const comment = commentIndex === -1 ? '' : line.slice(commentIndex);
+
+  const docMatch = rawCode.match(/^(\s*)(@(?:brief|doc))(\s*\(.*)/);
+  if (docMatch) {
+    const highlighted = `${escapeHtml(docMatch[1])}<span class="attr">${escapeHtml(docMatch[2])}</span>${escapeHtml(docMatch[3])}`;
+    return `${highlighted}${comment ? highlightToken(comment) : ''}`;
+  }
+
   highlightRegex.lastIndex = 0;
   const highlightedCode = escapeHtml(rawCode).replace(highlightRegex, highlightToken);
   return `${highlightedCode}${comment ? highlightToken(comment) : ''}`;

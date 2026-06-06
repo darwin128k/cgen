@@ -5,6 +5,9 @@
       "include": "#comments"
     },
     {
+      "include": "#doc_attributes"
+    },
+    {
       "include": "#attributes"
     },
     {
@@ -18,6 +21,20 @@
     }
   ],
   "repository": {
+    "doc_attributes": {
+      "patterns": [
+        {
+          "begin": "(@(?:brief|doc))\\s*(\\()",
+          "end": "\\)",
+          "beginCaptures": {
+            "1": {
+              "name": "entity.other.attribute-name.cgen"
+            }
+          },
+          "patterns": []
+        }
+      ]
+    },
     "attributes": {
       "patterns": [
         {

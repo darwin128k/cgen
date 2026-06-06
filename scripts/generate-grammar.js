@@ -9,12 +9,23 @@ const grammar = {
   scopeName: 'source.cgen',
   patterns: [
     { include: '#comments' },
+    { include: '#doc_attributes' },
     { include: '#attributes' },
     { include: '#keywords' },
     { include: '#builtins' },
     { include: '#strings' }
   ],
   repository: {
+    doc_attributes: {
+      patterns: [{
+        begin: '(@(?:brief|doc))\\s*(\\()',
+        end: '\\)',
+        beginCaptures: {
+          '1': { name: 'entity.other.attribute-name.cgen' }
+        },
+        patterns: []
+      }]
+    },
     attributes: {
       patterns: [{ name: 'entity.other.attribute-name.cgen', match: '@[A-Za-z_][A-Za-z0-9_]*' }]
     },
