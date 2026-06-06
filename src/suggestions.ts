@@ -50,6 +50,7 @@ interface CurrentContextState {
   params: string[];
   fnParams: string[];
   structFields: string[];
+  structTypeParams: string[];
   excludeNames: string[];
   insideStruct: boolean;
   insideFn: boolean;
@@ -144,7 +145,7 @@ function findCurrentContext(textBeforeLine: string, currentIndent?: number): str
 
 function findCurrentContextState(textBeforeLine: string, currentIndent?: number, textFromLine?: string): CurrentContextState {
   const sectionStack: Array<{ indent: number; path: string[] }> = [{ indent: -1, path: [] }];
-  let currentStruct: { indent: number; fields: string[] } | undefined;
+  let currentStruct: { indent: number; fields: string[]; typeParams: string[] } | undefined;
   let currentFn: { indent: number; params: string[] } | undefined;
 
   for (const rawLine of expandInlineDsl(textBeforeLine).split(/\r?\n/)) {
@@ -174,7 +175,7 @@ function findCurrentContextState(textBeforeLine: string, currentIndent?: number,
     }
 
     if (/^struct\s+[A-Za-z_][A-Za-z0-9_]*\s*:\s*$/.test(line)) {
-      currentStruct = { indent, fields: [] };
+      currentStruct = { indent, fields: [], typeParams: [] };
       continue;
     }
 
@@ -194,7 +195,12 @@ function findCurrentContextState(textBeforeLine: string, currentIndent?: number,
     }
 
     if (currentStruct) {
-      currentStruct.fields.push(...getStructFieldNamesFromLine(line));
+      const typeParam = line.match(/^param\s+([A-Za-z_][A-Za-z0-9_]*)$/)?.[1];
+      if (typeParam) {
+        currentStruct.typeParams.push(typeParam);
+      } else {
+        currentStruct.fields.push(...getStructFieldNamesFromLine(line));
+      }
     }
   }
 
@@ -208,10 +214,13 @@ function findCurrentContextState(textBeforeLine: string, currentIndent?: number,
     ])
     : [];
 
+  const structTypeParams = insideStruct && currentStruct ? currentStruct.typeParams : [];
+
   return {
     params: [],
     fnParams,
     structFields,
+    structTypeParams,
     excludeNames: [],
     insideStruct,
     insideFn
@@ -409,16 +418,16 @@ function getCandidates(typed: string, contextPath: string[], currentState: Curre
   }
 
   if (/^alias\s+\S+\s+as\s+/.test(typed)) {
-    return completeTail(typed, getTypeCandidates(typed, contextPath, index));
+    return completeTail(typed, getTypeCandidates(typed, contextPath, index, currentState));
   }
 
   if (/^enum\s+\S+\s+as\s+/.test(typed)) {
     if (typed.trimEnd().endsWith(':')) return [];
-    return completeTail(typed, getTypeCandidates(typed, contextPath, index));
+    return completeTail(typed, getTypeCandidates(typed, contextPath, index, currentState));
   }
 
   if (/^field\s+\S+\s+as\s+/.test(typed)) {
-    return completeTail(typed, getTypeCandidates(typed, contextPath, index));
+    return completeTail(typed, getTypeCandidates(typed, contextPath, index, currentState));
   }
 
   if (/^let\s+\S+\s+as\s+[^=]*=\s*/.test(typed)) {
@@ -426,7 +435,7 @@ function getCandidates(typed: string, contextPath: string[], currentState: Curre
   }
 
   if (/^let\s+\S+\s+as\s+/.test(typed)) {
-    return completeTail(typed, getTypeCandidates(typed, contextPath, index));
+    return completeTail(typed, getTypeCandidates(typed, contextPath, index, currentState));
   }
 
   if (/^return\s+/.test(typed)) {
@@ -553,8 +562,12 @@ function completeTail(typed: string, tails: string[]): string[] {
   return tails.map((tail) => `${head}${tail}`);
 }
 
-function getTypeCandidates(typed: string, contextPath: string[], index: DslIndex): string[] {
-  return getDottedCandidates(getTailToken(typed), contextPath, index, getTypeCandidatePool(contextPath, index));
+function getTypeCandidates(typed: string, contextPath: string[], index: DslIndex, currentState?: CurrentContextState): string[] {
+  const pool = [
+    ...(currentState?.structTypeParams ?? []),
+    ...getTypeCandidatePool(contextPath, index),
+  ];
+  return getDottedCandidates(getTailToken(typed), contextPath, index, pool);
 }
 
 function getCallableUseCandidates(
@@ -604,7 +617,7 @@ function getUseArgumentCandidates(
     return uniqueInOrder([
       ...getDottedSelfCandidates(token, currentState),
       ...getCallableUseCandidates(typed, contextPath, currentState, index),
-      ...getTypeCandidates(typed, contextPath, index)
+      ...getTypeCandidates(typed, contextPath, index, currentState)
     ]);
   }
 
@@ -811,7 +824,7 @@ function findNode(root: DslNode, path: string[]): DslNode | undefined {
 
 function resolveKindForCandidate(candidate: string, index: DslIndex): string {
   if (snippetCandidates.has(candidate)) return 'snippet';
-  if (/^@/.test(candidate)) return 'keyword';
+  if (/^@/.test(candidate)) return 'attribute';
   const sectionKind = candidate.match(/^(package|module|scope|group)\b/)?.[1];
   if (sectionKind) return sectionKind === 'group' ? 'module' : sectionKind;
   if (/^alias\b/.test(candidate)) return 'alias';
