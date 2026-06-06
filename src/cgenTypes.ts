@@ -90,7 +90,7 @@ export interface ScopedTypeDeclaration {
 }
 
 export interface DocTag {
-  command: 'param' | 'return';
+  command: 'param' | 'tparam' | 'return';
   name?: string;
   description?: string;
 }

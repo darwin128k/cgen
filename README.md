@@ -376,12 +376,13 @@ scope c:
 
 The bundled `packages/c.cgen` uses `@intrinsic` on `scope c`, so its C types and helper functions do not create unnecessary `c_*` typedefs or macros.
 
-### `@doc("text")`
+### `@brief("text")` and `@doc("text")`
 
-Attaches documentation to the next declaration and emits it as a Doxygen comment in generated C headers:
+Attach documentation to the next declaration and emit it as a Doxygen comment in generated C headers. Use `@brief` for the Doxygen brief description and `@doc` for detailed documentation:
 
 ```cgen
-@doc("Current application version.")
+@brief("Current application version.")
+@doc("Stores the application's semantic version components.")
 struct version:
     @doc("Major version component.")
     field major as c.uint
@@ -394,7 +395,7 @@ struct version:
         self.major = value
 ```
 
-`@doc` applies only to the declaration immediately following it and is not inherited by nested declarations. Commas, parentheses, escaped quotes, and `\n` line breaks are supported inside the quoted text.
+`@brief` and `@doc` apply only to the declaration immediately following them and are not inherited by nested declarations. Commas, parentheses, escaped quotes, and `\n` line breaks are supported inside the quoted text.
 
 For functions, CGen automatically adds missing Doxygen tags for every parameter and for non-`none` return values. Struct methods also receive a `@param self` tag. Missing tags are emitted without invented descriptions, while tags already written explicitly inside `@doc` are not duplicated. The `@doc("...")` completion selects `...` so its text can be entered immediately.
 
@@ -408,6 +409,8 @@ fn find:
 ```
 
 Documentation attached to a parameter becomes its Doxygen `@param` description. Documentation attached to a `return` statement becomes the function's `@return` description.
+
+For parameterized structs, documentation attached to struct parameters becomes Doxygen `@tparam` descriptions on the generated macro.
 
 ## Functions
 

@@ -51,29 +51,45 @@ function renderFieldDeclaration(
   return `${prefix}${typeName} ${field.name}`;
 }
 
-function readDocTexts(attributes: Attribute[]): string[] {
+function readAttributeTexts(attributes: Attribute[], name: 'brief' | 'doc'): string[] {
   return attributes
-    .filter((candidate) => candidate.name === 'doc')
+    .filter((candidate) => candidate.name === name)
     .map((attribute) => {
       if (attribute.args.length !== 1) {
-        throw new Error(`Line ${attribute.line}: @doc requires exactly one quoted string`);
+        throw new Error(`Line ${attribute.line}: @${name} requires exactly one quoted string`);
       }
       let text: unknown;
       try { text = JSON.parse(attribute.args[0]); }
-      catch { throw new Error(`Line ${attribute.line}: @doc requires a valid double-quoted string`); }
-      if (typeof text !== 'string') { throw new Error(`Line ${attribute.line}: @doc requires a quoted string`); }
+      catch { throw new Error(`Line ${attribute.line}: @${name} requires a valid double-quoted string`); }
+      if (typeof text !== 'string') { throw new Error(`Line ${attribute.line}: @${name} requires a quoted string`); }
       return text;
     });
 }
 
-function pushDocBlock(lines: string[], text: string, indent: string, tags: DocTag[]): void {
+function readDocTexts(attributes: Attribute[]): string[] {
+  return readAttributeTexts(attributes, 'doc');
+}
+
+function readBriefTexts(attributes: Attribute[]): string[] {
+  return readAttributeTexts(attributes, 'brief');
+}
+
+function pushDocBlock(lines: string[], brief: string, text: string, indent: string, tags: DocTag[]): void {
+  const searchableText = [brief, text].filter(Boolean).join('\n');
   const missingTags = tags.filter((tag) => {
-    const pattern = tag.command === 'param'
-      ? new RegExp(`(?:^|\\n)\\s*[@\\\\]param\\s+${tag.name ? tag.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') : ''}\\b`)
+    const pattern = tag.command === 'param' || tag.command === 'tparam'
+      ? new RegExp(`(?:^|\\n)\\s*[@\\\\]${tag.command}\\s+${tag.name ? tag.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') : ''}\\b`)
       : /(?:^|\n)\s*[@\\]return\b/;
-    return !pattern.test(text);
+    return !pattern.test(searchableText);
   });
   lines.push(`${indent}/**`);
+  if (brief.length > 0) {
+    const briefLines = brief.split(/\r?\n/);
+    for (const [index, line] of briefLines.entries()) {
+      lines.push(`${indent} * ${index === 0 ? '@brief ' : ''}${line.replace(/\*\//g, '* /')}`);
+    }
+  }
+  if (brief.length > 0 && (text.length > 0 || missingTags.length > 0)) { lines.push(`${indent} *`); }
   if (text.length > 0) {
     for (const line of text.split(/\r?\n/)) {
       lines.push(`${indent} * ${line.replace(/\*\//g, '* /')}`);
@@ -89,8 +105,9 @@ function pushDocBlock(lines: string[], text: string, indent: string, tags: DocTa
 }
 
 function pushDoc(lines: string[], attributes: Attribute[], indent = '', tags: DocTag[] = []): void {
+  const brief = readBriefTexts(attributes).join('\n');
   const texts = readDocTexts(attributes);
-  if (texts.length > 0) { pushDocBlock(lines, texts.join('\n'), indent, tags); }
+  if (brief.length > 0 || texts.length > 0) { pushDocBlock(lines, brief, texts.join('\n'), indent, tags); }
 }
 
 function pushFnDoc(
@@ -99,6 +116,7 @@ function pushFnDoc(
   returnType: string,
   includeSelf: boolean
 ): void {
+  const brief = readBriefTexts(fn.attributes).join('\n');
   const text = readDocTexts(fn.attributes).join('\n');
   const tags: DocTag[] = [
     ...(includeSelf ? [{ command: 'param' as const, name: 'self' }] : []),
@@ -112,8 +130,21 @@ function pushFnDoc(
       description: readDocTexts(fn.returnAttributes).join(' ').replace(/\s+/g, ' ').trim()
     }])
   ];
-  if (text.length > 0 || tags.some((tag) => tag.description)) {
-    pushDocBlock(lines, text, '', tags);
+  if (brief.length > 0 || text.length > 0 || tags.some((tag) => tag.description)) {
+    pushDocBlock(lines, brief, text, '', tags);
+  }
+}
+
+function pushParameterizedStructDoc(lines: string[], struct: StructNode): void {
+  const brief = readBriefTexts(struct.attributes).join('\n');
+  const text = readDocTexts(struct.attributes).join('\n');
+  const tags: DocTag[] = struct.params.map((param) => ({
+    command: 'tparam' as const,
+    name: param.name,
+    description: readDocTexts(param.attributes).join(' ').replace(/\s+/g, ' ').trim()
+  }));
+  if (brief.length > 0 || text.length > 0 || tags.some((tag) => tag.description)) {
+    pushDocBlock(lines, brief, text, '', tags);
   }
 }
 
@@ -526,7 +557,7 @@ export function renderHeader(
       const semi = index < struct.fields.length - 1 ? ';' : '';
       return `${renderFieldDeclaration(field, typeName, mutableFields)}${semi}`;
     }).join(' ');
-    pushDoc(lines, struct.attributes);
+    pushParameterizedStructDoc(lines, struct);
     lines.push(`#define ${makeMacroName(allSymbolParts, struct.name)}(${paramList}) ${fieldDefs}`);
   }
 

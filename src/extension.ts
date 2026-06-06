@@ -128,7 +128,8 @@ export function activate(context: vscode.ExtensionContext) {
 }
 
 function makeCompletionInsertText(label: string): string | vscode.SnippetString {
-  if (!label.trimStart().startsWith('@doc("')) {
+  const trimmed = label.trimStart();
+  if (!trimmed.startsWith('@doc("') && !trimmed.startsWith('@brief("')) {
     return label;
   }
 

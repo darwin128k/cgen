@@ -50,6 +50,7 @@ export const contextCandidates: Readonly<Record<string, readonly string[]>> = {
     '@public',
     '@private',
     '@inline',
+    '@brief("...")',
     '@doc("...")',
 
     '@include("header.h")',
