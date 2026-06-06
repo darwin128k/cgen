@@ -487,6 +487,70 @@ button:hover {
   translate: 0 1px;
 }
 
+.hover-bubble {
+  position: absolute;
+  z-index: 9;
+  box-sizing: border-box;
+  width: max-content;
+  max-width: min(600px, calc(100% - 24px));
+  padding: 8px 12px;
+  border: 1px solid var(--vscode-editorWidget-border, color-mix(in srgb, var(--vscode-editor-foreground) 15%, transparent));
+  border-radius: 6px;
+  background: var(--vscode-editorHoverWidget-background, var(--vscode-editor-background));
+  box-shadow: 0 4px 14px rgb(0 0 0 / 20%);
+  pointer-events: none;
+}
+
+.hover-bubble[hidden] {
+  display: none;
+}
+
+.hover-header {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 6px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--vscode-editorWidget-border, color-mix(in srgb, var(--vscode-editor-foreground) 10%, transparent));
+  font-family: var(--vscode-font-family);
+  font-size: calc(var(--cgen-editor-font-size, var(--vscode-editor-font-size, 13px)) - 1px);
+  line-height: 1.4;
+}
+
+.hover-path {
+  font-weight: 600;
+  color: var(--vscode-editor-foreground);
+}
+
+.hover-file {
+  opacity: 0.55;
+  font-size: 0.9em;
+}
+
+.hover-bubble pre {
+  margin: 0;
+  padding: 0;
+  font-family: var(--cgen-editor-font-family, var(--vscode-editor-font-family, monospace));
+  font-feature-settings: var(--cgen-editor-font-feature-settings, normal);
+  font-size: calc(var(--cgen-editor-font-size, var(--vscode-editor-font-size, 13px)) - 1px);
+  font-variant-ligatures: var(--cgen-editor-font-variant-ligatures, normal);
+  font-weight: var(--cgen-editor-font-weight, var(--vscode-editor-font-weight, normal));
+  line-height: 1.5;
+  white-space: pre;
+  overflow: hidden;
+}
+
+.hover-bubble .hover-doc {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--vscode-editorWidget-border, color-mix(in srgb, var(--vscode-editor-foreground) 10%, transparent));
+  font-family: var(--vscode-font-family);
+  font-size: calc(var(--cgen-editor-font-size, var(--vscode-editor-font-size, 13px)) - 1px);
+  line-height: 1.5;
+  color: var(--vscode-editor-foreground);
+  opacity: 0.85;
+}
+
 .ghost-text {
   color: var(--vscode-editorGhostText-foreground, var(--vscode-editorLineNumber-foreground));
   opacity: 0.8;

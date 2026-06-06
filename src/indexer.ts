@@ -92,6 +92,7 @@ const builtinTypes = [
 
 export class CgenProjectIndex {
   private fileCache = new Map<string, FileCacheEntry>();
+  private fileRoots = new Map<string, SectionNode>();
   private suggestionUsage = new Map<string, SuggestionUsageRecord & { contextKey: string; prefix: string }>();
   private symbolUsageData = new Map<string, Array<{ moduleId: string; count: number }>>();
   private symbolUsedInData = new Map<string, Array<{ symbolKey: string; count: number }>>();
@@ -180,13 +181,17 @@ export class CgenProjectIndex {
 
   updateFromFiles(files: FileIndexEntry[]): void {
     for (const key of [...this.fileCache.keys()]) {
-      if (key.startsWith(ANON_PREFIX)) { this.fileCache.delete(key); }
+      if (key.startsWith(ANON_PREFIX)) {
+        this.fileCache.delete(key);
+        this.fileRoots.delete(key);
+      }
     }
 
     const currentKeys = new Set<string>();
     for (const file of files) {
       const cacheKey = file.relativePath ?? `${ANON_PREFIX}${file.hash}`;
       currentKeys.add(cacheKey);
+      this.fileRoots.set(cacheKey, file.root);
 
       const existing = this.fileCache.get(cacheKey);
       if (existing?.hash === file.hash) { continue; }
@@ -202,6 +207,7 @@ export class CgenProjectIndex {
     for (const key of [...this.fileCache.keys()]) {
       if (!key.startsWith(ANON_PREFIX) && !currentKeys.has(key)) {
         this.fileCache.delete(key);
+        this.fileRoots.delete(key);
         this.deleteCacheFile(key).catch(() => undefined);
       }
     }
@@ -228,6 +234,16 @@ export class CgenProjectIndex {
 
   getModuleSymbolRefs(moduleId: string): Array<{ symbolKey: string; count: number }> {
     return this.symbolUsedInData.get(moduleId) ?? [];
+  }
+
+  findSymbolDefinition(symbolPath: string): { root: SectionNode; relativePath: string | null } | undefined {
+    for (const [cacheKey, entry] of this.fileCache.entries()) {
+      if (entry.symbols.some((s) => s.path === symbolPath)) {
+        const root = this.fileRoots.get(cacheKey);
+        if (root) { return { root, relativePath: entry.relativePath }; }
+      }
+    }
+    return undefined;
   }
 
   private async initialize(): Promise<void> {

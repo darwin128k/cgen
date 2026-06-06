@@ -36,9 +36,15 @@ const runMenu = document.getElementById('runMenu')!;
 const expand = document.getElementById('expand')!;
 const progressBar = document.getElementById('progressBar')!;
 const diagnosticBubble = document.getElementById('diagnosticBubble')!;
+const hoverBubble = document.getElementById('hoverBubble')!;
 let autoSaveTimer: ReturnType<typeof setTimeout> | undefined;
 let suggestTimer: ReturnType<typeof setTimeout> | undefined;
 let suggestRequestId = 0;
+let hoverTimer: ReturnType<typeof setTimeout> | undefined;
+let hoverRequestId = 0;
+let hoverActiveToken: string | undefined;
+let hoverBubbleMouseX = 0;
+let hoverBubbleMouseY = 0;
 let suggestionInsertText = '';
 let suggestionReplaceLeft = 0;
 let popupAllowed = false;
@@ -978,6 +984,85 @@ function clearNavigationHover(): void {
   paint();
 }
 
+function hideHoverBubble(): void {
+  hoverBubble.hidden = true;
+  hoverActiveToken = undefined;
+  if (hoverTimer !== undefined) { clearTimeout(hoverTimer); hoverTimer = undefined; }
+}
+
+function showHoverBubble(code: string, doc: string, qualifiedPath: string, file: string): void {
+  let headerEl = hoverBubble.querySelector('.hover-header') as HTMLElement | null;
+  if (!headerEl) {
+    headerEl = document.createElement('div');
+    headerEl.className = 'hover-header';
+    hoverBubble.insertBefore(headerEl, hoverBubble.firstChild);
+  }
+  headerEl.innerHTML = `<span class="hover-path">${escapeHtml(qualifiedPath)}</span>${file ? `<span class="hover-file">${escapeHtml(file)}</span>` : ''}`;
+
+  const pre = hoverBubble.querySelector('pre') as HTMLElement;
+  pre.innerHTML = code.split('\n').map(highlightLine).join('\n');
+
+  let docEl = hoverBubble.querySelector('.hover-doc') as HTMLElement | null;
+  if (!docEl) {
+    docEl = document.createElement('div');
+    docEl.className = 'hover-doc';
+    hoverBubble.appendChild(docEl);
+  }
+  if (doc) {
+    docEl.textContent = doc;
+    docEl.hidden = false;
+  } else {
+    docEl.textContent = '';
+    docEl.hidden = true;
+  }
+
+  const editorEl = source.closest('.editor') as HTMLElement;
+  const editorRect = editorEl.getBoundingClientRect();
+  const lineHeight = parseFloat(getComputedStyle(source).lineHeight) || 20;
+  const left = Math.max(4, Math.min(editorRect.width - 28, hoverBubbleMouseX - editorRect.left - 8));
+  const top = hoverBubbleMouseY - editorRect.top + lineHeight + 6;
+
+  hoverBubble.style.left = `${left}px`;
+  hoverBubble.style.top = `${top}px`;
+  hoverBubble.hidden = false;
+}
+
+function updateHover(event: MouseEvent): void {
+  if (event.ctrlKey || event.metaKey) {
+    hideHoverBubble();
+    return;
+  }
+
+  const position = getPositionFromPointer(event);
+  if (position === undefined) {
+    hideHoverBubble();
+    return;
+  }
+
+  const tokenInfo = getTokenAtPosition(position);
+  if (!tokenInfo) {
+    hideHoverBubble();
+    return;
+  }
+
+  if (tokenInfo.token === hoverActiveToken) { return; }
+
+  hoverBubble.hidden = true;
+  hoverActiveToken = undefined;
+  if (hoverTimer !== undefined) { clearTimeout(hoverTimer); }
+
+  const capturedToken = tokenInfo.token;
+  const capturedId = ++hoverRequestId;
+  hoverBubbleMouseX = event.clientX;
+  hoverBubbleMouseY = event.clientY;
+
+  hoverTimer = setTimeout(() => {
+    hoverTimer = undefined;
+    hoverActiveToken = capturedToken;
+    vscode.postMessage({ type: 'hover', id: capturedId, text: source.value, cursor: position });
+  }, 250);
+}
+
 function insertIndentedNewline(): void {
   const lineStart = getLineStart(source.selectionStart);
   const linePrefix = source.value.slice(lineStart, source.selectionStart);
@@ -1043,9 +1128,13 @@ source.addEventListener('click', (event) => {
   updateBreadcrumb();
   requestSuggestion();
 });
-source.addEventListener('mousemove', updateNavigationHover);
+source.addEventListener('mousemove', (event) => {
+  updateNavigationHover(event);
+  updateHover(event);
+});
 source.addEventListener('mouseleave', () => {
   clearNavigationHover();
+  hideHoverBubble();
 });
 source.addEventListener('keyup', (event) => {
   clearNavigationHover();
@@ -1077,6 +1166,7 @@ document.addEventListener('selectionchange', () => {
 });
 source.addEventListener('scroll', syncScroll);
 source.addEventListener('keydown', (event) => {
+  hideHoverBubble();
   if (event.key === 'Backspace' || event.key === 'Delete') {
     isDeletingKey = true;
   }
@@ -1309,6 +1399,18 @@ if (event.data.type === 'suggestion' && event.data.id === suggestRequestId) {
       completionList.hidden = true;
     }
     renderSuggestionNow();
+  }
+  if (event.data.type === 'hoverResult' && event.data.id === hoverRequestId) {
+    if (event.data.code) {
+      showHoverBubble(
+        event.data.code as string,
+        (event.data.doc as string) ?? '',
+        (event.data.qualifiedPath as string) ?? '',
+        (event.data.file as string) ?? ''
+      );
+    } else {
+      hideHoverBubble();
+    }
   }
   if (event.data.type === 'error') {
     const rawDiagnostics: unknown = event.data.diagnostics;

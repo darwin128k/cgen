@@ -7,6 +7,7 @@ import { formatCgen } from './formatter';
 import { CgenProjectIndex } from './indexer';
 import { parseDsl } from './parser';
 import { createDslSuggestion } from './suggestions';
+import { createHoverInfo, getHoverData } from './hover';
 
 interface ParsedDiagnostic {
   line: number;
@@ -123,7 +124,16 @@ export function activate(context: vscode.ExtensionContext) {
         }
       },
       '.', '@', '('
-    )
+    ),
+    vscode.languages.registerHoverProvider('cgen', {
+      async provideHover(document, position) {
+        const workspaceFolder = vscode.workspace.getWorkspaceFolder(document.uri) ?? getWorkspaceFolder();
+        if (!workspaceFolder) { return undefined; }
+        const projectIndex = await getProjectIndex(context, workspaceFolder);
+        if (!projectIndex) { return undefined; }
+        return createHoverInfo(projectIndex, document, position);
+      }
+    })
   );
 }
 
@@ -321,7 +331,7 @@ async function openDslEditor(context: vscode.ExtensionContext) {
   });
   await postFormatPolicy();
 
-  panel.webview.onDidReceiveMessage(async (message: { type: string; text?: string; cursor?: number; scrollTop?: number; id?: number; line?: number; action?: string; data?: unknown; contextKey?: string; prefix?: string; label?: string; kind?: string }) => {
+  panel.webview.onDidReceiveMessage(async (message: { type: string; text?: string; cursor?: number; scrollTop?: number; id?: number; line?: number; action?: string; data?: unknown; contextKey?: string; prefix?: string; label?: string; kind?: string; mouseX?: number; mouseY?: number }) => {
     if (message.type === 'expand') {
       await vscode.commands.executeCommand('workbench.action.toggleMaximizeEditorGroup');
       return;
@@ -369,6 +379,20 @@ async function openDslEditor(context: vscode.ExtensionContext) {
         message.label,
         message.kind ?? ''
       );
+      return;
+    }
+
+    if (message.type === 'hover' && typeof message.text === 'string' && typeof message.cursor === 'number' && typeof message.id === 'number') {
+      const projectIndex = await getProjectIndex(context, workspaceFolder);
+      const data = projectIndex ? getHoverData(projectIndex, message.text, message.cursor) : undefined;
+      await panel.webview.postMessage({
+        type: 'hoverResult',
+        id: message.id,
+        code: data?.code ?? '',
+        doc: data?.doc ?? '',
+        qualifiedPath: data?.qualifiedPath ?? '',
+        file: data?.file ?? ''
+      });
       return;
     }
 
@@ -735,6 +759,7 @@ function getWebviewHtml(
       <pre id="highlight" aria-hidden="true"></pre>
       <pre id="suggestion" aria-hidden="true"></pre>
 <div id="diagnosticBubble" class="diagnostic-bubble" hidden></div>
+      <div id="hoverBubble" class="hover-bubble" hidden><pre></pre></div>
       <textarea id="source" wrap="off" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="off">${escapeHtml(value)}</textarea>
     </div>
     <div class="footer">
