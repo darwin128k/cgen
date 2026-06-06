@@ -1,3 +1,23 @@
+export const snippetCandidates: ReadonlySet<string> = new Set([
+  'package name:',
+  'module name:',
+  'scope name:',
+  'alias name as type',
+  'enum name as type:',
+  'struct name:',
+  'fn name:',
+  'let name as type = value',
+  'param name as type',
+  'self.field = value',
+  'return value as type',
+  'use c.expr("")',
+  'field name as type',
+  'use c.ptr(value)',
+  'name',
+  'name as any',
+  '... as values',
+]);
+
 export const contextCandidates: Readonly<Record<string, readonly string[]>> = {
   'declaration.root': [
     'package name:',

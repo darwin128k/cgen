@@ -475,6 +475,7 @@ function getCursorPixelPos(): { x: number; y: number } {
 
 function completionIconFor(kind: string): [string, string] {
   switch (kind) {
+    case 'snippet': return ['symbol-snippet', 'snippet'];
     case 'attribute': return ['symbol-keyword', 'attribute'];
     case 'keyword': return ['symbol-keyword', 'keyword'];
     case 'package':
@@ -493,6 +494,8 @@ function completionIconFor(kind: string): [string, string] {
 
 function completionGroupFor(kind: string): string {
   switch (kind) {
+    case 'snippet':
+      return 'Snippets';
     case 'attribute':
       return 'Attributes';
     case 'keyword':
@@ -555,14 +558,22 @@ function positionCompletionList(): void {
   completionList.style.left = `${pos.x}px`;
 }
 
+const GROUP_ORDER = ['Snippets', 'Symbols', 'Attributes', 'Keywords', 'Types', 'Callables', 'Sections'];
+
 function showCompletionList(candidates: string[], insertTexts: string[], kinds: string[], contextKey: string, prefix: string): void {
   if (!candidates.length) {
     completionList.hidden = true;
     return;
   }
-  completionCandidates = candidates;
-  completionInsertTexts = insertTexts;
-  completionCandidateKinds = kinds;
+  const items = candidates.map((c, i) => ({ c, it: insertTexts[i], k: kinds[i] }));
+  items.sort((a, b) => {
+    const ga = GROUP_ORDER.indexOf(completionGroupFor(a.k));
+    const gb = GROUP_ORDER.indexOf(completionGroupFor(b.k));
+    return (ga === -1 ? 999 : ga) - (gb === -1 ? 999 : gb);
+  });
+  completionCandidates = items.map((x) => x.c);
+  completionInsertTexts = items.map((x) => x.it);
+  completionCandidateKinds = items.map((x) => x.k);
   completionIndex = 0;
   completionContextKey = contextKey;
   completionPrefix = prefix;

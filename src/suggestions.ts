@@ -1,6 +1,6 @@
 import { CgenProjectIndex, type SuggestionUsageRecord } from './indexer';
 import { makePublicPath } from './parser';
-import { contextCandidates } from './completionRules';
+import { contextCandidates, snippetCandidates } from './completionRules';
 
 export interface SuggestionRequest {
   text: string;
@@ -806,6 +806,7 @@ function findNode(root: DslNode, path: string[]): DslNode | undefined {
 }
 
 function resolveKindForCandidate(candidate: string, index: DslIndex): string {
+  if (snippetCandidates.has(candidate)) return 'snippet';
   if (/^@/.test(candidate)) return 'keyword';
   const sectionKind = candidate.match(/^(package|module|scope|group)\b/)?.[1];
   if (sectionKind) return sectionKind === 'group' ? 'module' : sectionKind;
@@ -817,7 +818,7 @@ function resolveKindForCandidate(candidate: string, index: DslIndex): string {
   if (/^param\b/.test(candidate)) return 'param';
   if (/^self\./.test(candidate)) return 'field';
   if (candidate === 'self') return 'param';
-  if (/^(use|case|name|\.\.\.)/.test(candidate)) return 'keyword';
+  if (/^(use|case|name|return|\.\.\.)/.test(candidate)) return 'keyword';
 
   const pathStr = candidate.endsWith('.') ? candidate.slice(0, -1) : candidate;
   const callablePath = pathStr.includes('(') ? pathStr.slice(0, pathStr.indexOf('(')) : pathStr;
@@ -830,6 +831,8 @@ function resolveKindForCandidate(candidate: string, index: DslIndex): string {
 
   const node = findNode(index.root, pathParts);
   if (node) return node.kind;
+
+  if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(candidate)) return 'param';
 
   return '';
 }

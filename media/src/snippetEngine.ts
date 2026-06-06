@@ -38,9 +38,13 @@ export class SnippetEngine {
   }
 
   extractTabStopWords(text: string): string[] {
-    const match = text.match(/\(([^()]*)\)/);
-    if (!match) { return []; }
-    return match[1].split(',').map((s) => s.trim()).filter((s) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(s));
+    const callMatch = text.match(/\(([^()]*)\)/);
+    if (callMatch) {
+      const args = callMatch[1].split(',').map((s) => s.trim()).filter((s) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(s));
+      if (args.length > 0) { return args; }
+    }
+    const placeholders = text.match(/\b(name|type|value|field|values)\b/g);
+    return placeholders ? [...new Set(placeholders)] : [];
   }
 
   getSuggestionEdit(text: string): SnippetEdit {

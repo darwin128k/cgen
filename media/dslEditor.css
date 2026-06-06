@@ -32,6 +32,7 @@
 .codicon-symbol-keyword::before { content: "\eb65"; }
 .codicon-symbol-struct::before { content: "\eb71"; }
 .codicon-symbol-method::before { content: "\eb66"; }
+.codicon-symbol-snippet::before { content: "\eb66"; }
 .codicon-pinned::before { content: "\eb2b"; }
 
 html,
@@ -617,6 +618,7 @@ button:hover {
 }
 
 .ci-function,
+.ci-snippet,
 .ci-attribute,
 .ci-interface,
 .ci-enum,
@@ -659,6 +661,10 @@ button:hover {
 
 .ci-variable {
   --completion-icon-color: #75beff;
+}
+
+.ci-snippet {
+  --completion-icon-color: #ce9178;
 }
 
 .completion-item.active {
