@@ -399,6 +399,8 @@ struct version:
 
 For functions, CGen automatically adds missing Doxygen tags for every parameter and for non-`none` return values. Struct methods also receive a `@param self` tag. Missing tags are emitted without invented descriptions, while tags already written explicitly inside `@doc` are not duplicated. The `@doc("...")` completion selects `...` so its text can be entered immediately.
 
+Long `@brief` and `@doc` text is wrapped in generated comments before C formatting runs, preferring natural punctuation breaks.
+
 ```cgen
 @doc("Finds an item.")
 fn find:

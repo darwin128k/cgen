@@ -41,6 +41,7 @@ import {
   getStructFields,
   isCompileTimeFn,
 } from './symbols';
+import { formatDoxygenText } from './doxygenFormatter';
 
 function renderFieldDeclaration(
   field: import('./parser').FieldNode,
@@ -84,14 +85,14 @@ function pushDocBlock(lines: string[], brief: string, text: string, indent: stri
   });
   lines.push(`${indent}/**`);
   if (brief.length > 0) {
-    const briefLines = brief.split(/\r?\n/);
+    const briefLines = formatDoxygenText(brief);
     for (const [index, line] of briefLines.entries()) {
       lines.push(`${indent} * ${index === 0 ? '@brief ' : ''}${line.replace(/\*\//g, '* /')}`);
     }
   }
   if (brief.length > 0 && (text.length > 0 || missingTags.length > 0)) { lines.push(`${indent} *`); }
   if (text.length > 0) {
-    for (const line of text.split(/\r?\n/)) {
+    for (const line of formatDoxygenText(text)) {
       lines.push(`${indent} * ${line.replace(/\*\//g, '* /')}`);
     }
   }
